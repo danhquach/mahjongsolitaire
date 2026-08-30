@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>/core bench — gen+solve</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; max-width: 640px; }
+  h1 { font-size: 1.2rem; margin: 0 0 4px; }
+  .sub { color: #888; font-size: 0.85rem; margin-bottom: 12px; }
+  .warn { background: #b45309; color: #fff; padding: 8px 10px; border-radius: 6px; font-size: 0.85rem; margin: 8px 0; }
+  label { display: block; font-size: 0.85rem; margin: 8px 0 2px; }
+  input, select { font-size: 1rem; padding: 8px; width: 100%; box-sizing: border-box; }
+  button { font-size: 1.05rem; padding: 12px; width: 100%; margin-top: 14px; border-radius: 8px; border: none; background: #2563eb; color: #fff; }
+  button:disabled { background: #94a3b8; }
+  #progress { margin-top: 10px; font-variant-numeric: tabular-nums; }
+  table { border-collapse: collapse; width: 100%; margin-top: 12px; font-variant-numeric: tabular-nums; }
+  td, th { border: 1px solid #8884; padding: 6px 8px; text-align: right; }
+  th { text-align: left; }
+  .pass { color: #16a34a; font-weight: 700; }
+  .fail { color: #dc2626; font-weight: 700; }
+  textarea { width: 100%; box-sizing: border-box; height: 160px; font-family: monospace; font-size: 0.75rem; margin-top: 10px; }
+  .row { display: flex; gap: 8px; }
+  .row > div { flex: 1; }
+</style>
+</head>
+<body>
+<h1>/core benchmark — generate + solve</h1>
+<div class="sub">Issue #4 · Phase 1 exit gate: gen+solve p95 &lt; 150 ms on-device (spec §9). Open this page on the target low-end Android device and tap Run.</div>
+<div id="stub-warn" class="warn" hidden>Running the STAND-IN workload (target-stub.js) — /core’s bench entry was not found. Numbers validate the harness, not the engine.</div>
+
+<div class="row">
+  <div><label for="iterations">Iterations</label><input id="iterations" type="number" value="200" min="1" /></div>
+  <div><label for="warmup">Warm-up</label><input id="warmup" type="number" value="20" min="0" /></div>
+  <div><label for="seed">Base seed</label><input id="seed" type="number" value="1" min="0" /></div>
+</div>
+<label for="layout">Layout</label>
+<select id="layout"></select>
+<button id="run">Run benchmark</button>
+<div id="progress"></div>
+<div id="results"></div>
+<textarea id="json" readonly hidden></textarea>
+<button id="copy" hidden>Copy JSON report</button>
+
+<script type="module">
+import { runBenchmark } from './harness.js';
+import { loadTarget } from './target.js';
+
+const P95_GATE_MS = 150;
+const $ = (id) => document.getElementById(id);
+
+const { target, isStub } = await loadTarget();
+$('stub-warn').hidden = !isStub;
+for (const l of target.layouts) {
+  const opt = document.createElement('option');
+  opt.value = opt.textContent = l;
+  $('layout').appendChild(opt);
+}
+
+$('run').addEventListener('click', async () => {
+  $('run').disabled = true;
+  $('results').innerHTML = '';
+  $('json').hidden = $('copy').hidden = true;
+  try {
+    const iterations = Number($('iterations').value);
+    const report = await runBenchmark({
+      target,
+      layoutId: $('layout').value,
+      baseSeed: Number($('seed').value),
+      iterations,
+      warmup: Number($('warmup').value),
+      yieldEvery: 10, // keep the tab responsive; timing is per-iteration so unaffected
+      onProgress: (done, total) => { $('progress').textContent = `${done} / ${total}`; },
+    });
+    render(report, iterations);
+  } catch (e) {
+    $('results').innerHTML = `<p class="fail">${e.message}</p>`;
+  } finally {
+    $('run').disabled = false;
+  }
+});
+
+function render(report, iterations) {
+  const s = report.stats;
+  const pass = s.p95 < P95_GATE_MS;
+  const fmt = (v) => v.toFixed(2);
+  $('results').innerHTML = `
+    <table>
+      <tr><th>p50</th><td>${fmt(s.p50)} ms</td></tr>
+      <tr><th>p95 (gate &lt; ${P95_GATE_MS} ms)</th><td class="${pass ? 'pass' : 'fail'}">${fmt(s.p95)} ms — ${pass ? 'PASS' : 'FAIL'}</td></tr>
+      <tr><th>p90 / p99</th><td>${fmt(s.p90)} / ${fmt(s.p99)} ms</td></tr>
+      <tr><th>mean / min / max</th><td>${fmt(s.mean)} / ${fmt(s.min)} / ${fmt(s.max)} ms</td></tr>
+      <tr><th>unsolvable results</th><td class="${report.failures ? 'fail' : ''}">${report.failures} / ${iterations}</td></tr>
+    </table>`;
+
+  const json = JSON.stringify({
+    issue: 4,
+    gate: { metric: 'p95_ms', threshold: P95_GATE_MS, pass },
+    target: target.name,
+    isStub,
+    layoutId: $('layout').value,
+    baseSeed: Number($('seed').value),
+    iterations,
+    warmup: Number($('warmup').value),
+    stats: s,
+    failures: report.failures,
+    checksum: report.checksum,
+    device: {
+      userAgent: navigator.userAgent,
+      hardwareConcurrency: navigator.hardwareConcurrency ?? null,
+      deviceMemoryGB: navigator.deviceMemory ?? null,
+      devicePixelRatio: window.devicePixelRatio,
+    },
+    timestamp: new Date().toISOString(),
+  }, null, 2);
+  $('json').value = json;
+  $('json').hidden = $('copy').hidden = false;
+}
+
+$('copy').addEventListener('click', async () => {
+  await navigator.clipboard.writeText($('json').value);
+  $('copy').textContent = 'Copied ✓';
+  setTimeout(() => ($('copy').textContent = 'Copy JSON report'), 1500);
+});
+
+// Autorun via URL params (headless smoke / one-tap device runs), e.g.
+// index.html?autorun=1&iterations=50&warmup=5&seed=1&layout=stub_144
+const params = new URLSearchParams(location.search);
+if (params.get('autorun')) {
+  for (const k of ['iterations', 'warmup', 'seed']) {
+    if (params.has(k)) $(k).value = params.get(k);
+  }
+  if (params.has('layout')) $('layout').value = params.get('layout');
+  $('run').click();
+}
+</script>
+</body>
+</html>
