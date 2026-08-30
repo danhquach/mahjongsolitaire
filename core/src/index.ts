@@ -1,6 +1,10 @@
 export { Board, footprintsOverlap, slotKey } from './board.js';
 export type { Slot, Tile, TileId } from './board.js';
-export { facesMatch, matchGroup, STANDARD_144 } from './faces.js';
+export { facesMatch, STANDARD_144 } from './faces.js';
+export { generateLevel } from './generator.js';
+export type { GeneratedLevel } from './generator.js';
+export { SEED_LAYOUTS } from './layouts.js';
+export type { Layout } from './layouts.js';
 export { canMatch, matchPair } from './match.js';
 export type { MatchCheck, MatchRejection } from './match.js';
 export { ScoreKeeper, BASE_PAIR_POINTS, COMBO_WINDOW_MS } from './scoring.js';

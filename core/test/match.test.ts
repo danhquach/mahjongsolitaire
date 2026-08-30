@@ -1,13 +1,14 @@
-// Match rules (issue #6, spec §3.3–3.4, §11.1): exact-face match for suits,
-// Flower/Season wildcard groups, self-match rejection, non-free rejection,
-// and the standard 144 tile set.
+// Match rules (issue #6, spec §3.3–3.4, §11.1): identical-face match for ALL
+// tiles — Flowers/Seasons included (wildcards removed by PM decision 0005,
+// 2026-08-30) — self-match rejection, non-free rejection, and the standard
+// 144 tile set.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Board } from '../src/board.js';
 import type { Slot } from '../src/board.js';
-import { facesMatch, matchGroup, STANDARD_144 } from '../src/faces.js';
+import { facesMatch, STANDARD_144 } from '../src/faces.js';
 import { canMatch, matchPair } from '../src/match.js';
 
 // --- facesMatch: exact suits -------------------------------------------------
@@ -35,28 +36,14 @@ test('winds and dragons require exact face', () => {
   assert.equal(facesMatch('dragon-red', 'dragon-green'), false);
 });
 
-// --- facesMatch: wildcard groups ---------------------------------------------
+// --- facesMatch: Flowers/Seasons are exact-match too (no wildcards) -----------
 
-test('any Flower matches any Flower', () => {
-  assert.equal(facesMatch('flower-1', 'flower-3'), true);
-  assert.equal(facesMatch('flower-2', 'flower-2'), true);
-  assert.equal(facesMatch('flower-4', 'flower-1'), true);
-});
-
-test('any Season matches any Season', () => {
-  assert.equal(facesMatch('season-2', 'season-4'), true);
-  assert.equal(facesMatch('season-1', 'season-1'), true);
-});
-
-test('Flowers do not match Seasons', () => {
+test('Flowers and Seasons match only their identical face', () => {
+  assert.equal(facesMatch('flower-1', 'flower-1'), true);
+  assert.equal(facesMatch('season-2', 'season-2'), true);
+  assert.equal(facesMatch('flower-1', 'flower-2'), false);
+  assert.equal(facesMatch('season-1', 'season-2'), false);
   assert.equal(facesMatch('flower-1', 'season-1'), false);
-});
-
-test('matchGroup collapses wildcards only', () => {
-  assert.equal(matchGroup('flower-1'), matchGroup('flower-4'));
-  assert.equal(matchGroup('season-1'), matchGroup('season-3'));
-  assert.notEqual(matchGroup('flower-1'), matchGroup('season-1'));
-  assert.equal(matchGroup('dots-3'), 'dots-3');
 });
 
 // --- standard 144 tile set (spec §3.4) ----------------------------------------
@@ -73,14 +60,21 @@ test('standard set has 144 faces with spec §3.4 composition', () => {
   assert.equal(count('season-'), 4);
 });
 
-test('standard set has an even count per matchable group', () => {
+test('flowers and seasons come as identical duplicates (2×2 each)', () => {
+  const count = (face: string) => STANDARD_144.filter((f) => f === face).length;
+  assert.equal(count('flower-1'), 2);
+  assert.equal(count('flower-2'), 2);
+  assert.equal(count('season-1'), 2);
+  assert.equal(count('season-2'), 2);
+});
+
+test('standard set has an even count per face (identical-only matching)', () => {
   const counts = new Map<string, number>();
   for (const f of STANDARD_144) {
-    const g = matchGroup(f);
-    counts.set(g, (counts.get(g) ?? 0) + 1);
+    counts.set(f, (counts.get(f) ?? 0) + 1);
   }
-  for (const [group, n] of counts) {
-    assert.equal(n % 2, 0, `group ${group} has odd count ${n}`);
+  for (const [face, n] of counts) {
+    assert.equal(n % 2, 0, `face ${face} has odd count ${n}`);
   }
 });
 
@@ -126,9 +120,11 @@ test('removed tile is rejected', () => {
   assert.deepEqual(canMatch(b, 0, 2), { ok: false, reason: 'not-free' });
 });
 
-test('wildcard pair matches on the board', () => {
-  const b = fixture(['flower-1', 'bamboo-1', 'flower-4', 'char-9']);
-  assert.deepEqual(canMatch(b, 0, 2), { ok: true });
+test('identical Flower pair matches on the board; different Flowers do not', () => {
+  const same = fixture(['flower-1', 'bamboo-1', 'flower-1', 'char-9']);
+  assert.deepEqual(canMatch(same, 0, 2), { ok: true });
+  const different = fixture(['flower-1', 'bamboo-1', 'flower-2', 'char-9']);
+  assert.deepEqual(canMatch(different, 0, 2), { ok: false, reason: 'face-mismatch' });
 });
 
 test('matchPair removes both tiles', () => {

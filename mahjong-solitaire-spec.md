@@ -91,12 +91,11 @@ Vertical adjacency does not block.
 - Otherwise deselect / reselect.
 - Tapping the selected tile deselects it.
 
-**Match rule:**
-- Exact face match for all suits (Dots, Bamboo, Characters 1–9 ×4, Winds ×4, Dragons ×3).
-- **Wildcard groups:** any Flower matches any Flower; any Season matches any Season. (Classic behavior; preserve it.)
+**Match rule** *(amended by decision 0005, PM 2026-08-30 — wildcard groups removed)*:
+- **Identical face match for ALL tiles**, Flowers and Seasons included (Dots, Bamboo, Characters 1–9 ×4, Winds ×4, Dragons ×3, Flowers ×2 per face, Seasons ×2 per face).
 
 ### 3.4 Tile set
-Standard 144: 36 Dots, 36 Bamboo, 36 Characters, 16 Winds, 12 Dragons, 4 Flowers, 4 Seasons. Layouts may use fewer tiles but always an even count per matchable group.
+Standard 144: 36 Dots, 36 Bamboo, 36 Characters, 16 Winds, 12 Dragons, 4 Flowers, 4 Seasons. Flowers and Seasons ship as two identical copies of two faces each (`flower-1` ×2, `flower-2` ×2; `season-1` ×2, `season-2` ×2 — decision 0005) so every tile has an identical partner. Layouts may use fewer tiles but always an even count per face.
 
 ### 3.5 Win / loss
 - **Win:** all tiles removed.
@@ -243,8 +242,8 @@ Key metrics: D1/D7/D30 retention, levels/session, abandon rate by level (difficu
 
 ### 11.1 Unit (core, deterministic — the highest-value layer)
 - Free-tile computation: exhaustive fixtures per layout for covered / left-blocked / right-blocked / both-blocked / free.
-- Match rules: exact suits, Flower and Season wildcard groups, self-match rejection, non-free rejection.
-- Generator: for each layout × 10,000 seeds → assert solvable, assert tile count even per group, assert every slot filled.
+- Match rules: identical-face match for all tiles (decision 0005 — no wildcard groups), self-match rejection, non-free rejection.
+- Generator: for each layout × 10,000 seeds → assert solvable, assert tile count even per face, assert every slot filled.
 - Solver: known-solvable and known-deadlocked fixtures.
 - Undo: property test — `apply(moves) → undo(n) → apply(same n)` yields identical state hash.
 - Shuffle: post-shuffle board is always solvable; slot occupancy unchanged.

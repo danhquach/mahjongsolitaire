@@ -71,8 +71,9 @@ const SLOTS = buildSlots();
 
 // --- tile faces ------------------------------------------------------------
 // 34 standard faces x 4 copies (68 pairs) + 4 flowers (2 pairs) + 4 seasons
-// (2 pairs) = 144 tiles / 72 pairs. Flowers match any flower, seasons any
-// season (spec §3.3); for matching purposes each group is one face class.
+// (2 pairs) = 144 tiles / 72 pairs. Matching is identical-face only (spec
+// §3.3 as amended by decision 0005); flower/season classes here stand in for
+// the two identical-copy faces each — pair counts and perf are unchanged.
 
 const FACE_STANDARD_COUNT = 34; // face classes 0..33
 const FACE_FLOWER = 34;
