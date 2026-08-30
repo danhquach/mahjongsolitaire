@@ -153,6 +153,12 @@ export class Board {
     this.occupied.delete(slotKey(t.slot));
   }
 
+  /** Reassign a tile's face in place (Shuffle booster, spec §5 / issue #10).
+   *  Occupancy is untouched — only the face changes. */
+  setFace(id: TileId, face: string): void {
+    this.getMutable(id).face = face;
+  }
+
   /** Undo a removal: put the tile back in its slot. */
   restore(id: TileId): void {
     const t = this.getMutable(id);
