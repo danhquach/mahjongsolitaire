@@ -14,6 +14,13 @@ export interface MatchScore {
   readonly multiplier: number;
 }
 
+/** Full ScoreKeeper state, opaque to callers — for undo (spec §5, issue #10). */
+export interface ScoreSnapshot {
+  readonly score: number;
+  readonly streak: number;
+  readonly lastMatchMs: number | null;
+}
+
 /**
  * Tracks total score and the Super Combo ladder. Consecutive matches ≤5s
  * apart (measured from the previous match, boundary inclusive) escalate
@@ -48,5 +55,16 @@ export class ScoreKeeper {
   recordMismatch(): void {
     this.streak = 0;
     this.lastMatchMs = null;
+  }
+
+  snapshot(): ScoreSnapshot {
+    return { score: this.score, streak: this.streak, lastMatchMs: this.lastMatchMs };
+  }
+
+  /** Undo (spec §5): rewind to a prior snapshot, combo ladder included. */
+  restore(s: ScoreSnapshot): void {
+    this.score = s.score;
+    this.streak = s.streak;
+    this.lastMatchMs = s.lastMatchMs;
   }
 }
