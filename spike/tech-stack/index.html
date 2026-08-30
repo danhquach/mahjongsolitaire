@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stack spike — PixiJS board + ARIA overlay</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; font-family: system-ui, sans-serif; background: #1d3557; color: #f1faee; }
+  header { display: flex; gap: 1rem; align-items: center; padding: .5rem 1rem; flex-wrap: wrap; }
+  header h1 { font-size: 1rem; margin: 0; }
+  #stats { font-variant-numeric: tabular-nums; }
+  #board-wrap { position: relative; margin: 0 auto; }
+  #board-wrap canvas { display: block; }
+  /* ARIA overlay: transparent buttons positioned over canvas tiles.
+     They are the single input path for both pointer and assistive tech. */
+  #overlay { position: absolute; inset: 0; }
+  #overlay button {
+    position: absolute; margin: 0; padding: 0;
+    background: transparent; border: none; cursor: pointer;
+    min-width: 48px; min-height: 48px; /* a11y touch-target floor */
+  }
+  #overlay button:focus-visible { outline: 3px solid #ffd166; outline-offset: -3px; border-radius: 6px; }
+  #overlay button[aria-disabled="true"] { cursor: not-allowed; }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  button.ctl { font: inherit; padding: .3rem .7rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Stack spike: PixiJS canvas + DOM/ARIA overlay</h1>
+  <span id="stats" aria-hidden="true">fps: –</span>
+  <button class="ctl" id="stress">Stress test (10s)</button>
+  <span id="stress-result" aria-hidden="true"></span>
+</header>
+<div id="board-wrap">
+  <div id="overlay" role="group" aria-label="Mahjong board"></div>
+</div>
+<div id="announce" class="visually-hidden" role="status" aria-live="polite"></div>
+<script type="module" src="./main.js"></script>
+</body>
+</html>
