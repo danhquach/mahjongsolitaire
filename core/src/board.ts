@@ -10,6 +10,10 @@ export interface Slot {
   readonly z: number;
 }
 
+// Deviation from spec §3.1 (`id: uuid`), deliberate: ids are numeric so the
+// §9 save/replay format (`moves: [[12,88],…]`) and state hashing stay compact
+// and deterministic. Ids are stable per (layoutId, seed) once assigned by the
+// generator (issue #7).
 export type TileId = number;
 
 export interface Tile {
