@@ -2,6 +2,7 @@
 
 - **One branch per ticket.** Never commit work directly to `main`. For each GitHub issue, create a branch first: `issue-<n>-<short-slug>` (e.g. `issue-2-core-engine`).
 - **Branch review before merge.** When pushing a branch, run a code review of the full branch diff (`main..HEAD`) — correctness, tests, and the repo's spec/roadmap acceptance criteria for that ticket.
+- **Close the ticket when done.** After the work is merged (or the deliverable is accepted), close the GitHub issue with a closing comment linking the merge commit/PR.
 - **Merge only when all green.** Merge to `main` only when: review findings are resolved, all tests/CI pass, and the ticket's acceptance criteria are met. No self-merge over open findings.
 
 # Identity
