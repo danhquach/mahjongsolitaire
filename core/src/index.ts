@@ -1,8 +1,10 @@
 export { Board, footprintsOverlap, slotKey } from './board.js';
 export type { Slot, Tile, TileId } from './board.js';
 export { facesMatch, STANDARD_144 } from './faces.js';
-export { generateLevel } from './generator.js';
+export { generateLevel, generateValidatedLevel } from './generator.js';
 export type { GeneratedLevel } from './generator.js';
+export { solve, findHint, legalPairs, DEFAULT_MAX_STATES } from './solver.js';
+export type { SolveOptions, SolveResult, SolveVerdict } from './solver.js';
 export { SEED_LAYOUTS } from './layouts.js';
 export type { Layout } from './layouts.js';
 export { canMatch, matchPair } from './match.js';
