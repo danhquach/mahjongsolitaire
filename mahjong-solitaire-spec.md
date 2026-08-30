@@ -32,6 +32,8 @@ Mahjong *solitaire* (tile-matching), not 4-player Mahjong. The app itself carrie
 ### 1.4 Business model
 Free, ad-supported (interstitial + rewarded video), with IAP for ad removal and booster packs. Sensor Tower data shows a high-download / low-ARPU profile (~4M downloads/mo, ~$100k/mo revenue in US iOS) — a volume/ads business, not a whale business.
 
+> **v1.0 amendment (issue #3, 2026-08-30):** ads are **suspended for v1.0** — the game is fully playable ad-free, with ads OFF by default and enabled only via an explicit settings toggle (see §8). The ad-supported model above describes the eventual business, not the v1.0 default experience.
+
 ### 1.5 Weaknesses to exploit
 1. **Ad experience is the #1 complaint.** Non-dismissable, redirect-to-store ads dominate negative reviews. → Strict ad frequency caps, guaranteed skip after n seconds, never interrupt mid-level.
 2. Ads are the only real monetization; no meaningful cosmetic economy.
@@ -49,13 +51,14 @@ Free, ad-supported (interstitial + rewarded video), with IAP for ad removal and 
 - Daily Challenge
 - Local progression persistence
 - Accessibility-first UI
-- Ads (banner + rewarded) and Remove-Ads IAP
+- Ads **suspended** (issue #3): fully playable ad-free; ads OFF by default, opt-in via settings toggle. When enabled, banner + interstitial + rewarded per §8. Remove-Ads IAP **deferred to v1.1+** (redundant while ads are opt-in)
 
 ### 2.2 v1.1+
 - Active Mind / memory mode
 - Themes and tile sets (soft monetization)
 - Cloud save + cross-device sync
 - Trophy/streak system, leaderboards
+- Remove-Ads IAP (deferred from v1.0; only relevant once ads default ON)
 - Special tiles
 
 ### 2.3 Out of scope
@@ -158,6 +161,7 @@ Starting grant: 5 of each. Replenishment: daily login grant, level milestones, r
 - No double-tap, long-press, drag, or pinch requirements for core play. Optional pinch-zoom on tablets.
 - Mis-tap forgiveness: nearest-free-tile resolution within 8dp of a tap point.
 - Audio and haptics independently toggleable; both default ON but gentle.
+- Ads master toggle in settings; **default OFF** (see §8). Turning it on enables banner/interstitial/rewarded under the §8 rules; turning it off disables all ads immediately.
 - No countdowns, no lives, no energy gates.
 - Auto-save on every move; resume mid-level after force-quit.
 
@@ -165,10 +169,12 @@ Starting grant: 5 of each. Replenishment: daily login grant, level milestones, r
 
 ## 8. Monetization Rules
 
+**v1.0 policy (issue #3, 2026-08-30): ads are suspended.** All ads are OFF by default; the full game is playable ad-free. A settings toggle (§7) lets the player opt in. The rules below apply whenever ads are enabled — this also resolves the former §2.1/§8 contradiction: when the toggle is on, banner + interstitial + rewarded are all in scope under these rules.
+
 - **Interstitials:** never mid-level. Only after level completion, max 1 per 3 completed levels, min 90s between. Hard skip available after 5s.
 - **Rewarded video:** always opt-in, always for boosters/extra shuffle. Clearly labeled reward.
 - **Banner:** menu screens only. Never overlapping the board.
-- **Remove Ads IAP:** single non-consumable, removes interstitials and banners; rewarded video remains available by choice.
+- **Remove Ads IAP:** deferred to v1.1+ — redundant while ads are opt-in (the toggle already removes them). If/when ads default ON, it returns as a single non-consumable removing interstitials and banners; rewarded video remains available by choice.
 - No ad may redirect out of the app without an explicit user tap on the ad creative.
 
 ---

@@ -21,7 +21,7 @@
 1. **Stack choice** (spec §9 leaves it open). Added requirement (PM, 2026-08-30): playable on any mobile device AND desktop, no OS restriction. **Recommendation: web-first TypeScript + Canvas (PixiJS)** — `/core` as a pure TS package (matches spec §9 module naming), runs in any browser on all OSs, playtests distribute as a URL; wrap with Capacitor in Phase 4 for store builds (ads/IAP SDKs in the wrapper). Spike still validates the a11y approach (DOM/ARIA overlay on the canvas board). Fallback: Flutter if the Capacitor ads/IAP or low-end-device perf spike fails.
 2. **App name + art direction** — IP-safe original name/icon/tile art (spec §12, store-rejection risk). Art is the longest external lead time; commission tile-set + UI art **in parallel with M1**.
 3. **Ad mediation + analytics vendors** — pick by end of M2 (AdMob/AppLovin MAX; Firebase Analytics baseline). Needed for M4 integration, but SDK choice affects app size budget (< 80MB).
-4. **Spec contradiction to resolve with spec owner:** §2.1 MVP lists "Ads (banner + rewarded)" but §8 defines interstitial rules. This roadmap assumes interstitials ARE v1.0 (per §8); amend §2.1 to match or drop interstitials from Phase 4.
+4. **Spec contradiction — RESOLVED (issue #3, 2026-08-30):** ads are **suspended for v1.0** — fully playable ad-free, all ads OFF by default, opt-in via settings toggle. When enabled, banner + interstitial + rewarded all apply under spec §8 (contradiction moot). Remove-Ads IAP deferred to v1.1+. Phase 4 scope updated below.
 5. **Staffing assumption** (all dates depend on this): 2 engineers (1 core/gameplay, 1 UI/services) + 1 contract artist + PM/QA (Danh). Phases 2–4 assume the two engineers work in parallel; single-engineer reality stretches Phases 2–4 by ~50%.
 
 ## 2b. Playtest checkpoints (for PM)
@@ -29,7 +29,7 @@
 | When | What's playable |
 |---|---|
 | **End of wk 5** (Phase 2 exit) | First hands-on playtest: one full level, boosters, save/resume — any browser (mobile or desktop) |
-| **End of wk 9** (Phase 4 exit) | Feature-complete MVP per spec §2.1: 500 levels, Daily Challenge, ads/IAP — broad playtest |
+| **End of wk 9** (Phase 4 exit) | Feature-complete MVP per spec §2.1: 500 levels, Daily Challenge, ads behind opt-in toggle (default OFF) — broad playtest |
 | **Wk 12** (Phase 5 exit) | Release-quality build → soft launch |
 
 ## 3. Phases
@@ -44,7 +44,7 @@
 **Risk watched:** solver blow-up on dense layouts → bounded DFS + memo, reseed fallback.
 
 ### Phase 2 — Playable vertical slice (M2) · 3 wks
-**Deliverables:** rendering + input on one layout (Turtle); tap select/deselect, mis-tap forgiveness (8dp nearest-free); Hint/Undo/Shuffle wired to core; auto-save every move + resume after force-quit; settings screen (audio + haptics independently toggleable, tile size S–XL, timed-mode opt-in); placeholder art.
+**Deliverables:** rendering + input on one layout (Turtle); tap select/deselect, mis-tap forgiveness (8dp nearest-free); Hint/Undo/Shuffle wired to core; auto-save every move + resume after force-quit; settings screen (audio + haptics independently toggleable, tile size S–XL, timed-mode opt-in, ads toggle **default OFF** per issue #3); placeholder art.
 **Accessibility is built here, not retrofitted** (spec §7 is the differentiator; canvas-drawn tiles have no native semantics tree — bolting it on later is a rewrite risk): 48dp minimum touch targets, semantic tile nodes for VoiceOver/TalkBack, every action ≤ 2 taps from board, no drag/long-press/pinch in core play.
 **Exit criteria:**
 - One full level playable end-to-end on phone + tablet, portrait + landscape.
@@ -61,11 +61,11 @@
 - Difficulty curve: no level's predicted difficulty (scorer metrics: `forced_move_ratio`, branching factor) deviates > 1 bucket from its ladder position; PM signs off against that report, not by feel.
 
 ### Phase 4 — Services (M4) · 2 wks
-**Deliverables:** rewarded video + interstitial + banner via mediation; frequency caps **in code** (never mid-level, ≤ 1/3 levels, ≥ 90s gap, skip after 5s); Remove-Ads IAP + restore; booster economy (grants, replenishment); analytics event set (spec §10); remote config for level reordering + ad tuning (caps floor stays in code).
+**Deliverables:** rewarded video + interstitial + banner via mediation, **all gated behind the settings ads toggle (default OFF, issue #3)** — no ad SDK init while the toggle is off; frequency caps **in code** (never mid-level, ≤ 1/3 levels, ≥ 90s gap, skip after 5s); booster economy (grants, replenishment); analytics event set (spec §10); remote config for level reordering + ad tuning (caps floor stays in code). ~~Remove-Ads IAP + restore~~ deferred to v1.1+ (issue #21).
 **Exit criteria:**
-- Instrumented ad-stub test asserts no mid-level interstitial and min-interval respected (spec §11.4).
-- IAP restore verified on fresh install, both stores.
-- Booster accounting correct on ad-failed / ad-abandoned paths.
+- With ads toggle OFF (default): zero ad SDK calls in an instrumented full session.
+- With ads toggle ON: instrumented ad-stub test asserts no mid-level interstitial and min-interval respected (spec §11.4).
+- Booster accounting correct on ad-failed / ad-abandoned paths (rewarded, toggle ON).
 - All analytics events visible in dashboard from a test device.
 
 ### Phase 5 — Polish, a11y audit, performance (M5) · 3 wks
@@ -78,7 +78,7 @@ Scope note: spec §11.1–11.2 tests run continuously in Phases 1–4 (see their
 
 ### Phase 6 — Soft launch → global (M6) · 3–4 wks (data-gated, not time-boxed)
 **Plan:** limited geo (e.g. CA/AU/PH), staged rollout.
-**Tune on real data:** ad frequency (within code-cap floor), difficulty curve via abandon-rate-by-level telemetry, deadlock rate by layout.
+**Tune on real data:** ad frequency for opted-in users (within code-cap floor) + ads-toggle opt-in rate, difficulty curve via abandon-rate-by-level telemetry, deadlock rate by layout.
 **Go/no-go for global:** goals table §1 met or consciously waived; crash-free sessions ≥ 99.5%.
 
 ## 4. Timeline summary
