@@ -1,6 +1,8 @@
 export { Board, footprintsOverlap, slotKey } from './board.js';
 export type { Slot, Tile, TileId } from './board.js';
 export { facesMatch, STANDARD_144 } from './faces.js';
+export { assessDifficulty, bucketDifficulty, difficultyScore, scoreDifficulty } from './difficulty.js';
+export type { DifficultyAssessment, DifficultyBucket, DifficultyMetrics } from './difficulty.js';
 export { generateLevel, generateValidatedLevel } from './generator.js';
 export type { GeneratedLevel } from './generator.js';
 export { solve, findHint, legalPairs, DEFAULT_MAX_STATES } from './solver.js';
