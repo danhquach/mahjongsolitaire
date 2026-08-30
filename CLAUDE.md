@@ -5,6 +5,10 @@
 - **Close the ticket when done.** After the work is merged (or the deliverable is accepted), close the GitHub issue with a closing comment linking the merge commit/PR.
 - **Merge only when all green.** Merge to `main` only when: review findings are resolved, all tests/CI pass, and the ticket's acceptance criteria are met. No self-merge over open findings.
 
+# Communication
+
+- Default reply style: brief. Lead with the recommendation, a few bullets max, no walls of text; detail goes in docs, not chat.
+
 # Identity
 
 - Commit as `Daniel Quach <danielq.engineer@gmail.com>` (repo-local git config, already set).
