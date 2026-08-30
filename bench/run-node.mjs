@@ -5,7 +5,7 @@
 //
 // Usage: node bench/run-node.mjs [--iterations 200] [--warmup 20] [--seed 1] [--layout <id>]
 
-import { runBenchmark } from './harness.js';
+import { runBenchmark, P95_GATE_MS } from './harness.js';
 import { loadTarget } from './target.js';
 
 function arg(name, fallback) {
@@ -13,7 +13,6 @@ function arg(name, fallback) {
   return i !== -1 && process.argv[i + 1] !== undefined ? process.argv[i + 1] : fallback;
 }
 
-const P95_GATE_MS = 150;
 const { target, isStub } = await loadTarget();
 const layoutId = arg('layout', target.layouts[0]);
 const iterations = Number(arg('iterations', 200));

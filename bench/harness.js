@@ -5,6 +5,9 @@
 
 import { summarize } from './stats.js';
 
+/** Phase 1 exit gate: gen+solve p95 budget in ms (spec §9). */
+export const P95_GATE_MS = 150;
+
 /**
  * A bench target is the contract `/core` must export from its bench entry
  * (see target.js):

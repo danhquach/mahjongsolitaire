@@ -44,10 +44,9 @@
 <button id="copy" hidden>Copy JSON report</button>
 
 <script type="module">
-import { runBenchmark } from './harness.js';
+import { runBenchmark, P95_GATE_MS } from './harness.js';
 import { loadTarget } from './target.js';
 
-const P95_GATE_MS = 150;
 const $ = (id) => document.getElementById(id);
 
 const { target, isStub } = await loadTarget();
@@ -119,9 +118,23 @@ function render(report, iterations) {
 }
 
 $('copy').addEventListener('click', async () => {
-  await navigator.clipboard.writeText($('json').value);
-  $('copy').textContent = 'Copied ✓';
-  setTimeout(() => ($('copy').textContent = 'Copy JSON report'), 1500);
+  // The documented device workflow serves over plain http, where
+  // navigator.clipboard is unavailable (secure contexts only) — fall back to
+  // selecting the textarea, and say so if even that copy fails.
+  let ok = false;
+  try {
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText($('json').value);
+      ok = true;
+    }
+  } catch { /* fall through to legacy path */ }
+  if (!ok) {
+    $('json').focus();
+    $('json').select();
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
+  }
+  $('copy').textContent = ok ? 'Copied ✓' : 'Copy failed — text selected, copy manually';
+  setTimeout(() => ($('copy').textContent = 'Copy JSON report'), 2500);
 });
 
 // Autorun via URL params (headless smoke / one-tap device runs), e.g.

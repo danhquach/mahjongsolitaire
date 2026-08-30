@@ -16,14 +16,26 @@
 //
 // Until that entry exists, the loader falls back to the stand-in workload in
 // target-stub.js so the harness itself can be validated on-device now.
+// A core entry that exists but fails to load (syntax error, bad import,
+// missing export) is a loud failure, never a silent stub fallback.
+
+function isModuleNotFound(err) {
+  // Node: ERR_MODULE_NOT_FOUND. Browsers: dynamic-import fetch failures
+  // surface as a TypeError (there is no dedicated error code).
+  return err?.code === 'ERR_MODULE_NOT_FOUND' || err instanceof TypeError;
+}
 
 export async function loadTarget() {
+  let core;
   try {
-    const core = await import('../core/dist/bench.js');
-    if (!core.benchTarget) throw new Error('core/dist/bench.js has no benchTarget export');
-    return { target: core.benchTarget, isStub: false };
-  } catch {
+    core = await import('../core/dist/bench.js');
+  } catch (err) {
+    if (!isModuleNotFound(err)) {
+      throw new Error(`core/dist/bench.js exists but failed to load: ${err}`, { cause: err });
+    }
     const stub = await import('./target-stub.js');
     return { target: stub.benchTarget, isStub: true };
   }
+  if (!core.benchTarget) throw new Error('core/dist/bench.js loaded but has no benchTarget export');
+  return { target: core.benchTarget, isStub: false };
 }
