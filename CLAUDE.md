@@ -1,0 +1,14 @@
+# Workflow rules (mandatory)
+
+- **One branch per ticket.** Never commit work directly to `main`. For each GitHub issue, create a branch first: `issue-<n>-<short-slug>` (e.g. `issue-2-core-engine`).
+- **Branch review before merge.** When pushing a branch, run a code review of the full branch diff (`main..HEAD`) — correctness, tests, and the repo's spec/roadmap acceptance criteria for that ticket.
+- **Merge only when all green.** Merge to `main` only when: review findings are resolved, all tests/CI pass, and the ticket's acceptance criteria are met. No self-merge over open findings.
+
+# Identity
+
+- Commit as `Daniel Quach <danielq.engineer@gmail.com>` (repo-local git config, already set).
+
+# Project docs
+
+- Spec: `mahjong-solitaire-spec.md` · Roadmap: `ROADMAP.md` · Decisions: `docs/decisions/`
+- Tickets are GitHub issues on this repo (`gh issue view <n>`).
