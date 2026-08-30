@@ -21,4 +21,4 @@ jobs:
           npm ci
           npm test
       - name: Bench harness tests
-        run: node --test bench/test/
+        run: node --test bench/test/*.test.mjs
