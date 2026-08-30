@@ -1,6 +1,6 @@
 # Decision 0002 — App name & art direction: "Lantern Tiles", original commissioned art
 
-**Status:** DRAFT — pending PM approval + legal clearance · **Date:** 2026-08-30 · **Issue:** #2 · **Roadmap:** §2.2
+**Status:** APPROVED (PM, 2026-08-30) — legal clearance pending · **Date:** 2026-08-30 · **Issue:** #2 · **Roadmap:** §2.2
 
 ## Decision
 

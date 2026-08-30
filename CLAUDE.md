@@ -8,6 +8,7 @@
 # Communication
 
 - Default reply style: brief. Lead with the recommendation, a few bullets max, no walls of text; detail goes in docs, not chat.
+- Wait for explicit confirmation before committing/pushing work.
 
 # Identity
 
