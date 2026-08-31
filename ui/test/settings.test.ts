@@ -225,3 +225,36 @@ test('timed mode reads as a stopwatch, never a countdown', () => {
   assert.equal(formatElapsed(3_661_000), '1:01:01');
   assert.equal(formatElapsed(-5), '0:00', 'never negative');
 });
+
+// --- reduced motion + split cue channels (issue #44) -------------------------
+
+test('reduced motion defaults off and rejects a non-boolean stored value', () => {
+  assert.equal(DEFAULT_SETTINGS.reducedMotion, false);
+  assert.equal(parseSettings({}).reducedMotion, false);
+  assert.equal(parseSettings({ reducedMotion: 'yes' }).reducedMotion, false);
+  assert.equal(parseSettings({ reducedMotion: true }).reducedMotion, true);
+});
+
+test('a match can sound at the tap and buzz at the collision, 200ms apart', () => {
+  const spy = spyFeedback(DEFAULT_SETTINGS);
+  spy.feedback.sound('match');
+  assert.deepEqual(spy.played, ['match'], 'the tap is answered audibly at once');
+  assert.equal(spy.vibrated.length, 0, 'nothing physical until the tiles hit');
+  spy.feedback.haptic('match');
+  assert.equal(spy.vibrated.length, 1, 'the impact taps back');
+  assert.deepEqual(spy.played, ['match'], 'and does not sound a second time');
+});
+
+test('each half of a split cue still reads its own toggle', () => {
+  const spy = spyFeedback({ ...DEFAULT_SETTINGS, audio: false });
+  spy.feedback.sound('match');
+  spy.feedback.haptic('match');
+  assert.deepEqual(spy.played, [], 'audio off: the match is silent');
+  assert.equal(spy.vibrated.length, 1, 'haptics on: the impact still taps');
+
+  spy.set({ audio: true, haptics: false });
+  spy.feedback.sound('match');
+  spy.feedback.haptic('match');
+  assert.deepEqual(spy.played, ['match'], 'audio back on');
+  assert.equal(spy.vibrated.length, 1, 'haptics off: no new buzz');
+});

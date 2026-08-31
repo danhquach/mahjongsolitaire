@@ -15,7 +15,7 @@
 
 import { Container, Graphics, Rectangle, Sprite, Text } from 'pixi.js';
 import type { Application, Texture } from 'pixi.js';
-import type { TileId } from '@mahjongsolitaire/core';
+import type { Tile, TileId } from '@mahjongsolitaire/core';
 import {
   BORDER_WIDTH,
   BORDER_WIDTH_ACTIVE,
@@ -151,7 +151,15 @@ export interface DrawState {
 }
 
 export class BoardRenderer {
+  /** Carries the fit transform; both layers below it work in board px. */
+  private readonly viewport = new Container();
   private readonly boardLayer = new Container();
+  /** In-flight match copies and impact particles (issue #44). A sibling of
+   *  boardLayer under the same transform, so an effect is written in board px
+   *  and always paints above every tile. */
+  private readonly effectsLayer = new Container();
+  /** This frame's tile containers, by id — the shake target (issue #44). */
+  private readonly tileNodes = new Map<TileId, Container>();
   private readonly bounds: Rect;
   /** Topmost layer of the loaded layout — the depth ladder's bright end. */
   private readonly topZ: number;
@@ -167,7 +175,8 @@ export class BoardRenderer {
     this.bounds = boardBounds(layoutSlots);
     this.topZ = Math.max(...layoutSlots.map((s) => s.z));
     this.shadowTexture = this.bakeShadow();
-    app.stage.addChild(this.boardLayer);
+    this.viewport.addChild(this.boardLayer, this.effectsLayer);
+    app.stage.addChild(this.viewport);
   }
 
   get scale(): number {
@@ -242,8 +251,8 @@ export class BoardRenderer {
     const availW = this.app.renderer.width - 2 * BOARD_MARGIN;
     const availH = this.app.renderer.height - 2 * BOARD_MARGIN;
     this.viewScale = fit * this.sizeFactor;
-    this.boardLayer.scale.set(this.viewScale);
-    this.boardLayer.position.set(
+    this.viewport.scale.set(this.viewScale);
+    this.viewport.position.set(
       (availW - this.bounds.w * this.viewScale) / 2 + BOARD_MARGIN - this.bounds.x * this.viewScale,
       (availH - this.bounds.h * this.viewScale) / 2 + BOARD_MARGIN - this.bounds.y * this.viewScale,
     );
@@ -252,16 +261,16 @@ export class BoardRenderer {
   /** Convert a pointer event position (CSS px, canvas-relative) to board px. */
   toBoardPoint(cssX: number, cssY: number): { x: number; y: number } {
     return {
-      x: (cssX - this.boardLayer.position.x) / this.viewScale,
-      y: (cssY - this.boardLayer.position.y) / this.viewScale,
+      x: (cssX - this.viewport.position.x) / this.viewScale,
+      y: (cssY - this.viewport.position.y) / this.viewScale,
     };
   }
 
   /** Inverse of toBoardPoint — board px to canvas-relative CSS px. */
   toCssPoint(boardX: number, boardY: number): { x: number; y: number } {
     return {
-      x: boardX * this.viewScale + this.boardLayer.position.x,
-      y: boardY * this.viewScale + this.boardLayer.position.y,
+      x: boardX * this.viewScale + this.viewport.position.x,
+      y: boardY * this.viewScale + this.viewport.position.y,
     };
   }
 
@@ -271,9 +280,9 @@ export class BoardRenderer {
     // `{ children: true }` leaves textures alone, which is what keeps the one
     // baked shadow texture alive across every redraw.
     this.boardLayer.removeChildren().forEach((c) => c.destroy({ children: true }));
+    this.tileNodes.clear();
     const tiles = [...game.board.presentTiles()].sort((a, b) => paintOrder(a.slot, b.slot));
     for (const tile of tiles) {
-      const r = tileRect(tile.slot);
       const selected = state.selection === tile.id;
       const flashed = state.flash.includes(tile.id);
       const hinted = state.hint.includes(tile.id);
@@ -281,90 +290,154 @@ export class BoardRenderer {
       // be dimmed — the dim must never fight the selection or hint cue.
       const dimmed =
         state.dimBlocked && !selected && !hinted && !flashed && !game.board.isFree(tile.id);
-      const shade = tileShade(tile.slot.z, this.topZ, dimmed);
+      const node = this.buildTile(tile, { selected, flashed, hinted, dimmed });
+      this.tileNodes.set(tile.id, node);
+      this.boardLayer.addChild(node);
+    }
+  }
 
-      const shadow = new Sprite(this.shadowTexture);
-      shadow.position.set(r.x - SHADOW_PAD, r.y - SHADOW_PAD);
-      this.boardLayer.addChild(shadow);
+  /**
+   * One tile as its own container: shadow, shaded sides, face, ink, tag.
+   *
+   * A container per tile (rather than everything straight onto boardLayer) is
+   * what lets the mismatch shake nudge a single tile between redraws — and it
+   * is the same builder the flying copies use, so a tile in flight is the tile
+   * that was on the board a frame earlier (issue #44).
+   */
+  private buildTile(
+    tile: Tile,
+    opts: {
+      readonly selected: boolean;
+      readonly flashed: boolean;
+      readonly hinted: boolean;
+      readonly dimmed: boolean;
+    },
+  ): Container {
+    const { selected, flashed, hinted, dimmed } = opts;
+    const node = new Container();
+    const r = tileRect(tile.slot);
+    const shade = tileShade(tile.slot.z, this.topZ, dimmed);
 
-      const g = new Graphics();
-      // Side extrusion down-right, one tile's depth on every layer so a tall
-      // stack does not read as a thicker slab; right/lower neighbors and upper
-      // layers paint over it (paintOrder), leaving only the exposed edges.
-      // Shaded in bands, base first: each band overpaints the darker one
-      // behind it, so what survives is light at the face and dark at the base.
-      const bands = shade.sideBands;
-      bands.forEach((color, i) => {
-        const depth = (SIDE_DEPTH * (bands.length - i)) / bands.length;
-        g.roundRect(r.x, r.y, r.w + depth, r.h + depth, TILE_RADIUS).fill(color);
+    const shadow = new Sprite(this.shadowTexture);
+    shadow.position.set(r.x - SHADOW_PAD, r.y - SHADOW_PAD);
+    node.addChild(shadow);
+
+    const g = new Graphics();
+    // Side extrusion down-right, one tile's depth on every layer so a tall
+    // stack does not read as a thicker slab; right/lower neighbors and upper
+    // layers paint over it (paintOrder), leaving only the exposed edges.
+    // Shaded in bands, base first: each band overpaints the darker one
+    // behind it, so what survives is light at the face and dark at the base.
+    const bands = shade.sideBands;
+    bands.forEach((color, i) => {
+      const depth = (SIDE_DEPTH * (bands.length - i)) / bands.length;
+      g.roundRect(r.x, r.y, r.w + depth, r.h + depth, TILE_RADIUS).fill(color);
+    });
+    g.roundRect(r.x, r.y, r.w, r.h, TILE_RADIUS)
+      .fill(selected ? FACE_SELECTED : hinted ? FACE_HINT : shade.face)
+      .stroke({
+        width: selected || flashed || hinted ? BORDER_WIDTH_ACTIVE : BORDER_WIDTH,
+        color: flashed
+          ? COLOR_FLASH
+          : selected
+            ? COLOR_SELECTED
+            : hinted
+              ? COLOR_HINT
+              : shade.border,
       });
-      g.roundRect(r.x, r.y, r.w, r.h, TILE_RADIUS)
-        .fill(selected ? FACE_SELECTED : hinted ? FACE_HINT : shade.face)
-        .stroke({
-          width: selected || flashed || hinted ? BORDER_WIDTH_ACTIVE : BORDER_WIDTH,
-          color: flashed
-            ? COLOR_FLASH
-            : selected
-              ? COLOR_SELECTED
-              : hinted
-                ? COLOR_HINT
-                : shade.border,
-        });
-      this.boardLayer.addChild(g);
+    node.addChild(g);
 
-      const style = faceStyle(tile.face);
-      // Ink recedes with the face it sits on, faster than the face does, so
-      // the 4.5:1 figure/ground budget widens as layers go back (depth.ts).
-      const ink = shade.ink(style.color);
-      if (style.pips) {
-        // Per-rank pip art (issue #35, redrawn in the traditional idiom for
-        // issue #45). Placement and sizing — including staying inside the face
-        // and clear of the corner tag — are pips.ts.
-        const pipG = new Graphics();
-        const metrics = pipMetrics(style.pips);
-        for (const pip of style.pips) {
-          const c = pipCenter(pip);
-          const px = r.x + c.x;
-          const py = r.y + c.y;
-          // The accent recedes with everything else, or a dimmed tile would
-          // keep one bright half and read as partly lit.
-          const accent = pip.accent === undefined ? ink : shade.ink(pip.accent);
-          if (style.pipShape === 'cane') {
-            drawCane(pipG, px, py, metrics.caneW, metrics.caneH, accent);
-          } else {
-            drawRing(pipG, px, py, metrics.ringR, ink, accent, shade.face);
-          }
+    const style = faceStyle(tile.face);
+    // Ink recedes with the face it sits on, faster than the face does, so
+    // the 4.5:1 figure/ground budget widens as layers go back (depth.ts).
+    const ink = shade.ink(style.color);
+    if (style.pips) {
+      // Per-rank pip art (issue #35, redrawn in the traditional idiom for
+      // issue #45). Placement and sizing — including staying inside the face
+      // and clear of the corner tag — are pips.ts.
+      const pipG = new Graphics();
+      const metrics = pipMetrics(style.pips);
+      for (const pip of style.pips) {
+        const c = pipCenter(pip);
+        const px = r.x + c.x;
+        const py = r.y + c.y;
+        // The accent recedes with everything else, or a dimmed tile would
+        // keep one bright half and read as partly lit.
+        const accent = pip.accent === undefined ? ink : shade.ink(pip.accent);
+        if (style.pipShape === 'cane') {
+          drawCane(pipG, px, py, metrics.caneW, metrics.caneH, accent);
+        } else {
+          drawRing(pipG, px, py, metrics.ringR, ink, accent, shade.face);
         }
-        this.boardLayer.addChild(pipG);
-      } else {
-        const glyph = new Text({
-          text: style.glyph,
-          style: {
-            fontSize: TILE_H * 0.42,
-            fill: ink,
-            fontFamily: 'sans-serif',
-            // Decision 0002 asks for thick, simplified strokes; a font glyph
-            // gets there with weight, and weight costs nothing in IP risk.
-            fontWeight: 'bold',
-          },
-        });
-        glyph.anchor.set(0.5);
-        // Centred in the same area the pips use, so a glyph face and a pip face
-        // sit on the same optical line and neither rides under the tag.
-        glyph.position.set(r.x + PIP_AREA.x + PIP_AREA.w / 2, r.y + PIP_AREA.y + PIP_AREA.h / 2);
-        this.boardLayer.addChild(glyph);
       }
-      const tag = new Text({
-        text: style.tag,
+      node.addChild(pipG);
+    } else {
+      const glyph = new Text({
+        text: style.glyph,
         style: {
-          fontSize: TAG_FONT_SIZE,
+          fontSize: TILE_H * 0.42,
           fill: ink,
           fontFamily: 'sans-serif',
+          // Decision 0002 asks for thick, simplified strokes; a font glyph
+          // gets there with weight, and weight costs nothing in IP risk.
           fontWeight: 'bold',
         },
       });
-      tag.position.set(r.x + TAG_ORIGIN.x, r.y + TAG_ORIGIN.y);
-      this.boardLayer.addChild(tag);
+      glyph.anchor.set(0.5);
+      // Centred in the same area the pips use, so a glyph face and a pip face
+      // sit on the same optical line and neither rides under the tag.
+      glyph.position.set(r.x + PIP_AREA.x + PIP_AREA.w / 2, r.y + PIP_AREA.y + PIP_AREA.h / 2);
+      node.addChild(glyph);
     }
+    const tag = new Text({
+      text: style.tag,
+      style: {
+        fontSize: TAG_FONT_SIZE,
+        fill: ink,
+        fontFamily: 'sans-serif',
+        fontWeight: 'bold',
+      },
+    });
+    tag.position.set(r.x + TAG_ORIGIN.x, r.y + TAG_ORIGIN.y);
+    node.addChild(tag);
+    return node;
+  }
+
+  /** Layer the match animation paints into — above every tile (issue #44). */
+  get effects(): Container {
+    return this.effectsLayer;
+  }
+
+  /** This frame's container for a tile, for effects that nudge it in place.
+   *  Undefined once a redraw has dropped the tile (matched, undone, shuffled),
+   *  which is how a stale shake retires itself. */
+  tileNode(id: TileId): Container | undefined {
+    return this.tileNodes.get(id);
+  }
+
+  /**
+   * A fresh, unparented copy of a tile, for the effects layer to fly (#44).
+   *
+   * Built from `board.get()`, which still resolves a tile the match has just
+   * removed — so main.ts can capture the copy after the tap has been applied.
+   * Painted at the top-layer shade with no highlight: it has left the stack,
+   * so the depth ladder it used to sit on no longer applies to it.
+   *
+   * The slot's z is swapped to the top layer for the same reason, which also
+   * moves the copy by the layer lift; the caller pivots it onto the tile's real
+   * centre and writes an absolute position every frame, so the build-time
+   * offset never reaches the screen.
+   */
+  detachedTile(game: Game, id: TileId): Container | undefined {
+    let tile: Tile;
+    try {
+      tile = game.board.get(id);
+    } catch {
+      return undefined; // id the board never knew
+    }
+    return this.buildTile(
+      { ...tile, slot: { ...tile.slot, z: this.topZ } },
+      { selected: false, flashed: false, hinted: false, dimmed: false },
+    );
   }
 }

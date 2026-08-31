@@ -1,4 +1,4 @@
-// Player settings (issue #14, spec §7). Six independent preferences, each
+// Player settings (issue #14, spec §7). Seven independent preferences, each
 // persisted the moment it changes so the settings screen needs no Save button:
 //
 //   audio        gentle sound effects  — default ON (§7)
@@ -7,6 +7,7 @@
 //   timedMode    opt-in elapsed clock  — default OFF (§6: no timer pressure)
 //   ads          ads master toggle     — default OFF (§8, decision 0004, #3)
 //   highlightFree dim the blocked tiles — default OFF (issue #45)
+//   reducedMotion cross-fade instead of flying tiles — default OFF (issue #44)
 //
 // Nothing reads `ads` yet: ads are suspended for v1.0 and issue #20 gates the
 // ad-SDK init on this toggle in Phase 4. It ships now so the settings screen
@@ -60,6 +61,13 @@ export interface Settings {
    * for players who cannot resolve the depth cues.
    */
   readonly highlightFree: boolean;
+  /**
+   * Replace the fly-together match animation with a plain cross-fade (issue
+   * #44). Default OFF, and OR'd with the OS `prefers-reduced-motion` in
+   * main.ts — the OS preference is honoured on its own, and this toggle lets a
+   * player opt in without changing an OS setting they may not control.
+   */
+  readonly reducedMotion: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -69,6 +77,7 @@ export const DEFAULT_SETTINGS: Settings = {
   timedMode: false,
   ads: false,
   highlightFree: false,
+  reducedMotion: false,
 };
 
 export const SETTINGS_STORAGE_KEY = 'mahjong.settings.v1';
@@ -81,8 +90,9 @@ function isTileSize(value: unknown): value is TileSize {
 export function parseSettings(record: unknown): Settings {
   if (typeof record !== 'object' || record === null) return DEFAULT_SETTINGS;
   const raw = record as Record<string, unknown>;
-  const bool = (key: 'audio' | 'haptics' | 'timedMode' | 'ads' | 'highlightFree'): boolean =>
-    typeof raw[key] === 'boolean' ? (raw[key] as boolean) : DEFAULT_SETTINGS[key];
+  const bool = (
+    key: 'audio' | 'haptics' | 'timedMode' | 'ads' | 'highlightFree' | 'reducedMotion',
+  ): boolean => (typeof raw[key] === 'boolean' ? (raw[key] as boolean) : DEFAULT_SETTINGS[key]);
   return {
     audio: bool('audio'),
     haptics: bool('haptics'),
@@ -90,6 +100,7 @@ export function parseSettings(record: unknown): Settings {
     timedMode: bool('timedMode'),
     ads: bool('ads'),
     highlightFree: bool('highlightFree'),
+    reducedMotion: bool('reducedMotion'),
   };
 }
 

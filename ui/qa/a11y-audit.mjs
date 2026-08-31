@@ -14,9 +14,9 @@
 //   4. a pair can be matched with the keyboard alone, outcomes are announced,
 //      and focus survives the tiles being removed;
 //   5. the end-of-level dialog is modal and takes focus;
-//   6. the settings screen (issue #14, plus issue #45's Highlight free tiles)
-//      is a labelled modal, reachable in one tap, every control named and
-//      ≥ 48dp, and Escape returns focus to it.
+//   6. the settings screen (issue #14, plus issue #45's Highlight free tiles
+//      and issue #44's Reduced motion) is a labelled modal, reachable in one
+//      tap, every control named and ≥ 48dp, and Escape returns focus to it.
 //
 // Real VoiceOver/TalkBack device passes remain a Phase 5 manual item; this
 // audit is the automated gate that keeps the semantics from regressing.
@@ -508,9 +508,9 @@ for (const vp of VIEWPORTS) {
       settingsControls.filter((c) => c.small),
     );
 
-    // Ten controls: five toggles (issue #45 added Highlight free tiles), four
-    // tile sizes, and Done.
-    check(settingsControls.length === 10, 'settings screen exposes all ten controls', {
+    // Eleven controls: six toggles (issue #45 added Highlight free tiles,
+    // issue #44 added Reduced motion), four tile sizes, and Done.
+    check(settingsControls.length === 11, 'settings screen exposes all eleven controls', {
       count: settingsControls.length,
     });
 
