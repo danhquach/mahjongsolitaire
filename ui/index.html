@@ -32,7 +32,7 @@
       header {
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 8px;
         padding: 8px 12px;
         color: #f0fdf4;
         font-size: 18px; /* spec §7: ≥ 18sp body */
@@ -45,11 +45,97 @@
         font-size: 18px;
         min-height: 48px; /* spec §7: 48dp touch targets */
         min-width: 48px;
-        padding: 8px 16px;
+        padding: 8px 12px;
         border-radius: 8px;
         border: 1px solid #bbf7d0;
         background: #166534;
         color: #f0fdf4;
+      }
+      /* --- Boosters (issue #13) --------------------------------------------
+         A vertical rail in the bottom-right corner of the board: thumb-reach on
+         a phone, and it keeps the HUD header to one row. The rail sits above
+         the canvas and below the end-of-level dialog, and it is inerted with
+         the rest of the background while that dialog is open.
+         Charge count rides in a badge on each button. Buttons stay enabled at
+         zero charges: pressing one then says why nothing happened, which a
+         `disabled` control cannot do (and some assistive technology skips
+         disabled controls entirely). `.spent` is the visual half of that. */
+      #booster-rail {
+        position: absolute;
+        right: calc(12px + env(safe-area-inset-right, 0px));
+        bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      #booster-rail button {
+        position: relative;
+        display: grid;
+        place-items: center;
+        /* Icon-only: 56dp square, comfortably over the spec §7 48dp minimum.
+           The icon carries no name — the accessible name is the button's
+           aria-label, kept in sync with the balance by main.ts. */
+        width: 56px;
+        height: 56px;
+        padding: 0;
+        border-radius: 10px;
+        border: 1px solid #bbf7d0;
+        background: #166534;
+        color: #f0fdf4;
+      }
+      #booster-rail svg {
+        width: 28px;
+        height: 28px;
+        fill: none;
+        stroke: currentColor;
+        /* Heavy stroke: a hairline outline reads as mostly empty space at
+           28px, and these are the HUD's only unlabelled controls. */
+        stroke-width: 3;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      /* Solid masses — the bulb body and the arrowheads — so each glyph reads
+         as a shape rather than an outline of one. */
+      #booster-rail svg .solid {
+        fill: currentColor;
+        stroke: none;
+      }
+      #booster-rail .charges {
+        position: absolute;
+        top: -7px;
+        right: -7px;
+        min-width: 22px;
+        padding: 1px 5px;
+        border-radius: 999px;
+        border: 1px solid #14532d;
+        background: #bbf7d0;
+        color: #14532d;
+        font-size: 14px;
+        font-weight: bold;
+        line-height: 1.4;
+      }
+      #booster-rail button.spent {
+        opacity: 0.6;
+      }
+      #booster-rail button.spent .charges {
+        background: #86a894;
+      }
+      /* Keep the stats + New game + Restart on one phone row, so the header
+         costs the board one row of height, not two. Where the HUD finally
+         belongs on each orientation is issue #37. */
+      @media (max-width: 560px) {
+        header {
+          gap: 6px;
+          padding: 6px 8px;
+          font-size: 16px;
+        }
+        header .stat {
+          min-width: 0;
+        }
+        header button {
+          font-size: 16px;
+          padding: 8px 10px;
+        }
       }
       #board {
         flex: 1;
@@ -152,6 +238,55 @@
       </header>
       <div id="board">
         <div id="a11y-layer"></div>
+        <div id="booster-rail" role="group" aria-label="Boosters">
+          <!-- Placeholder icon art (bulb / back-arrow / crossing arrows), like
+               the tile faces. `aria-hidden` on the drawing: the spoken name is
+               the button's aria-label, which main.ts keeps in sync with the
+               balance; `title` gives sighted players a hover tooltip. -->
+          <button
+            id="btn-hint"
+            type="button"
+            data-action="Hint"
+            title="Hint"
+            aria-label="Hint, 5 charges left"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path class="solid" d="M12 2a6.4 6.4 0 0 0-3.7 11.6V16h7.4v-2.4A6.4 6.4 0 0 0 12 2Z" />
+              <path d="M9.4 18.8h5.2" />
+              <path d="M10.4 21.6h3.2" />
+            </svg>
+            <span class="charges" id="charges-hint">5</span>
+          </button>
+          <button
+            id="btn-undo"
+            type="button"
+            data-action="Undo"
+            title="Undo"
+            aria-label="Undo, 5 charges left"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M7 9h6.5a5.5 5.5 0 1 1 0 11H8" />
+              <path class="solid" d="M8.6 3.4 2.8 9l5.8 5.6z" />
+            </svg>
+            <span class="charges" id="charges-undo">5</span>
+          </button>
+          <button
+            id="btn-shuffle"
+            type="button"
+            data-action="Shuffle"
+            title="Shuffle"
+            aria-label="Shuffle, 5 charges left"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3.5 20.5 18.5 5.5" />
+              <path d="M3.5 3.5 8.5 8.5" />
+              <path d="M14 14l4.5 4.5" />
+              <path class="solid" d="M13.5 3.5h7v7z" />
+              <path class="solid" d="M20.5 13.5v7h-7z" />
+            </svg>
+            <span class="charges" id="charges-shuffle">5</span>
+          </button>
+        </div>
         <div
           id="overlay"
           role="dialog"
@@ -162,6 +297,10 @@
           <div class="card">
             <h2 id="overlay-title"></h2>
             <p id="overlay-text"></p>
+            <!-- Deadlock way out (spec §4: never hard-fail the player); shown
+                 only for the stuck dialog, hidden on a win. -->
+            <button id="overlay-shuffle" type="button" data-action="Shuffle" hidden>Shuffle</button>
+            <button id="overlay-undo" type="button" data-action="Undo" hidden>Undo</button>
             <button id="overlay-restart" type="button">Restart level</button>
             <button id="overlay-new" type="button">New game</button>
           </div>

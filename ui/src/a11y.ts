@@ -50,11 +50,18 @@ export function traversalOrder(tiles: readonly A11yTile[]): A11yTile[] {
 export function tileAriaLabel(tile: A11yTile): string {
   const { label } = faceStyle(tile.face);
   const state = tile.free ? 'available' : 'blocked';
-  // Slots are half-units (spec §3.1); Turtle has half-offset rows/columns, so
-  // round to the nearest whole cell for a name a human can act on.
-  const row = Math.round(tile.slot.y / 2) + 1;
-  const col = Math.round(tile.slot.x / 2) + 1;
+  const { row, col } = slotPosition(tile.slot);
   return `${label}, ${state}, row ${row}, column ${col}`;
+}
+
+/**
+ * Human-facing row/column of a slot, 1-based. Slots are half-units (spec §3.1)
+ * and Turtle has half-offset rows/columns, so round to the nearest whole cell:
+ * a spoken position only has to be findable, not exact. Shared with the Hint
+ * booster's announcement (issue #13) so both name a tile the same way.
+ */
+export function slotPosition(slot: Slot): { row: number; col: number } {
+  return { row: Math.round(slot.y / 2) + 1, col: Math.round(slot.x / 2) + 1 };
 }
 
 /**

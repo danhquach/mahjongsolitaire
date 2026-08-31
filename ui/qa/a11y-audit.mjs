@@ -35,6 +35,8 @@ const MIN_TOUCH_TARGET = 48;
 /** Spec §7: "every action reachable within 2 taps from the board". */
 const MAX_TAPS_TO_ACTION = 2;
 const TILE_LABEL = /^.+, (available|blocked), row \d+, column \d+$/;
+/** Controls behind the modal dialog: the header and the booster rail. */
+const BACKGROUND_CONTROLS = ['btn-new', 'btn-restart', 'btn-hint', 'btn-undo', 'btn-shuffle'];
 
 const server = createServer(async (req, res) => {
   const path = req.url === '/' ? '/index.html' : req.url.split('?')[0];
@@ -158,7 +160,9 @@ for (const vp of VIEWPORTS) {
       // Visible targets only; the end-of-level dialog is audited while it is
       // actually open (it is display:none the rest of the time).
       const targets = [
-        ...document.querySelectorAll('header button, #a11y-layer .tile-node, #overlay button'),
+        ...document.querySelectorAll(
+          'header button, #booster-rail button, #a11y-layer .tile-node, #overlay button',
+        ),
       ].filter((n) => n.offsetParent !== null);
       return targets
         .map((n) => {
@@ -225,7 +229,9 @@ for (const vp of VIEWPORTS) {
         .filter((n) => !n.classList.contains('tile-node') && n.offsetParent !== null)
         .map((n) => {
           const r = n.getBoundingClientRect();
-          const name = n.textContent.trim();
+          // Booster labels carry a charge count, so the stable name is the
+          // action, declared as data-action (issue #13).
+          const name = n.dataset.action ?? n.textContent.trim();
           if (n.disabled) return { name, taps: unreachable, why: 'disabled' };
           const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
           if (!n.contains(top)) {
@@ -240,7 +246,7 @@ for (const vp of VIEWPORTS) {
       controls,
     );
     check(
-      controls.map((c) => c.name).join('|') === 'New game|Restart',
+      controls.map((c) => c.name).join('|') === 'New game|Restart|Hint|Undo|Shuffle',
       'board screen exposes the complete slice action set',
       controls,
     );
@@ -415,7 +421,7 @@ for (const vp of VIEWPORTS) {
     await page.keyboard.press('Shift+Tab');
     const back2 = await page.evaluate(() => document.activeElement?.id);
     check(
-      !['btn-new', 'btn-restart'].includes(back1) && !['btn-new', 'btn-restart'].includes(back2),
+      !BACKGROUND_CONTROLS.includes(back1) && !BACKGROUND_CONTROLS.includes(back2),
       'dialog traps focus: Tab never reaches the controls behind it',
       { back1, back2 },
     );
@@ -423,7 +429,11 @@ for (const vp of VIEWPORTS) {
 
     // Dialog buttons are 1 tap and meet the 48dp minimum while visible.
     const smallInDialog = await page.evaluate((min) => {
+      // The deadlock-only controls (issue #13) are hidden on a win, and a
+      // display:none control has no size to audit; they are measured while the
+      // stuck dialog shows them — see qa/e2e-slice.mjs.
       return [...document.querySelectorAll('#overlay button')]
+        .filter((n) => n.offsetParent !== null)
         .map((n) => ({ id: n.id, ...n.getBoundingClientRect().toJSON() }))
         .filter((r) => r.width + 0.01 < min || r.height + 0.01 < min);
     }, MIN_TOUCH_TARGET);

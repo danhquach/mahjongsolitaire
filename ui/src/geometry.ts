@@ -13,6 +13,14 @@ export const TILE_W = 2 * HALF_UNIT_X;
 export const TILE_H = 2 * HALF_UNIT_Y;
 /** Per-layer up-left shift of the top face — the 3D "lift" of stacked tiles. */
 export const LAYER_LIFT = 7;
+/**
+ * Thickness of a tile's visible side face, in board px. One tile's own depth,
+ * identical on every layer: extruding by the whole stack height instead makes
+ * an upper-layer tile read as a thick slab while a ground tile looks like
+ * paper. Equal to LAYER_LIFT so a tile's side exactly bridges the gap down to
+ * the layer below it. (Tile art proper is issue #45.)
+ */
+export const SIDE_DEPTH = LAYER_LIFT;
 
 export interface Rect {
   readonly x: number;
@@ -42,7 +50,8 @@ export function rectDistance(r: Rect, px: number, py: number): number {
   return Math.hypot(dx, dy);
 }
 
-/** Bounding box of a whole layout in board pixels (lift included). */
+/** Bounding box of a whole layout in board pixels (lift and side faces
+ *  included, so the extrusion on the right/bottom edge is never clipped). */
 export function boardBounds(slots: readonly Slot[]): Rect {
   let minX = Infinity;
   let minY = Infinity;
@@ -52,8 +61,8 @@ export function boardBounds(slots: readonly Slot[]): Rect {
     const r = tileRect(s);
     minX = Math.min(minX, r.x);
     minY = Math.min(minY, r.y);
-    maxX = Math.max(maxX, r.x + r.w);
-    maxY = Math.max(maxY, r.y + r.h);
+    maxX = Math.max(maxX, r.x + r.w + SIDE_DEPTH);
+    maxY = Math.max(maxY, r.y + r.h + SIDE_DEPTH);
   }
   return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 }
