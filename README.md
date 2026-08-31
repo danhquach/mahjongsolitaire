@@ -29,11 +29,11 @@ A cross-platform mahjong solitaire (tile-matching) game — accessibility-first,
 
 ### Playtest URL
 
-**https://lantern-tiles.pages.dev** — the current `main` build, redeployed automatically by CI on every push once tests are green. Open it on any phone, tablet, or desktop browser; nothing to install.
+The current `main` build is published to a Cloudflare Worker at `lantern-tiles.<subdomain>.workers.dev`, redeployed automatically by CI on every push once tests are green. Open it on any phone, tablet, or desktop browser; nothing to install.
 
-Open a pull request and it gets its own Cloudflare preview URL, printed by the CI run's *Deploy to Cloudflare Pages* step — so a change can be playtested before it lands. Pushing a branch without a PR deploys nothing; CI only runs on `main` pushes and pull requests.
+Only `main` deploys. A Worker deploy replaces the live version, so pull requests build and test but do not publish.
 
-> The URL goes live once the one-time Cloudflare setup in [decision 0006](docs/decisions/0006-web-deploy-cloudflare-pages.md) is done (two repo secrets). Until then CI builds the bundle and skips the deploy step with a notice.
+> The exact URL is printed by the CI run's *Deploy to Cloudflare* step; it is pasted here after the first successful deploy. It goes live once the two repo secrets in [decision 0006](docs/decisions/0006-web-deploy-cloudflare-pages.md) are set — until then CI builds the bundle and skips the deploy step with a notice.
 
 ## Planned repository layout
 

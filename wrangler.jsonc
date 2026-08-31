@@ -1,0 +1,12 @@
+{
+  // Cloudflare Worker that serves the playtest build as static assets (issue #15).
+  // The dashboard now creates Workers rather than Pages projects, so deploys go
+  // through `wrangler deploy` reading this file — not `wrangler pages deploy`.
+  "name": "lantern-tiles",
+  "compatibility_date": "2026-08-31",
+  // The bundle `ui` builds. CI downloads the tested artifact to this same path
+  // before deploying, so local and CI deploys upload identical trees.
+  "assets": {
+    "directory": "./ui/dist-web/"
+  }
+}

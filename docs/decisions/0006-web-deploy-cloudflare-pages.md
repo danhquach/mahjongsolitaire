@@ -1,25 +1,43 @@
-# Decision 0006 — Playtest web deploys go to Cloudflare Pages
+# Decision 0006 — Playtest web deploys go to Cloudflare
 
-**Status:** APPROVED (PM, 2026-08-30) · **Date:** 2026-08-30 · **Issue:** #15
+**Status:** APPROVED (PM, 2026-08-30) · **Date:** 2026-08-30 · **Issue:** #15 ·
+**Retargeted to Workers:** 2026-08-31 (#40)
 
 ## Decision
 
-Playtest builds deploy to **Cloudflare Pages**, driven by the existing `CI` workflow.
+Playtest builds deploy to a **Cloudflare Worker serving static assets**, driven by the existing
+`CI` workflow.
 
-- Push to `main` → production deploy → **https://lantern-tiles.pages.dev**
-- Open a pull request → its own Cloudflare **preview URL** (printed by the run's deploy step)
-- A branch with no PR open does **not** deploy — CI only triggers on `main` pushes and pull
-  requests, so pushing a branch alone runs nothing. Open the PR to get a preview URL.
+- Push to `main` → deploy → **https://lantern-tiles.\<subdomain\>.workers.dev**
+- Nothing else deploys. A Worker deploy replaces the live version, so running it from pull
+  requests would let any PR overwrite the playtest URL.
 - The deploy job `needs: [test, ui]`, and publishes the *artifact the `ui` job built* — a red
   suite can never reach the playtest URL, and the deployed bytes are the tested bytes.
+- `wrangler.jsonc` at the repo root holds the Worker name and the asset directory, so the same
+  `wrangler deploy` works from CI and from a laptop.
+
+### Why Workers and not Pages
+
+This decision originally specified Cloudflare **Pages**, and the workflow ran
+`wrangler pages deploy`. In practice the Cloudflare dashboard now steers you to create a
+**Worker** — the project created for this repo is at `/workers/services/`, not `/pages/`, and
+never had the Pages build fields the setup steps described. Cloudflare is folding Pages into
+Workers static assets, so rather than delete and recreate as a Pages project, this follows where
+the platform is going. Everything below is Workers-shaped; the Pages-era instructions were wrong
+in this repo's context and are gone rather than kept as an alternative.
+
+Consequence worth naming: **per-PR preview URLs are dropped.** They were a stated benefit of
+choosing Cloudflare, and Workers does offer preview versions, but wiring that up is more
+machinery than the wk-5 checkpoint needs. Revisit if playtesting several PRs at once becomes
+real.
 
 ## Why not GitHub Pages
 
 The repo is private and the account is on the free plan, where GitHub Pages requires a **public**
 repo. The alternatives were (a) make the repo public, (b) pay for GitHub Pro, or (c) a host that
-serves private repos for free. Cloudflare Pages was chosen because it keeps the repo private at no
-cost *and* gives per-PR preview URLs, which the wk-5 and wk-9 playtest checkpoints benefit from
-(reviewers open a link per PR instead of racing over one shared URL). Netlify/Vercel would also
+serves private repos for free. Cloudflare was chosen because it keeps the repo private at no
+cost. (Per-PR preview URLs were part of the original case for it; see "Why Workers and not
+Pages" above for why that benefit was dropped.) Netlify/Vercel would also
 work; Cloudflare wins on free-tier bandwidth and no seat/build-minute ceiling for this size of
 project.
 
@@ -29,41 +47,56 @@ Revisit if the repo ever goes public: GitHub Pages would then remove the third-p
 
 Until these exist the deploy step **skips** with a notice and CI stays green.
 
-1. Create a free Cloudflare account (if none) → **Workers & Pages → Create → Pages → Direct Upload**.
-2. Name the project exactly **`lantern-tiles`** and set its **production branch** to `main`.
-   The name is hardcoded in the workflow — see "Why the project name is not configurable" below.
-3. Create an API token: **My Profile → API Tokens → Create Token → Create Custom Token**, with
-   the single permission **Account → Cloudflare Pages → Edit**, and **Account Resources** limited
-   to the one account used in step 1.
+A Worker named `lantern-tiles` already exists in the account, created from the dashboard. Nothing
+further is needed there — `wrangler deploy` creates or updates the Worker from `wrangler.jsonc`,
+so no build command, output directory, or branch setting has to be configured in the UI. Two
+values are all that is missing:
 
-   Do *not* use the "Edit Cloudflare Workers" template. It grants Workers Scripts Edit, Workers KV
-   Edit, and Zone → Workers Routes Edit, none of which `pages deploy` needs — a leaked token would
-   then deploy arbitrary Workers and attach routes to zones, rather than merely overwrite a static
-   playtest site. (It may not even carry Pages Edit.)
-4. Copy the **Account ID** from the Workers & Pages sidebar.
-5. In this repo: **Settings → Secrets and variables → Actions** →
-   - secret `CLOUDFLARE_API_TOKEN` = the token from step 3
-   - secret `CLOUDFLARE_ACCOUNT_ID` = the ID from step 4
+1. Create an API token at **https://dash.cloudflare.com/profile/api-tokens** → Create Token →
+   **Create Custom Token**, with the permission **Account → Workers Scripts → Edit**, and
+   **Account Resources** limited to the one account holding the Worker.
 
-This token is the only credential in the repo and it is long-lived. Roll it (step 3, then update
+   Workers Scripts Edit is what `wrangler deploy` needs; a Cloudflare Pages token does not work
+   here. Keep it to that one permission — the stock "Edit Cloudflare Workers" template also
+   carries KV and zone-route access this pipeline never uses, so a leak would reach further than
+   overwriting a static playtest site.
+2. Copy the **Account ID** — the identifier segment of any dashboard URL
+   (`dash.cloudflare.com/<account-id>/...`).
+3. In this repo: **Settings → Secrets and variables → Actions** →
+   - secret `CLOUDFLARE_API_TOKEN` = the token from step 1
+   - secret `CLOUDFLARE_ACCOUNT_ID` = the ID from step 2
+
+This token is the only credential in the repo and it is long-lived. Roll it (step 1, then update
 the secret) if it is ever pasted outside the secret store, if CI logs are shared with anyone
 outside the project, or on any suspected compromise; revoke the old one in the same screen.
 
-## Why the project name is not configurable
+If the dashboard's own Git integration was connected while creating the Worker, it may also try
+to build on push and fail, since it has no build configuration. That is noisy but harmless: a
+failed build publishes nothing, so the last deploy from CI stays live. Disconnecting it in the
+Worker's settings silences it, and does not affect `wrangler deploy`.
 
-An earlier draft read the name from a repo variable so the Cloudflare project could be called
-anything. `wrangler-action` runs its `command` input through a shell, so that variable was
-interpolated into a shell command — and unlike the workflow file, repo variables are not
-code-reviewed. The name is now a literal in the workflow, and nothing outside the file reaches
-that command. One project name, pinned in two places, is cheaper than validating an escape hatch
-nobody asked for. If the project ever needs renaming, change it here and in the workflow together.
+## Why nothing is interpolated into the deploy command
+
+An earlier draft read the target name from a repo variable, and passed the branch on the command
+line. `wrangler-action` runs its `command` input through a shell, so both were shell-interpolated
+— and unlike the workflow file, repo variables and branch names are not code-reviewed. The deploy
+command is now the bare word `deploy`: the Worker name and asset directory come from
+`wrangler.jsonc`, and nothing from outside the repo reaches that shell at all.
+
+To rename the Worker, change `wrangler.jsonc` — the workflow does not mention the name.
 
 ## Consequences
 
 - The playtest URL is a third-party dependency; a Cloudflare outage blocks playtesting, not the build.
 - Bundle output stays `ui/dist-web` with Vite `base: './'`, so the same artifact works from a
   sub-path if the host ever changes.
-- Preview deploys run on PRs from this repo. Fork PRs receive no secrets, so their deploy step
-  skips — expected, and safe (a fork PR must never get a deploy credential).
-- Deploys are unauthenticated public URLs. Nothing secret ships in the bundle, but treat any
-  preview link as public when sharing.
+- Only `main` deploys, so there is no per-PR playtest link. Fork PRs receive no secrets in any
+  case — a fork PR must never get a deploy credential.
+- The deploy is an unauthenticated public URL. Nothing secret ships in the bundle, but treat the
+  link as public when sharing.
+- One live version at a time. A deploy replaces what is there, so rolling back means redeploying
+  an older commit (or promoting a previous version in the Cloudflare dashboard) rather than
+  flipping to a preserved preview.
+- The Cloudflare GitHub App keeps read access to this private repo for as long as the project is
+  Git-connected, even though deployment no longer flows through it. Removing the connection is
+  the way to revoke that; it does not affect the CLI-driven deploys.
