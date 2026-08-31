@@ -515,6 +515,16 @@
                 <span class="hint">Off by default. The game is complete without them.</span>
               </span>
             </label>
+            <!-- Issue #45 item 5: the depth cues (shadow, side shading, layer
+                 value shift) are meant to carry the board on their own, so this
+                 is an aid rather than the fix — off by default. -->
+            <label class="row" for="set-highlight-free">
+              <input type="checkbox" id="set-highlight-free" />
+              <span>
+                Highlight free tiles
+                <span class="hint">Dims the tiles that are covered or hemmed in.</span>
+              </span>
+            </label>
             <fieldset>
               <legend>Tile size</legend>
               <label class="row" for="set-size-s">

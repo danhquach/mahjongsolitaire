@@ -161,7 +161,12 @@ async function start(): Promise<void> {
   }
 
   function redraw(): void {
-    renderer.draw(game, { selection: game.selection, flash, hint: hintPair });
+    renderer.draw(game, {
+      selection: game.selection,
+      flash,
+      hint: hintPair,
+      dimBlocked: settings.value.highlightFree,
+    });
     scoreEl.textContent = String(game.score);
     tilesLeftEl.textContent = String(game.tilesLeft);
     syncBoosterButtons();
@@ -282,13 +287,18 @@ async function start(): Promise<void> {
    */
   const settingsToggles: ReadonlyArray<{
     readonly input: HTMLInputElement;
-    readonly key: 'audio' | 'haptics' | 'timedMode' | 'ads';
+    readonly key: 'audio' | 'haptics' | 'timedMode' | 'ads' | 'highlightFree';
     readonly name: string;
   }> = [
     { input: el<HTMLInputElement>('set-audio'), key: 'audio', name: 'Sound effects' },
     { input: el<HTMLInputElement>('set-haptics'), key: 'haptics', name: 'Vibration' },
     { input: el<HTMLInputElement>('set-timed'), key: 'timedMode', name: 'Timer' },
     { input: el<HTMLInputElement>('set-ads'), key: 'ads', name: 'Ads' },
+    {
+      input: el<HTMLInputElement>('set-highlight-free'),
+      key: 'highlightFree',
+      name: 'Highlight free tiles',
+    },
   ];
   const sizeInputs: ReadonlyArray<{ readonly input: HTMLInputElement; readonly size: TileSize }> =
     TILE_SIZES.map((size) => ({ input: el<HTMLInputElement>(`set-size-${size}`), size }));
@@ -357,6 +367,9 @@ async function start(): Promise<void> {
       input.addEventListener('change', () => {
         settings.set(key, input.checked);
         if (key === 'timedMode') drawClock();
+        // The only toggle the board itself reads — repaint so the change is
+        // visible while the settings screen is still open (issue #45).
+        if (key === 'highlightFree') redraw();
         // Tick the box audibly/physically when its own channel is switched on,
         // so "gentle" is something the player can check on the spot (§7).
         if ((key === 'audio' || key === 'haptics') && input.checked) feedback.cue('select');
