@@ -26,7 +26,8 @@ export const TILE_SIZES: readonly TileSize[] = ['s', 'm', 'l', 'xl'];
  * Tile size as a fraction of the fit-to-viewport scale (PM decision,
  * 2026-08-31): the board already fits the screen, so XL *is* the largest the
  * viewport allows and the smaller steps scale down from it. Zooming past the
- * fit would need a pan gesture, which belongs to board fit (issue #37).
+ * fit would need a pan gesture; issue #37 chose the HUD edge that makes the fit
+ * as large as it can be instead, and left pan/zoom unbuilt.
  */
 export const TILE_SIZE_FACTOR: Record<TileSize, number> = {
   s: 0.64,

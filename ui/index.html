@@ -24,10 +24,35 @@
         /* Core play is single taps only (spec §7): no double-tap zoom. */
         touch-action: manipulation;
       }
+      /* --- HUD placement (issue #37) ---------------------------------------
+         The HUD takes one edge and the board fits into what is left, so the
+         edge it takes decides the tile size. `data-hud` is set by main.ts,
+         which measures the board area each placement would leave and keeps the
+         one that fits the board larger — see src/hud-fit.ts. The two cases
+         differ only in flex direction here; everything below the fold (board,
+         canvas, a11y layer, rail) is placement-agnostic.
+
+         The rail goes on the *left*: the booster rail (bottom-right) and the
+         settings button (top-right) already live on the right edge of the
+         board, and a third right-hand column would crowd both. */
       #app {
         display: flex;
-        flex-direction: column;
         height: 100%;
+      }
+      /* Until main.ts has measured, there is no honest answer — and guessing
+         one (say, from an orientation media query) would mean a second, worse
+         placement rule that disagrees with the real one on some layouts. So
+         hold the HUD back instead of painting it on the wrong edge and moving
+         it: `visibility` keeps the element in layout, so the measurement below
+         still works, and the body's green is what shows meanwhile. */
+      #app:not([data-hud]) {
+        visibility: hidden;
+      }
+      #app[data-hud='top'] {
+        flex-direction: column;
+      }
+      #app[data-hud='side'] {
+        flex-direction: row;
       }
       header {
         display: flex;
@@ -38,8 +63,30 @@
         font-size: 18px; /* spec §7: ≥ 18sp body */
         flex-wrap: wrap;
       }
+      #app[data-hud='side'] > header {
+        /* A column of full-width rows. 120px is the narrowest that holds "New
+           game" on one line at 16px; the board gets every px beyond that, and
+           if a longer locale or Dynamic Type needs more, the measured fit sees
+           the real width rather than this number. */
+        flex: none;
+        width: 120px;
+        flex-direction: column;
+        align-items: stretch;
+        justify-content: flex-start;
+        gap: 8px;
+        padding: 8px;
+        font-size: 16px;
+        overflow-y: auto;
+      }
+      #app[data-hud='side'] > header button {
+        font-size: 16px;
+        padding: 8px 6px;
+      }
       header .stat {
         min-width: 90px;
+      }
+      #app[data-hud='side'] header .stat {
+        min-width: 0;
       }
       header button {
         font-size: 18px;
@@ -121,8 +168,8 @@
         background: #86a894;
       }
       /* Keep the stats + New game + Restart on one phone row, so the header
-         costs the board one row of height, not two. Where the HUD finally
-         belongs on each orientation is issue #37. */
+         costs the board one row of height, not two — which is also what makes
+         the top bar competitive with the side rail in portrait (issue #37). */
       @media (max-width: 560px) {
         header {
           gap: 6px;
@@ -337,6 +384,10 @@
     </style>
   </head>
   <body>
+    <!-- No data-hud: the HUD placement (issue #37) is whatever main.ts measures,
+         and the CSS above keeps #app invisible until it says. Hard-coding "top"
+         here instead would paint the header on the wrong edge and then move it
+         on every phone in landscape — the one viewport that picks the rail. -->
     <div id="app">
       <header id="app-header">
         <span class="stat">Score <strong id="score">0</strong></span>

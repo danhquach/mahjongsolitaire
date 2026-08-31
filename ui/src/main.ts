@@ -7,6 +7,9 @@
 // Issue #14 adds auto-save + resume (save.ts) and the settings screen
 // (settings.ts): audio and haptics via feedback.ts, tile size through the
 // renderer's fit, and an opt-in count-up clock via elapsed.ts.
+// Issue #37 makes the HUD edge itself part of the fit: applyHudPlacement()
+// measures the board area each candidate placement would leave and keeps the
+// one that fits the board larger (hud-fit.ts).
 
 import { Application } from 'pixi.js';
 import { generateValidatedLevel } from '@mahjongsolitaire/core';
@@ -23,6 +26,8 @@ import { Game } from './game.js';
 import { tileRect } from './geometry.js';
 import type { Rect } from './geometry.js';
 import { hitTest } from './hit-test.js';
+import { HUD_PLACEMENTS, chooseHudPlacement } from './hud-fit.js';
+import type { HudCandidate, HudPlacement } from './hud-fit.js';
 import { parseLayout } from './layout-loader.js';
 import { BoardRenderer } from './render.js';
 import { SaveStore, captureSave, reopen } from './save.js';
@@ -61,6 +66,7 @@ function randomSeed(): number {
 }
 
 async function start(): Promise<void> {
+  const appRoot = el<HTMLDivElement>('app');
   const boardDiv = el<HTMLDivElement>('board');
   const scoreEl = el<HTMLElement>('score');
   const tilesLeftEl = el<HTMLElement>('tiles-left');
@@ -300,6 +306,33 @@ async function start(): Promise<void> {
   function applyTileSize(): void {
     renderer.setSizeFactor(TILE_SIZE_FACTOR[settings.value.tileSize]);
     redraw();
+  }
+
+  /**
+   * Put the HUD on whichever edge leaves the board the larger fit (issue #37).
+   *
+   * The HUD's own footprint is measured, not modelled: each candidate is
+   * applied and #board is read back, so a wrapped button row, a longer locale
+   * or Dynamic Type all feed into the decision for free. Both reads happen in
+   * one synchronous task, so no intermediate placement is ever painted.
+   *
+   * Tile Size is deliberately not part of this: it multiplies both candidates
+   * by the same factor, so it cannot change which one is larger — a player on
+   * Small would otherwise get a different HUD than one on XL.
+   *
+   * Returns true if the placement changed, so the caller knows whether a re-fit
+   * is already coming from the resulting resize.
+   */
+  function applyHudPlacement(): boolean {
+    const previous = appRoot.dataset['hud'];
+    const candidates: HudCandidate[] = HUD_PLACEMENTS.map((placement) => {
+      appRoot.dataset['hud'] = placement;
+      // Read after each write: forces the two reflows that make this honest.
+      return { placement, availW: boardDiv.clientWidth, availH: boardDiv.clientHeight };
+    });
+    const best: HudPlacement = chooseHudPlacement(renderer.boardExtent, candidates);
+    appRoot.dataset['hud'] = best;
+    return best !== previous;
   }
 
   function openSettings(): void {
@@ -544,6 +577,18 @@ async function start(): Promise<void> {
     redraw();
   });
 
+  // Re-decide the HUD edge on every viewport change — an orientation flip is a
+  // resize, so there is nothing orientation-specific to listen for (issue #37).
+  //
+  // Only re-size Pixi when the edge actually moved. Pixi's own resize plugin
+  // listens on this same event and re-reads #board on the next frame, which
+  // already covers the case where the placement stayed put; when it moved,
+  // app.resize() re-reads #board now and cancels that queued frame, so the
+  // board is re-fit exactly once either way.
+  window.addEventListener('resize', () => {
+    if (applyHudPlacement()) app.resize();
+  });
+
   boosterUi.hint.button.addEventListener('click', () => useBooster('hint'));
   boosterUi.undo.button.addEventListener('click', () => useBooster('undo'));
   boosterUi.shuffle.button.addEventListener('click', () => useBooster('shuffle'));
@@ -575,6 +620,10 @@ async function start(): Promise<void> {
     if (settings.value.timedMode && !document.hidden) drawClock();
   }, CLOCK_TICK_MS);
 
+  // Pixi sized itself to #board during init, before any placement existed, so
+  // the canvas has to be re-read once there is one — this is also the call that
+  // reveals #app (see the `:not([data-hud])` rule in index.html).
+  if (applyHudPlacement()) app.resize();
   applyTileSize(); // fits the board for the stored tile size, then redraws
   if (resumed !== null) {
     announcer.say(`Game resumed. ${game.tilesLeft} tiles left. Score ${game.score}.`);
@@ -620,6 +669,13 @@ async function start(): Promise<void> {
     },
     stateHash() {
       return game.stateHash();
+    },
+    /** Chosen HUD edge and the board extent it was chosen against (#37 QA). */
+    hudPlacement(): HudPlacement {
+      return appRoot.dataset['hud'] as HudPlacement;
+    },
+    boardExtent(): { w: number; h: number } {
+      return { w: renderer.boardExtent.w, h: renderer.boardExtent.h };
     },
   };
 }

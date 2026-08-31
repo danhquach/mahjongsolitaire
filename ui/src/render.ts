@@ -9,6 +9,8 @@ import { faceStyle } from './faces.js';
 import type { Game } from './game.js';
 import { SIDE_DEPTH, TILE_H, TILE_W, boardBounds, paintOrder, tileRect } from './geometry.js';
 import type { Rect } from './geometry.js';
+import { BOARD_MARGIN, fitScale } from './hud-fit.js';
+import type { BoardExtent } from './hud-fit.js';
 
 const COLOR_TILE_FACE = 0xfdf6e3;
 const COLOR_TILE_SIDE = 0xcbb891;
@@ -45,6 +47,12 @@ export class BoardRenderer {
     return this.viewScale;
   }
 
+  /** The loaded layout's board-space bounds — what HUD placement fits against
+   *  (issue #37). Read-only; the layout does not change under a renderer. */
+  get boardExtent(): BoardExtent {
+    return this.bounds;
+  }
+
   /**
    * Tile Size (spec §7 S–XL, issue #14). The board already fits the viewport,
    * so the factor scales *down* from that fit — 1 is the largest the screen
@@ -57,18 +65,19 @@ export class BoardRenderer {
 
   /** Fit the board into the current renderer size, centered, with a margin. */
   layoutToViewport(): void {
-    const margin = 12;
     // Pixi v8: renderer.width/height are logical CSS px (resizeTo passes
     // clientWidth; TextureSource stores pixelWidth / resolution) — do NOT
     // divide by resolution again or HiDPI screens get a 1/DPR-scale board.
-    const availW = this.app.renderer.width - 2 * margin;
-    const availH = this.app.renderer.height - 2 * margin;
-    const fit = Math.min(availW / this.bounds.w, availH / this.bounds.h, 2);
+    // Same fitScale() the HUD placement was chosen with (issue #37), so the
+    // placement can never be picked against a fit the renderer then changes.
+    const fit = fitScale(this.bounds, this.app.renderer.width, this.app.renderer.height);
+    const availW = this.app.renderer.width - 2 * BOARD_MARGIN;
+    const availH = this.app.renderer.height - 2 * BOARD_MARGIN;
     this.viewScale = fit * this.sizeFactor;
     this.boardLayer.scale.set(this.viewScale);
     this.boardLayer.position.set(
-      (availW - this.bounds.w * this.viewScale) / 2 + margin - this.bounds.x * this.viewScale,
-      (availH - this.bounds.h * this.viewScale) / 2 + margin - this.bounds.y * this.viewScale,
+      (availW - this.bounds.w * this.viewScale) / 2 + BOARD_MARGIN - this.bounds.x * this.viewScale,
+      (availH - this.bounds.h * this.viewScale) / 2 + BOARD_MARGIN - this.bounds.y * this.viewScale,
     );
   }
 
