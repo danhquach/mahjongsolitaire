@@ -493,8 +493,10 @@ async function start(): Promise<void> {
     if (cue) feedback.cue(cue);
     redraw();
     // Spec §7: auto-save on every move. The selection counts as state too — a
-    // force-quit between the two taps of a pair resumes with it intact.
-    persist();
+    // force-quit between the two taps of a pair resumes with it intact. A tap
+    // that changed nothing (a miss with no selection, a buried tile) has
+    // nothing to save.
+    if (outcome.kind !== 'none' && outcome.kind !== 'blocked') persist();
     // A level-ending move is announced once, by showStatus: two live-region
     // writes in the same tick coalesce and the first is never spoken.
     if (game.status() === 'playing') announce(outcome);

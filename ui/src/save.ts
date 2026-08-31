@@ -85,20 +85,27 @@ function parseScores(value: unknown): ScoreSnapshot | null {
   return { score, streak, lastMatchMs: lastMatchMs as number | null };
 }
 
-/** Undo records, oldest first: ids present, timestamps non-decreasing (the
- *  ScoreKeeper rejects a backwards clock, so a save carrying one is corrupt). */
+/** Undo records, oldest first: ids present and each claimed once, timestamps
+ *  non-decreasing (the ScoreKeeper rejects a backwards clock, so a save
+ *  carrying one is corrupt). */
 function parseMoves(value: unknown): MoveRecord[] | null {
   if (!Array.isArray(value)) return null;
   const moves: MoveRecord[] = [];
+  const claimed = new Set<number>();
   let lastMs = -Infinity;
   for (const raw of value) {
     if (!isRecord(raw)) return null;
     const { a, b, atMs, prevSelection } = raw;
     const prevScores = parseScores(raw['prevScores']);
     if (!isCount(a) || !isCount(b) || a === b) return null;
+    // No tile may be claimed by two moves: undoing the second one would call
+    // Board.restore on a tile that is already back on the board, which throws.
+    if (claimed.has(a) || claimed.has(b)) return null;
     if (!isMs(atMs) || atMs < lastMs) return null;
     if (prevSelection !== null && !isCount(prevSelection)) return null;
     if (prevScores === null) return null;
+    claimed.add(a);
+    claimed.add(b);
     lastMs = atMs;
     moves.push({ a, b, atMs, prevSelection: prevSelection as TileId | null, prevScores });
   }
@@ -120,10 +127,17 @@ function parseSnapshot(value: unknown): GameSnapshot | null {
   const selection = stack['selection'];
   if (moves === null || scores === null) return null;
   if (selection !== null && !isCount(selection)) return null;
-  // Every removal is the trace of exactly one played move.
-  if (removed.length !== moves.length * 2) return null;
+  // Every removal is the trace of exactly one played move, and every move
+  // accounts for two removals — the moves must *partition* `removed`. Checking
+  // membership and count alone is not enough: a record could claim one tile
+  // twice and orphan another, which parses, reopens, and hashes identically to
+  // an honest game, then throws out of the click handler several undos later.
+  // parseMoves has already rejected a repeated id, so equal sizes plus
+  // one-way membership give set equality here.
+  const claimedIds = moves.flatMap((m) => [m.a, m.b]);
+  if (claimedIds.length !== removed.length) return null;
   const removedSet = new Set(removed as number[]);
-  if (moves.some((m) => !removedSet.has(m.a) || !removedSet.has(m.b))) return null;
+  if (claimedIds.some((id) => !removedSet.has(id))) return null;
   return {
     faces: faces as string[],
     removed: removed as TileId[],
@@ -143,6 +157,17 @@ export function parseSave(record: unknown): SaveState | null {
   if (!isCount(shuffles) || !isMs(elapsedMs)) return null;
   const snapshot = parseSnapshot(record['snapshot']);
   if (snapshot === null) return null;
+  // The clock must not run behind the game it is resuming. main.ts continues
+  // play at `elapsedMs`, and core's ScoreKeeper rejects a timestamp earlier
+  // than the last match it recorded — so a record whose elapsed time predates
+  // its own last match would reject *every* match after the resume, silently
+  // and for as long as it took real play to catch up. An honest capture cannot
+  // produce one (see captureSave), so such a record is corrupt.
+  const latestMs = Math.max(
+    snapshot.stack.scores.lastMatchMs ?? 0,
+    ...snapshot.stack.moves.map((m) => m.atMs),
+  );
+  if (elapsedMs < latestMs) return null;
   return { version, layoutId, seed, shuffles, elapsedMs, snapshot };
 }
 

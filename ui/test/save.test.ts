@@ -148,13 +148,15 @@ test('the save carries the session fields the HUD needs back', () => {
 
 // --- rejecting what cannot be trusted -----------------------------------------
 
+/** Three pairs played on real, advancing timestamps — an all-zero clock would
+ *  make the elapsed-time rejection cases below vacuous. */
 function sampleSave(): SaveState {
   const game = new Game(generateValidatedLevel(TURTLE, SAMPLE_SEED));
   const solution = game.level.solution;
-  for (const [a, b] of solution.slice(0, 3)) {
-    game.tap(free(a), 0);
-    game.tap(free(b), 0);
-  }
+  solution.slice(0, 3).forEach(([a, b], i) => {
+    game.tap(free(a), (i + 1) * 100);
+    game.tap(free(b), (i + 1) * 100 + 10);
+  });
   return captureSave(game, { shuffles: 0, elapsedMs: 1000 });
 }
 
@@ -199,6 +201,23 @@ test('parseSave rejects every malformed record instead of trusting it', () => {
       const moves = stack(s)['moves'] as Record<string, unknown>[];
       moves[0]!['atMs'] = 500;
       moves[1]!['atMs'] = 100;
+    },
+    // The two cases a membership-and-count check let through: a record that
+    // claims one tile twice (and so orphans another) parses, reopens, and
+    // hashes identically to an honest game, then throws out of Board.restore
+    // several undos later.
+    'a tile claimed by two moves': (s) => {
+      const moves = stack(s)['moves'] as Record<string, unknown>[];
+      moves[1]!['a'] = moves[0]!['a'];
+    },
+    'a removal no move accounts for': (s) => {
+      const moves = stack(s)['moves'] as Record<string, unknown>[];
+      moves.pop(); // leaves two removals unexplained
+    },
+    'elapsed time behind the last match': (s) => void (s['elapsedMs'] = 0),
+    'elapsed time behind a move timestamp': (s) => {
+      stack(s)['scores'] = { score: 300, streak: 0, lastMatchMs: null };
+      s['elapsedMs'] = 1;
     },
     'malformed score snapshot': (s) => void (stack(s)['scores'] = { score: -1, streak: 0, lastMatchMs: null }),
     'non-integer selection': (s) => void (stack(s)['selection'] = 'first'),
