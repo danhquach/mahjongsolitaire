@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Mahjong Solitaire — vertical slice</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #14532d;
+        font-family: system-ui, sans-serif;
+        /* Core play is single taps only (spec §7): no double-tap zoom. */
+        touch-action: manipulation;
+      }
+      #app {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 12px;
+        color: #f0fdf4;
+        font-size: 18px; /* spec §7: ≥ 18sp body */
+        flex-wrap: wrap;
+      }
+      header .stat {
+        min-width: 90px;
+      }
+      header button {
+        font-size: 18px;
+        min-height: 48px; /* spec §7: 48dp touch targets */
+        min-width: 48px;
+        padding: 8px 16px;
+        border-radius: 8px;
+        border: 1px solid #bbf7d0;
+        background: #166534;
+        color: #f0fdf4;
+      }
+      #board {
+        flex: 1;
+        position: relative;
+        min-height: 0;
+      }
+      #board canvas {
+        position: absolute;
+        inset: 0;
+      }
+      #overlay {
+        position: absolute;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.55);
+      }
+      #overlay.visible {
+        display: flex;
+      }
+      #overlay .card {
+        background: #f0fdf4;
+        color: #14532d;
+        border-radius: 12px;
+        padding: 24px 32px;
+        text-align: center;
+        max-width: 90vw;
+      }
+      #overlay .card h2 {
+        margin-top: 0;
+        font-size: 24px;
+      }
+      #overlay .card button {
+        font-size: 18px;
+        min-height: 48px;
+        padding: 8px 20px;
+        margin: 4px;
+        border-radius: 8px;
+        border: 1px solid #14532d;
+        background: #166534;
+        color: #f0fdf4;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <span class="stat">Score <strong id="score">0</strong></span>
+        <span class="stat">Tiles <strong id="tiles-left">144</strong></span>
+        <button id="btn-new" type="button">New game</button>
+        <button id="btn-restart" type="button">Restart</button>
+      </header>
+      <div id="board">
+        <div id="overlay">
+          <div class="card">
+            <h2 id="overlay-title"></h2>
+            <p id="overlay-text"></p>
+            <button id="overlay-restart" type="button">Restart level</button>
+            <button id="overlay-new" type="button">New game</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
