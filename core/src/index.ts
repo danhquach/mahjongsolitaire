@@ -12,7 +12,7 @@ export type { Layout } from './layouts.js';
 export { canMatch, matchPair } from './match.js';
 export type { MatchCheck, MatchRejection } from './match.js';
 export { MoveStack } from './moves.js';
-export type { MoveRecord } from './moves.js';
+export type { MoveRecord, MoveStackState } from './moves.js';
 export { ScoreKeeper, BASE_PAIR_POINTS, COMBO_WINDOW_MS } from './scoring.js';
 export type { MatchScore, ScoreSnapshot } from './scoring.js';
 export { shuffleBoard } from './shuffle.js';

@@ -4,6 +4,9 @@
 // (see a11y.ts), spoken outcomes, and 48dp focus targets.
 // Issue #13 wires the three boosters — Hint / Undo / Shuffle — to the core
 // primitives via game.ts, with charges persisted by boosters.ts.
+// Issue #14 adds auto-save + resume (save.ts) and the settings screen
+// (settings.ts): audio and haptics via feedback.ts, tile size through the
+// renderer's fit, and an opt-in count-up clock via elapsed.ts.
 
 import { Application } from 'pixi.js';
 import { generateValidatedLevel } from '@mahjongsolitaire/core';
@@ -11,7 +14,10 @@ import type { Slot, TileId } from '@mahjongsolitaire/core';
 import { A11yLayer, Announcer, slotPosition } from './a11y.js';
 import type { A11yTile } from './a11y.js';
 import { BoosterCharges } from './boosters.js';
-import type { BoosterKind, ChargeStorage } from './boosters.js';
+import type { BoosterKind } from './boosters.js';
+import { Elapsed, formatElapsed } from './elapsed.js';
+import { Feedback, navigatorVibrate, webAudioPlayer } from './feedback.js';
+import type { Cue } from './feedback.js';
 import { faceStyle } from './faces.js';
 import { Game } from './game.js';
 import { tileRect } from './geometry.js';
@@ -19,12 +25,18 @@ import type { Rect } from './geometry.js';
 import { hitTest } from './hit-test.js';
 import { parseLayout } from './layout-loader.js';
 import { BoardRenderer } from './render.js';
+import { SaveStore, captureSave, reopen } from './save.js';
+import { SettingsStore, TILE_SIZE_FACTOR, TILE_SIZE_LABEL, TILE_SIZES } from './settings.js';
+import type { TileSize } from './settings.js';
+import { localKeyValueStorage } from './storage.js';
 import type { Hit } from './hit-test.js';
 import type { HintPair, TapOutcome } from './game.js';
 
 /** Spec §7: mis-tap forgiveness radius, in dp (≈ CSS px on the web). */
 const FORGIVENESS_DP = 8;
 const FLASH_MS = 250;
+/** Repaint cadence of the opt-in timed-mode readout (spec §6). */
+const CLOCK_TICK_MS = 500;
 
 /** Visible booster labels, and the plural used when announcing the balance. */
 const BOOSTER_LABEL: Record<BoosterKind, string> = {
@@ -37,16 +49,6 @@ const BOOSTER_PLURAL: Record<BoosterKind, string> = {
   undo: 'undos',
   shuffle: 'shuffles',
 };
-
-/** localStorage throws outright when site data is blocked; charges then live
- *  in memory for the session (boosters.ts treats storage as best-effort). */
-function chargeStorage(): ChargeStorage | undefined {
-  try {
-    return window.localStorage;
-  } catch {
-    return undefined;
-  }
-}
 
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -71,6 +73,10 @@ async function start(): Promise<void> {
   const a11yRoot = el<HTMLDivElement>('a11y-layer');
   const header = el<HTMLElement>('app-header');
   const boosterRail = el<HTMLDivElement>('booster-rail');
+  const settingsPanel = el<HTMLDivElement>('settings');
+  const settingsButton = el<HTMLButtonElement>('btn-settings');
+  const timeStat = el<HTMLElement>('time-stat');
+  const elapsedEl = el<HTMLElement>('elapsed');
 
   const layoutRes = await fetch('layouts/turtle_classic.json');
   if (!layoutRes.ok) throw new Error(`layout fetch failed: ${layoutRes.status}`);
@@ -93,7 +99,13 @@ async function start(): Promise<void> {
   const renderer = new BoardRenderer(app, layout.slots);
   const announcer = new Announcer(el<HTMLElement>('a11y-status'));
 
-  const charges = new BoosterCharges(chargeStorage());
+  // One storage handle for every persisted concern (charges, settings, save).
+  const storage = localKeyValueStorage();
+  const settings = new SettingsStore(storage);
+  const saves = new SaveStore(storage);
+  const feedback = new Feedback(() => settings.value, webAudioPlayer(), navigatorVibrate());
+
+  const charges = new BoosterCharges(storage);
   const boosterUi: Record<BoosterKind, { button: HTMLButtonElement; badge: HTMLElement }> = {
     hint: { button: el<HTMLButtonElement>('btn-hint'), badge: el<HTMLElement>('charges-hint') },
     undo: { button: el<HTMLButtonElement>('btn-undo'), badge: el<HTMLElement>('charges-undo') },
@@ -103,16 +115,26 @@ async function start(): Promise<void> {
     },
   };
 
-  let seed = randomSeed();
-  let game = new Game(generateValidatedLevel(layout, seed));
+  // Spec §7: resume mid-level after a force-quit. A save that cannot be
+  // trusted (older build, changed layout, hand-edited record) reads as absent
+  // and the player gets a fresh deal instead of an error.
+  const saved = saves.load();
+  const resumed = saved === null ? null : reopen(layout, saved);
+  let game = resumed ?? new Game(generateValidatedLevel(layout, randomSeed()));
   let flash: readonly number[] = [];
   let flashToken = 0;
   let overlayVisible = false;
+  let settingsVisible = false;
   /** Tiles the last Hint pointed at — highlighted until the board changes. */
   let hintPair: readonly TileId[] = [];
   /** Shuffles taken on this deal; feeds the shuffle seed so a given
-   *  (level seed, shuffle index) always produces the same board. */
-  let shuffleCount = 0;
+   *  (level seed, shuffle index) always produces the same board. Restored with
+   *  the save so a resumed deal shuffles the way it would have. */
+  let shuffleCount = resumed === null ? 0 : saved!.shuffles;
+  const elapsed = new Elapsed(
+    () => performance.now(),
+    resumed === null ? 0 : saved!.elapsedMs,
+  );
 
   /** Canvas-relative CSS-px rect of a tile's top face (a11y nodes + QA). */
   function tileCssRect(slot: Slot): Rect {
@@ -138,7 +160,31 @@ async function start(): Promise<void> {
     scoreEl.textContent = String(game.score);
     tilesLeftEl.textContent = String(game.tilesLeft);
     syncBoosterButtons();
+    drawClock();
     a11y.sync(a11yTiles(), game.selection, (t) => tileCssRect(t.slot));
+  }
+
+  /** Opt-in count-up readout (spec §6). Hidden entirely while timed mode is
+   *  off, so the default board shows no clock at all. */
+  function drawClock(): void {
+    const { timedMode } = settings.value;
+    timeStat.hidden = !timedMode;
+    if (timedMode) elapsedEl.textContent = formatElapsed(elapsed.ms);
+  }
+
+  /**
+   * Auto-save (spec §7: "on every move"). Called after anything that changes
+   * the board, the score, or the selection.
+   *
+   * A *won* level has nothing to resume into, so its save is dropped —
+   * otherwise the next boot would reopen a cleared board. A *stuck* one is
+   * still saved: spec §4 never hard-fails a deadlock, and the way out is Undo
+   * or Shuffle on that exact board. Force-quitting at the deadlock dialog must
+   * not throw the undo stack away.
+   */
+  function persist(): void {
+    if (game.status() === 'won') saves.clear();
+    else saves.write(captureSave(game, { shuffles: shuffleCount, elapsedMs: elapsed.ms }));
   }
 
   /** Charge badges + accessible names. Buttons stay enabled at zero charges so
@@ -208,7 +254,7 @@ async function start(): Promise<void> {
    */
   function setBackgroundInert(inert: boolean): void {
     a11y.setInert(inert);
-    for (const region of [header, boosterRail]) {
+    for (const region of [header, boosterRail, settingsButton]) {
       if (inert) region.setAttribute('inert', '');
       else region.removeAttribute('inert');
     }
@@ -221,6 +267,87 @@ async function start(): Promise<void> {
     overlay.classList.remove('visible');
     setBackgroundInert(false);
     return true;
+  }
+
+  /**
+   * Settings screen (spec §7): one tap from the board to open, one tap to
+   * change anything — inside the "every action within 2 taps" budget. Each
+   * control writes through immediately (settings.ts persists per change), so
+   * there is no Save button to forget.
+   */
+  const settingsToggles: ReadonlyArray<{
+    readonly input: HTMLInputElement;
+    readonly key: 'audio' | 'haptics' | 'timedMode' | 'ads';
+    readonly name: string;
+  }> = [
+    { input: el<HTMLInputElement>('set-audio'), key: 'audio', name: 'Sound effects' },
+    { input: el<HTMLInputElement>('set-haptics'), key: 'haptics', name: 'Vibration' },
+    { input: el<HTMLInputElement>('set-timed'), key: 'timedMode', name: 'Timer' },
+    { input: el<HTMLInputElement>('set-ads'), key: 'ads', name: 'Ads' },
+  ];
+  const sizeInputs: ReadonlyArray<{ readonly input: HTMLInputElement; readonly size: TileSize }> =
+    TILE_SIZES.map((size) => ({ input: el<HTMLInputElement>(`set-size-${size}`), size }));
+
+  /** Push the stored settings into the controls (open, and on boot). */
+  function syncSettingsControls(): void {
+    const current = settings.value;
+    for (const { input, key } of settingsToggles) input.checked = current[key];
+    for (const { input, size } of sizeInputs) input.checked = current.tileSize === size;
+  }
+
+  /** Tile size is a fraction of the viewport fit (settings.ts) — re-fit and
+   *  redraw, which also re-places every a11y node over its new rect. */
+  function applyTileSize(): void {
+    renderer.setSizeFactor(TILE_SIZE_FACTOR[settings.value.tileSize]);
+    redraw();
+  }
+
+  function openSettings(): void {
+    if (settingsVisible || overlayVisible) return;
+    syncSettingsControls();
+    settingsVisible = true;
+    settingsPanel.classList.add('visible');
+    setBackgroundInert(true);
+    settingsToggles[0]!.input.focus();
+    announcer.say('Settings.');
+  }
+
+  function closeSettings(): void {
+    if (!settingsVisible) return;
+    settingsVisible = false;
+    settingsPanel.classList.remove('visible');
+    setBackgroundInert(false);
+    settingsButton.focus();
+  }
+
+  function wireSettings(): void {
+    for (const { input, key, name } of settingsToggles) {
+      input.addEventListener('change', () => {
+        settings.set(key, input.checked);
+        if (key === 'timedMode') drawClock();
+        // Tick the box audibly/physically when its own channel is switched on,
+        // so "gentle" is something the player can check on the spot (§7).
+        if ((key === 'audio' || key === 'haptics') && input.checked) feedback.cue('select');
+        announcer.say(`${name} ${input.checked ? 'on' : 'off'}.`);
+      });
+    }
+    for (const { input, size } of sizeInputs) {
+      input.addEventListener('change', () => {
+        if (!input.checked) return;
+        settings.set('tileSize', size);
+        applyTileSize();
+        announcer.say(`Tile size ${TILE_SIZE_LABEL[size]}.`);
+      });
+    }
+    el<HTMLButtonElement>('settings-close').addEventListener('click', () => closeSettings());
+    settingsButton.addEventListener('click', () => openSettings());
+    // Escape is the expected way out of a modal, and the only one for a
+    // keyboard player who tabbed past the Done button. Listened for on the
+    // document, not the panel: clicking the card's own text blurs focus to
+    // <body>, and a panel-scoped handler would never see the key.
+    document.addEventListener('keydown', (ev) => {
+      if (settingsVisible && ev.key === 'Escape') closeSettings();
+    });
   }
 
   function flashTiles(ids: readonly number[]): void {
@@ -290,7 +417,7 @@ async function start(): Promise<void> {
       case 'shuffle': {
         // Deterministic per (level seed, shuffle index) so a replay of the same
         // deal reproduces the same shuffled boards.
-        const shuffleSeed = (seed + 0x9e3779b1 * (shuffleCount + 1)) >>> 0;
+        const shuffleSeed = (game.level.seed + 0x9e3779b1 * (shuffleCount + 1)) >>> 0;
         if (!game.shuffle(shuffleSeed)) {
           return { ok: false, message: 'This board cannot be shuffled.' };
         }
@@ -314,6 +441,7 @@ async function start(): Promise<void> {
     const result = runBooster(kind);
     if (result.ok) charges.spend(kind);
     redraw();
+    if (result.ok) persist();
     // Undo and Shuffle can lift a deadlock: showStatus closes the dialog once
     // the board is playable again.
     showStatus();
@@ -332,14 +460,41 @@ async function start(): Promise<void> {
     if (fromDialog && !overlayVisible) a11y.focusActive();
   }
 
+  /** The cue a tap earns, or null for the ones the board answers silently. */
+  function tapCue(outcome: TapOutcome): Cue | null {
+    switch (outcome.kind) {
+      case 'matched':
+        return 'match';
+      case 'mismatch':
+      case 'blocked':
+        return 'mismatch';
+      case 'selected':
+      case 'deselected':
+        return 'select';
+      default:
+        return null;
+    }
+  }
+
   function applyTap(hit: Hit): void {
-    const outcome: TapOutcome = game.tap(hit, performance.now());
+    // Elapsed *play* time, not performance.now(): a resumed page restarts
+    // performance.now() at 0 while the restored combo ladder still holds the
+    // previous session's timestamps, and the ScoreKeeper rejects a clock that
+    // goes backwards. Elapsed time is saved with the game, so it is the one
+    // clock that stays monotonic across a force-quit (core's own contract:
+    // "monotonic within a game — e.g. elapsed game time").
+    const outcome: TapOutcome = game.tap(hit, elapsed.ms);
     // A match changes the board, so the highlighted hint is stale. Any other
     // tap keeps it: selecting one hinted tile must not hide its partner.
     if (outcome.kind === 'matched') hintPair = [];
     if (outcome.kind === 'mismatch') flashTiles([outcome.a, outcome.b]);
     else if (outcome.kind === 'blocked') flashTiles([outcome.id]);
+    const cue = tapCue(outcome);
+    if (cue) feedback.cue(cue);
     redraw();
+    // Spec §7: auto-save on every move. The selection counts as state too — a
+    // force-quit between the two taps of a pair resumes with it intact.
+    persist();
     // A level-ending move is announced once, by showStatus: two live-region
     // writes in the same tick coalesce and the first is never spoken.
     if (game.status() === 'playing') announce(outcome);
@@ -358,14 +513,17 @@ async function start(): Promise<void> {
   }
 
   function newGame(nextSeed: number): void {
-    seed = nextSeed;
-    game = new Game(generateValidatedLevel(layout, seed));
+    game = new Game(generateValidatedLevel(layout, nextSeed));
     flash = [];
     flashToken++;
     hintPair = [];
     shuffleCount = 0;
+    elapsed.reset();
     const fromDialog = hideOverlay();
     redraw();
+    // Save the new deal at once: a force-quit before the first move should
+    // resume this board, not the one it replaced.
+    persist();
     // Hiding the dialog drops focus to <body>; put it back on the board. Only
     // when the dialog was the source — a header tap should keep its own focus.
     if (fromDialog) a11y.focusActive();
@@ -390,12 +548,39 @@ async function start(): Promise<void> {
   overlayShuffle.addEventListener('click', () => useBooster('shuffle'));
   overlayUndo.addEventListener('click', () => useBooster('undo'));
   el<HTMLButtonElement>('btn-new').addEventListener('click', () => newGame(randomSeed()));
-  el<HTMLButtonElement>('btn-restart').addEventListener('click', () => newGame(seed));
+  el<HTMLButtonElement>('btn-restart').addEventListener('click', () => newGame(game.level.seed));
   el<HTMLButtonElement>('overlay-new').addEventListener('click', () => newGame(randomSeed()));
-  overlayRestart.addEventListener('click', () => newGame(seed));
+  overlayRestart.addEventListener('click', () => newGame(game.level.seed));
 
-  renderer.layoutToViewport();
-  redraw();
+  wireSettings();
+  syncSettingsControls();
+
+  // A hidden page is the last moment the browser reliably gives us before the
+  // OS kills the tab, so it is where the force-quit save has to happen — and
+  // where the clock stops, so backgrounding does not inflate the timer.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      elapsed.pause();
+      persist();
+    } else {
+      elapsed.resume();
+      drawClock();
+    }
+  });
+  window.addEventListener('pagehide', () => persist());
+
+  window.setInterval(() => {
+    if (settings.value.timedMode && !document.hidden) drawClock();
+  }, CLOCK_TICK_MS);
+
+  applyTileSize(); // fits the board for the stored tile size, then redraws
+  if (resumed !== null) {
+    announcer.say(`Game resumed. ${game.tilesLeft} tiles left. Score ${game.score}.`);
+    // A deadlocked board can be resumed (see persist): re-offer the way out.
+    showStatus();
+  } else {
+    persist(); // a fresh deal is savable from its first frame
+  }
 
   // Debug handle for scripted end-to-end QA (Playwright drives real pointer
   // events through it — see ui/qa/). Read-only accessors; harmless in a
@@ -419,6 +604,20 @@ async function start(): Promise<void> {
     },
     get hintPair() {
       return hintPair;
+    },
+    /** Settings + save-slot state (issue #14 QA assertions). */
+    settings() {
+      return settings.value;
+    },
+    /** The save as it would be reopened — null once the level has ended. */
+    savedState() {
+      return saves.load();
+    },
+    elapsedMs() {
+      return elapsed.ms;
+    },
+    stateHash() {
+      return game.stateHash();
     },
   };
 }

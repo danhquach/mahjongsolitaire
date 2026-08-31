@@ -13,7 +13,9 @@
 //   3. every action is ≤ 2 taps from the board;
 //   4. a pair can be matched with the keyboard alone, outcomes are announced,
 //      and focus survives the tiles being removed;
-//   5. the end-of-level dialog is modal and takes focus.
+//   5. the end-of-level dialog is modal and takes focus;
+//   6. the settings screen (issue #14) is a labelled modal, reachable in one
+//      tap, every control named and ≥ 48dp, and Escape returns focus to it.
 //
 // Real VoiceOver/TalkBack device passes remain a Phase 5 manual item; this
 // audit is the automated gate that keeps the semantics from regressing.
@@ -246,7 +248,7 @@ for (const vp of VIEWPORTS) {
       controls,
     );
     check(
-      controls.map((c) => c.name).join('|') === 'New game|Restart|Hint|Undo|Shuffle',
+      controls.map((c) => c.name).join('|') === 'New game|Restart|Settings|Hint|Undo|Shuffle',
       'board screen exposes the complete slice action set',
       controls,
     );
@@ -454,6 +456,73 @@ for (const vp of VIEWPORTS) {
       back,
     );
     check(/New game dealt\./.test(back.announced), 'new deal is announced', back.announced);
+  }
+
+  // --- 6. Settings screen is a modal, named, 48dp, and keyboard-escapable. --
+  {
+    await page.click('#btn-settings');
+    const open = await page.evaluate(() => {
+      const panel = document.getElementById('settings');
+      return {
+        role: panel.getAttribute('role'),
+        modal: panel.getAttribute('aria-modal'),
+        labelled: panel.getAttribute('aria-labelledby'),
+        focus: document.activeElement?.id,
+        boardInert: document.getElementById('a11y-layer').hasAttribute('inert'),
+        entryInert: document.getElementById('btn-settings').hasAttribute('inert'),
+        announced: document.getElementById('a11y-status').textContent,
+      };
+    });
+    check(
+      open.role === 'dialog' && open.modal === 'true' && open.labelled === 'settings-title',
+      'settings screen is a labelled modal dialog',
+      open,
+    );
+    check(open.focus === 'set-audio', 'focus moves into the settings screen', open);
+    check(
+      open.boardInert && open.entryInert,
+      'board and the settings entry point are inert while it is open',
+      open,
+    );
+
+    // Every control named (a label element or aria-label) and ≥ 48dp. The
+    // checkbox itself is smaller than 48dp on purpose: the whole label row is
+    // the target, which is what a finger actually hits.
+    const settingsControls = await page.evaluate((min) => {
+      const rows = [...document.querySelectorAll('#settings .row, #settings button')];
+      return rows.map((n) => {
+        const r = n.getBoundingClientRect();
+        const name = (n.textContent ?? '').trim() || n.getAttribute('aria-label') || '';
+        return { name, w: Math.round(r.width), h: Math.round(r.height), small: r.height + 0.01 < min };
+      });
+    }, MIN_TOUCH_TARGET);
+    check(
+      settingsControls.every((c) => c.name.length > 0),
+      'every settings control has an accessible name',
+      settingsControls.filter((c) => c.name.length === 0),
+    );
+    check(
+      settingsControls.every((c) => !c.small),
+      'settings rows and buttons are ≥ 48dp tall',
+      settingsControls.filter((c) => c.small),
+    );
+
+    // Nine controls: four toggles, four tile sizes, and Done.
+    check(settingsControls.length === 9, 'settings screen exposes all nine controls', {
+      count: settingsControls.length,
+    });
+
+    // Escape is the keyboard way out, and focus must come back to the control
+    // that opened it — not <body>, which would strand a keyboard player.
+    await page.keyboard.press('Escape');
+    const closed = await page.evaluate(() => ({
+      visible: document.getElementById('settings').classList.contains('visible'),
+      focus: document.activeElement?.id,
+      boardInert: document.getElementById('a11y-layer').hasAttribute('inert'),
+    }));
+    check(!closed.visible, 'Escape closes the settings screen', closed);
+    check(closed.focus === 'btn-settings', 'focus returns to the settings button', closed);
+    check(!closed.boardInert, 'closing settings gives the board back', closed);
   }
 
   await ctx.close();

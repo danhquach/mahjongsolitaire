@@ -6,10 +6,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Board } from '../src/board.js';
-import type { Slot, TileId } from '../src/board.js';
+import type { Slot, Tile, TileId } from '../src/board.js';
 import { generateLevel } from '../src/generator.js';
 import { SEED_LAYOUTS } from '../src/layouts.js';
 import { MoveStack } from '../src/moves.js';
+import type { MoveStackState } from '../src/moves.js';
 import { mulberry32 } from '../src/rng.js';
 import { ScoreKeeper } from '../src/scoring.js';
 import { legalPairs } from '../src/solver.js';
@@ -141,4 +142,66 @@ test('unlimited depth: a full game can be undone back to the initial state', () 
   assert.equal(stack.score, 0);
   assert.equal(board.presentTiles().length, level.tiles.length);
   assert.equal(stack.stateHash(), initial);
+});
+
+// --- state / restoreState (issue #14) -----------------------------------------
+
+/** Rebuild a board + stack from a captured state, the way a resume does. */
+function reopen(tiles: readonly Tile[], state: MoveStackState) {
+  const board = new Board(tiles);
+  const stack = new MoveStack(board, new ScoreKeeper());
+  stack.restoreState(state);
+  return { board, stack };
+}
+
+test('state + allTiles round-trip a mid-game stack hash-identically', () => {
+  const level = generateLevel(SEED_LAYOUTS[0]!, 4242);
+  const board = new Board(level.tiles);
+  const stack = new MoveStack(board);
+  level.solution.slice(0, 9).forEach((move, i) => stack.play(move[0], move[1], (i + 1) * 1000));
+  // A live selection is part of the state, not a detail of it.
+  stack.select(board.freeTileIds()[0]!);
+
+  const reopened = reopen(board.allTiles(), stack.state);
+  assert.equal(reopened.stack.stateHash(), stack.stateHash());
+  assert.equal(reopened.stack.depth, stack.depth);
+  assert.equal(reopened.stack.score, stack.score);
+  assert.equal(reopened.stack.selection, stack.selection);
+  assert.deepEqual(reopened.stack.moves(), stack.moves());
+});
+
+test('a restored stack keeps its full undo depth, back to the initial state', () => {
+  const level = generateLevel(SEED_LAYOUTS[0]!, 99);
+  const board = new Board(level.tiles);
+  const stack = new MoveStack(board);
+  const initial = stack.stateHash();
+  level.solution.slice(0, 12).forEach((move, i) => stack.play(move[0], move[1], (i + 1) * 1000));
+
+  const reopened = reopen(board.allTiles(), stack.state);
+  while (reopened.stack.undo());
+  assert.equal(reopened.stack.depth, 0);
+  assert.equal(reopened.stack.score, 0);
+  assert.equal(reopened.board.presentTiles().length, level.tiles.length);
+  assert.equal(reopened.stack.stateHash(), initial);
+});
+
+test('the combo ladder survives a round-trip: the next match keeps multiplying', () => {
+  const board = rowBoard();
+  const stack = new MoveStack(board);
+  stack.play(0, 1, 1000); // ×1
+  const live = new MoveStack(new Board(board.allTiles()));
+  live.restoreState(stack.state);
+  // 1s later — inside the 5s window (§6), so this is the 2nd rung, not the 1st.
+  assert.equal(live.play(2, 3, 2000).multiplier, 1.2);
+});
+
+test('restoreState rejects a selection the restored board cannot select', () => {
+  const board = rowBoard();
+  const stack = new MoveStack(board);
+  stack.play(0, 1, 1000);
+  const corrupt = { ...stack.state, selection: 0 as TileId }; // 0 was removed
+  assert.throws(
+    () => new MoveStack(new Board(board.allTiles())).restoreState(corrupt),
+    /not a free tile/,
+  );
 });

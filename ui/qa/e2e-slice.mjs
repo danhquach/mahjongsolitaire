@@ -13,6 +13,9 @@
 // fills the viewport (guards HiDPI scaling regressions), and — for issue #13 —
 // drives the three boosters through their real buttons, checking that a charge
 // is spent per successful use and that the balances survive a page reload.
+// For issue #14 it force-quits mid-level (a real page reload) and asserts the
+// board, score, selection and settings all come back, and that a won level
+// leaves no save behind.
 
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -469,6 +472,161 @@ for (const vp of VIEWPORTS) {
         `${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: deadlock rescued by Undo when Shuffle is spent (deal ${stuck.deal + 1})`,
       );
     }
+  }
+
+  // 7. Auto-save + resume (issue #14, spec §7). A page reload is the closest a
+  //    browser gets to a force-quit: the tab's JS heap is gone, so everything
+  //    the board comes back with came out of storage.
+  {
+    const before = failures;
+    // Refill the boosters section 6 spent, then deal fresh through the real
+    // button. Note that clearing storage and reloading would NOT give a fresh
+    // boot: the outgoing page's `pagehide` handler saves the board it is
+    // leaving, which is exactly the force-quit protection under test here.
+    await page.evaluate(() =>
+      localStorage.setItem('mahjong.boosters.v1', JSON.stringify({ hint: 5, undo: 5, shuffle: 5 })),
+    );
+    await page.reload();
+    await page.waitForFunction(() => window.__slice !== undefined);
+    await page.click('#btn-new');
+
+    // Play the generator's witness (naive greedy play can deadlock in a few
+    // moves — that is what huntDeadlock above is for), then shuffle: shuffled
+    // faces are the state a move-list replay could not reproduce. Then leave a
+    // selection live mid-pair, which is state too.
+    const played = await page.evaluate(() => {
+      const s = window.__slice;
+      const click = (id) => document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.click();
+      for (const [a, b] of s.game.level.solution.slice(0, 4)) {
+        click(a);
+        click(b);
+      }
+      document.getElementById('btn-shuffle').click();
+      // A shuffled board is solver-validated solvable, so a free matching pair
+      // exists; take one of its tiles as the live selection.
+      const seen = new Map();
+      for (const id of s.game.board.freeTileIds()) {
+        const face = s.game.board.get(id).face;
+        if (seen.has(face)) {
+          click(seen.get(face));
+          break;
+        }
+        seen.set(face, id);
+      }
+      return {
+        hash: s.stateHash(),
+        score: s.game.score,
+        tilesLeft: s.game.tilesLeft,
+        selection: s.game.selection,
+        seed: s.game.level.seed,
+        undoDepth: s.game.undoDepth,
+        saved: s.savedState() !== null,
+      };
+    });
+    check(played.tilesLeft === 136, 'four witness pairs were played', played);
+    check(played.saved, 'a mid-level board is saved', played);
+    check(played.selection !== null, 'the test left a live selection to restore', played);
+
+    // Change two settings through the real controls before quitting.
+    await page.click('#btn-settings');
+    await page.click('#set-timed');
+    await page.click('#set-size-m');
+    await page.click('#settings-close');
+
+    await page.reload();
+    await page.waitForFunction(() => window.__slice !== undefined);
+    const resumed = await page.evaluate(() => {
+      const s = window.__slice;
+      return {
+        hash: s.stateHash(),
+        score: s.game.score,
+        tilesLeft: s.game.tilesLeft,
+        selection: s.game.selection,
+        seed: s.game.level.seed,
+        undoDepth: s.game.undoDepth,
+        settings: s.settings(),
+        timerShown: !document.getElementById('time-stat').hidden,
+        said: document.getElementById('a11y-status').textContent,
+      };
+    });
+    check(
+      resumed.hash === played.hash &&
+        resumed.score === played.score &&
+        resumed.tilesLeft === played.tilesLeft &&
+        resumed.selection === played.selection &&
+        resumed.seed === played.seed &&
+        resumed.undoDepth === played.undoDepth,
+      'a force-quit mid-level resumes the identical board, score and selection',
+      { played, resumed },
+    );
+    check(/Game resumed\./.test(resumed.said), 'the resume is announced', resumed.said);
+    check(
+      resumed.settings.timedMode === true && resumed.settings.tileSize === 'm',
+      'settings survive the force-quit',
+      resumed.settings,
+    );
+    check(resumed.timerShown, 'opting into the timer shows the readout', resumed);
+
+    // The resumed board is a live game, not a museum piece. This is the check
+    // that caught the resume clock: performance.now() restarts at 0 on the new
+    // page, so a combo ladder restored from the old one rejected every match.
+    const kept = await page.evaluate(() => {
+      const s = window.__slice;
+      const click = (id) => document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.click();
+      const seen = new Map();
+      for (const id of s.game.board.freeTileIds()) {
+        const face = s.game.board.get(id).face;
+        if (seen.has(face)) {
+          // The restored selection may already be this pair's first tile —
+          // tapping it again would just deselect it.
+          const partner = seen.get(face);
+          if (s.game.selection !== partner) click(partner);
+          click(id);
+          break;
+        }
+        seen.set(face, id);
+      }
+      return { tilesLeft: s.game.tilesLeft, score: s.game.score, status: s.game.status() };
+    });
+    check(
+      kept.tilesLeft === played.tilesLeft - 2 && kept.score > played.score,
+      'play continues normally on the resumed board',
+      { played, kept },
+    );
+
+    // Finishing a level must leave nothing to resume into. Dealt fresh, because
+    // the shuffle above invalidated this deal's witness.
+    await page.click('#btn-new');
+    const won = await page.evaluate(() => {
+      const s = window.__slice;
+      const click = (id) => document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.click();
+      for (const [a, b] of s.game.level.solution) {
+        click(a);
+        click(b);
+      }
+      return {
+        status: s.game.status(),
+        saved: s.savedState(),
+        raw: localStorage.getItem('mahjong.save.v1'),
+      };
+    });
+    check(won.status === 'won', 'the fresh deal plays to a win', won.status);
+    check(won.saved === null && won.raw === null, 'a won level leaves no save behind', won);
+
+    await page.reload();
+    await page.waitForFunction(() => window.__slice !== undefined);
+    const afterWin = await page.evaluate(() => ({
+      tilesLeft: window.__slice.game.tilesLeft,
+      score: window.__slice.game.score,
+    }));
+    check(
+      afterWin.tilesLeft === 144 && afterWin.score === 0,
+      'the next boot after a win deals a fresh level',
+      afterWin,
+    );
+    console.log(
+      `${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: auto-save + resume across a force-quit`,
+    );
   }
 
   await ctx.close();
