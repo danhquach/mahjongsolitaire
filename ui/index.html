@@ -86,6 +86,7 @@
       #overlay .card button {
         font-size: 18px;
         min-height: 48px;
+        min-width: 48px;
         padding: 8px 20px;
         margin: 4px;
         border-radius: 8px;
@@ -93,18 +94,71 @@
         background: #166534;
         color: #f0fdf4;
       }
+
+      /* --- Accessibility layer (issue #12) ---------------------------------
+         Canvas tiles have no semantics tree, so each tile is mirrored by a
+         real <button> here. The layer is transparent and pointer-transparent:
+         sighted taps fall through to the canvas (keeping the single 8dp
+         mis-tap-forgiveness path), while keyboard and VoiceOver/TalkBack
+         activation dispatch click straight at the button. */
+      #a11y-layer {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+      #a11y-layer .tile-node {
+        position: absolute;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: transparent;
+        font: inherit;
+        appearance: none;
+        /* spec §7: never below the 48dp minimum touch target — enforced in
+           script (focusRect) because the size tracks the board scale. */
+        min-width: 48px;
+        min-height: 48px;
+      }
+      #a11y-layer .tile-node:focus {
+        outline: none;
+      }
+      #a11y-layer .tile-node:focus-visible {
+        outline: 4px solid #f59e0b;
+        outline-offset: 2px;
+      }
+      /* Visually hidden, still announced. */
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: 0;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+        border: 0;
+      }
     </style>
   </head>
   <body>
     <div id="app">
-      <header>
+      <header id="app-header">
         <span class="stat">Score <strong id="score">0</strong></span>
         <span class="stat">Tiles <strong id="tiles-left">144</strong></span>
         <button id="btn-new" type="button">New game</button>
         <button id="btn-restart" type="button">Restart</button>
       </header>
       <div id="board">
-        <div id="overlay">
+        <div id="a11y-layer"></div>
+        <div
+          id="overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="overlay-title"
+          aria-describedby="overlay-text"
+        >
           <div class="card">
             <h2 id="overlay-title"></h2>
             <p id="overlay-text"></p>
@@ -113,6 +167,7 @@
           </div>
         </div>
       </div>
+      <div id="a11y-status" class="sr-only" role="status" aria-live="polite"></div>
     </div>
     <script type="module" src="./src/main.ts"></script>
   </body>
