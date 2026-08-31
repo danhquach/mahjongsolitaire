@@ -8,7 +8,7 @@
 Playtest builds deploy to a **Cloudflare Worker serving static assets**, driven by the existing
 `CI` workflow.
 
-- Push to `main` → deploy → **https://lantern-tiles.\<subdomain\>.workers.dev**
+- Push to `main` → deploy → **https://lantern-tiles.dqtgametesting.workers.dev**
 - Nothing else deploys. A Worker deploy replaces the live version, so running it from pull
   requests would let any PR overwrite the playtest URL.
 - The deploy job `needs: [test, ui]`, and publishes the *artifact the `ui` job built* — a red
