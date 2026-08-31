@@ -22,3 +22,26 @@ jobs:
           npm test
       - name: Bench harness tests
         run: node --test bench/test/*.test.mjs
+
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            core/package-lock.json
+            ui/package-lock.json
+      - name: Install core (ui's file: dependency)
+        working-directory: core
+        run: npm ci
+      - name: UI tests (typecheck + unit; builds core first)
+        working-directory: ui
+        run: |
+          npm ci
+          npm test
+      - name: UI production build
+        working-directory: ui
+        run: npm run build
