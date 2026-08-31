@@ -27,6 +27,50 @@ jobs:
       - name: Bench harness tests
         run: node --test bench/test/*.test.mjs
 
+  # Issue #17 — the spec §11.1 release gate: 10,000 seeds × every shipped layout
+  # must generate a provably solvable deal. ~40 s per layout, so it shards one
+  # job per layout instead of spending 7 minutes in a single step. The id list
+  # comes from /data/layouts itself, so adding a layout file extends the gate
+  # with no workflow edit.
+  layout-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      layouts: ${{ steps.ids.outputs.layouts }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: ids
+        name: Collect layout ids
+        run: |
+          ids=$(ls data/layouts/*.json | xargs -n1 basename | sed 's/\.json$//' | jq -R . | jq -sc .)
+          echo "layouts=$ids" >> "$GITHUB_OUTPUT"
+          echo "::notice::soaking $ids"
+
+  layout-soak:
+    needs: layout-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      # One red layout must not hide the state of the other nine.
+      fail-fast: false
+      matrix:
+        layout: ${{ fromJson(needs.layout-matrix.outputs.layouts) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: core/package-lock.json
+      - name: Soak 10,000 seeds
+        working-directory: core
+        # Via env, not `${{ }}` inside the command: matrix values must never be
+        # interpolated straight into a shell line.
+        env:
+          LAYOUT: ${{ matrix.layout }}
+        run: |
+          npm ci
+          npm run build
+          node dist/soak.js --layout "$LAYOUT" --seeds 10000
+
   ui:
     runs-on: ubuntu-latest
     steps:
@@ -63,7 +107,9 @@ jobs:
   # version, so running this on PRs would let any PR overwrite the playtest URL.
   deploy:
     if: github.ref == 'refs/heads/main'
-    needs: [test, ui]
+    # layout-soak included: the roadmap makes the §11.1 solvability sweep a
+    # permanent release gate, so an unsolvable layout must not reach playtest.
+    needs: [test, ui, layout-soak]
     runs-on: ubuntu-latest
     # Only a boolean here, never the token itself: job-level env reaches every
     # step, including third-party actions that have no business holding it.

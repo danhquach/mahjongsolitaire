@@ -11,10 +11,9 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { generateValidatedLevel } from '@mahjongsolitaire/core';
+import { generateValidatedLevel, parseLayout } from '@mahjongsolitaire/core';
 import type { Layout, TileId } from '@mahjongsolitaire/core';
 import { Game } from '../src/game.js';
-import { parseLayout } from '../src/layout-loader.js';
 import { SAVE_STORAGE_KEY, SAVE_VERSION, SaveStore, captureSave, parseSave, reopen } from '../src/save.js';
 import type { SaveState } from '../src/save.js';
 import type { Hit } from '../src/hit-test.js';
