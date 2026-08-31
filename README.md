@@ -41,4 +41,7 @@ Playtest builds deploy automatically on push (see the "Web deploy pipeline" issu
 
 ## Development
 
-Toolchain lands with Phase 1 (see milestones). This section will gain build/test instructions once the first code merges.
+- **Core engine** (`/core`): `cd core && npm ci && npm test`
+- **Benchmark harness** (`/bench`): `node --test bench/test/*.test.mjs`
+- **Web UI — vertical slice** (`/ui`): `cd ui && npm ci && npm run dev` (opens the Turtle level in the browser); `npm test` for the headless suite; `npm run build && node qa/e2e-slice.mjs` for the scripted browser playthrough (phone + tablet, both orientations)
+- **Layouts** (`/data/layouts/*.json`): layout geometry as data; validated by the ui test suite
