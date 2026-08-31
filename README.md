@@ -48,4 +48,5 @@ Only `main` deploys. A Worker deploy replaces the live version, so pull requests
 - **Core engine** (`/core`): `cd core && npm ci && npm test`
 - **Benchmark harness** (`/bench`): `node --test bench/test/*.test.mjs`
 - **Web UI — vertical slice** (`/ui`): `cd ui && npm ci && npm run dev` (opens the Turtle level in the browser); `npm test` for the headless suite; `npm run build && node qa/e2e-slice.mjs` for the scripted browser playthrough (phone + tablet, both orientations)
-- **Layouts** (`/data/layouts/*.json`): layout geometry as data; validated by the ui test suite
+- **Layouts** (`/data/layouts/*.json`): layout geometry as data — see [docs/layouts.md](docs/layouts.md); validated by the core suite (`core/test/layout-files.test.ts`)
+- **Layout soak** (spec §11.1 release gate): `cd core && npm run soak` — 10,000 seeds × all 10 layouts must generate provably solvable deals; `npm run soak -- --layout <id> --seeds 500` for a quick single-layout check

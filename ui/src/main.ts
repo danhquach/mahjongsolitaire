@@ -12,7 +12,7 @@
 // one that fits the board larger (hud-fit.ts).
 
 import { Application } from 'pixi.js';
-import { generateValidatedLevel } from '@mahjongsolitaire/core';
+import { generateValidatedLevel, parseLayout } from '@mahjongsolitaire/core';
 import type { Slot, TileId } from '@mahjongsolitaire/core';
 import { A11yLayer, Announcer, slotPosition } from './a11y.js';
 import type { A11yTile } from './a11y.js';
@@ -28,7 +28,6 @@ import type { Rect } from './geometry.js';
 import { hitTest } from './hit-test.js';
 import { HUD_PLACEMENTS, chooseHudPlacement } from './hud-fit.js';
 import type { HudCandidate, HudPlacement } from './hud-fit.js';
-import { parseLayout } from './layout-loader.js';
 import { BoardRenderer } from './render.js';
 import { SaveStore, captureSave, reopen } from './save.js';
 import { SettingsStore, TILE_SIZE_FACTOR, TILE_SIZE_LABEL, TILE_SIZES } from './settings.js';
