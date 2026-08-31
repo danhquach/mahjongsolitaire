@@ -7,7 +7,7 @@ import type { Application } from 'pixi.js';
 import type { TileId } from '@mahjongsolitaire/core';
 import { faceStyle } from './faces.js';
 import type { Game } from './game.js';
-import { LAYER_LIFT, TILE_H, TILE_W, boardBounds, paintOrder, tileRect } from './geometry.js';
+import { SIDE_DEPTH, TILE_H, TILE_W, boardBounds, paintOrder, tileRect } from './geometry.js';
 import type { Rect } from './geometry.js';
 
 const COLOR_TILE_FACE = 0xfdf6e3;
@@ -15,11 +15,15 @@ const COLOR_TILE_SIDE = 0xcbb891;
 const COLOR_TILE_BORDER = 0x8a7a55;
 const COLOR_SELECTED = 0xf59e0b;
 const COLOR_FLASH = 0xdc2626;
+const COLOR_HINT = 0x2563eb;
 
 export interface DrawState {
   readonly selection: TileId | null;
   /** Tiles to outline in red this frame (mismatch / blocked-tap feedback). */
   readonly flash: readonly TileId[];
+  /** Tiles the Hint booster is pointing at (issue #13); outlined in blue
+   *  until the board changes — spec §7 wants no timing pressure. */
+  readonly hint: readonly TileId[];
 }
 
 export class BoardRenderer {
@@ -79,19 +83,24 @@ export class BoardRenderer {
     for (const tile of tiles) {
       const r = tileRect(tile.slot);
       const g = new Graphics();
-      const lift = tile.slot.z * LAYER_LIFT;
-      if (lift > 0) {
-        // Side extrusion down-right to the tile's lattice base; right/lower
-        // neighbors and upper layers paint over it (paintOrder).
-        g.roundRect(r.x, r.y, r.w + lift, r.h + lift, 6).fill(COLOR_TILE_SIDE);
-      }
+      // Side extrusion down-right, one tile's depth on every layer so a tall
+      // stack does not read as a thicker slab; right/lower neighbors and upper
+      // layers paint over it (paintOrder), leaving only the exposed edges.
+      g.roundRect(r.x, r.y, r.w + SIDE_DEPTH, r.h + SIDE_DEPTH, 6).fill(COLOR_TILE_SIDE);
       const selected = state.selection === tile.id;
       const flashed = state.flash.includes(tile.id);
+      const hinted = state.hint.includes(tile.id);
       g.roundRect(r.x, r.y, r.w, r.h, 6)
-        .fill(selected ? 0xfff0c2 : COLOR_TILE_FACE)
+        .fill(selected ? 0xfff0c2 : hinted ? 0xdbeafe : COLOR_TILE_FACE)
         .stroke({
-          width: selected || flashed ? 4 : 1.5,
-          color: flashed ? COLOR_FLASH : selected ? COLOR_SELECTED : COLOR_TILE_BORDER,
+          width: selected || flashed || hinted ? 4 : 1.5,
+          color: flashed
+            ? COLOR_FLASH
+            : selected
+              ? COLOR_SELECTED
+              : hinted
+                ? COLOR_HINT
+                : COLOR_TILE_BORDER,
         });
       this.boardLayer.addChild(g);
 

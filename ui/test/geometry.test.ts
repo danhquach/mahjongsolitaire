@@ -4,6 +4,7 @@ import {
   HALF_UNIT_X,
   HALF_UNIT_Y,
   LAYER_LIFT,
+  SIDE_DEPTH,
   TILE_H,
   TILE_W,
   boardBounds,
@@ -43,7 +44,7 @@ test('rectDistance: zero inside, axis and corner distances outside', () => {
   assert.equal(rectDistance(r, 13, 14), 5); // 3-4-5 corner
 });
 
-test('boardBounds spans all tiles including lift', () => {
+test('boardBounds spans all tiles including lift and side faces', () => {
   const b = boardBounds([
     { x: 0, y: 0, z: 0 },
     { x: 4, y: 2, z: 0 },
@@ -51,8 +52,8 @@ test('boardBounds spans all tiles including lift', () => {
   ]);
   assert.equal(b.x, -LAYER_LIFT);
   assert.equal(b.y, -LAYER_LIFT);
-  assert.equal(b.w, 4 * HALF_UNIT_X + TILE_W + LAYER_LIFT);
-  assert.equal(b.h, 2 * HALF_UNIT_Y + TILE_H + LAYER_LIFT);
+  assert.equal(b.w, 4 * HALF_UNIT_X + TILE_W + LAYER_LIFT + SIDE_DEPTH);
+  assert.equal(b.h, 2 * HALF_UNIT_Y + TILE_H + LAYER_LIFT + SIDE_DEPTH);
 });
 
 test('paintOrder: layers bottom-up, then rows, then columns', () => {
