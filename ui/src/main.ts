@@ -10,6 +10,10 @@
 // Issue #37 makes the HUD edge itself part of the fit: applyHudPlacement()
 // measures the board area each candidate placement would leave and keeps the
 // one that fits the board larger (hud-fit.ts).
+// Issue #44 gives the match its feedback: the pair flies together and collides
+// (effects.ts / anim.ts) while the board redraws without it, the sound answers
+// the tap and the haptic waits for the impact, and reduced motion — OS
+// preference or in-app toggle — substitutes a cross-fade.
 
 import { Application } from 'pixi.js';
 import { generateValidatedLevel, parseLayout } from '@mahjongsolitaire/core';
@@ -19,11 +23,13 @@ import type { A11yTile } from './a11y.js';
 import { BoosterCharges } from './boosters.js';
 import type { BoosterKind } from './boosters.js';
 import { Elapsed, formatElapsed } from './elapsed.js';
+import { Animator } from './effects.js';
+import type { FlyingTile } from './effects.js';
 import { Feedback, navigatorVibrate, webAudioPlayer } from './feedback.js';
 import type { Cue } from './feedback.js';
 import { faceStyle } from './faces.js';
 import { Game } from './game.js';
-import { tileRect } from './geometry.js';
+import { TILE_H, TILE_W, tileRect } from './geometry.js';
 import type { Rect } from './geometry.js';
 import { hitTest } from './hit-test.js';
 import { HUD_PLACEMENTS, chooseHudPlacement } from './hud-fit.js';
@@ -62,6 +68,13 @@ function el<T extends HTMLElement>(id: string): T {
 
 function randomSeed(): number {
   return (Math.random() * 0x100000000) >>> 0;
+}
+
+/** OS-level motion preference (issue #44). Absent `matchMedia` (old browsers,
+ *  some test runners) simply means "no preference expressed". */
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 async function start(): Promise<void> {
@@ -109,6 +122,14 @@ async function start(): Promise<void> {
   const settings = new SettingsStore(storage);
   const saves = new SaveStore(storage);
   const feedback = new Feedback(() => settings.value, webAudioPlayer(), navigatorVibrate());
+
+  // Match / mismatch animation (issue #44). Reduced motion is the OS preference
+  // OR the in-app toggle, read per effect so either can be changed mid-session;
+  // the animator itself never touches game state or the input path.
+  const animator = new Animator(renderer.effects, app.ticker, {
+    reduced: () => settings.value.reducedMotion || prefersReducedMotion(),
+    tileNode: (id) => renderer.tileNode(id),
+  });
 
   const charges = new BoosterCharges(storage);
   const boosterUi: Record<BoosterKind, { button: HTMLButtonElement; badge: HTMLElement }> = {
@@ -287,7 +308,7 @@ async function start(): Promise<void> {
    */
   const settingsToggles: ReadonlyArray<{
     readonly input: HTMLInputElement;
-    readonly key: 'audio' | 'haptics' | 'timedMode' | 'ads' | 'highlightFree';
+    readonly key: 'audio' | 'haptics' | 'timedMode' | 'ads' | 'highlightFree' | 'reducedMotion';
     readonly name: string;
   }> = [
     { input: el<HTMLInputElement>('set-audio'), key: 'audio', name: 'Sound effects' },
@@ -298,6 +319,11 @@ async function start(): Promise<void> {
       input: el<HTMLInputElement>('set-highlight-free'),
       key: 'highlightFree',
       name: 'Highlight free tiles',
+    },
+    {
+      input: el<HTMLInputElement>('set-reduced-motion'),
+      key: 'reducedMotion',
+      name: 'Reduced motion',
     },
   ];
   const sizeInputs: ReadonlyArray<{ readonly input: HTMLInputElement; readonly size: TileSize }> =
@@ -395,6 +421,32 @@ async function start(): Promise<void> {
     });
   }
 
+  /** Board-px centre of a tile's top face — where a flying copy starts. */
+  function tileCenter(id: TileId): { x: number; y: number } {
+    const r = tileRect(game.board.get(id).slot);
+    return { x: r.x + TILE_W / 2, y: r.y + TILE_H / 2 };
+  }
+
+  /**
+   * Fly a matched pair together (issue #44).
+   *
+   * Copies are built from the board's own renderer *after* the match has been
+   * applied — `board.get()` still resolves a removed tile — so the board can
+   * redraw without the pair while the copies carry the motion. Nothing here is
+   * awaited: the next tap is accepted mid-flight, and the tiles it would fly
+   * are already out of the model, so they cannot be matched twice.
+   */
+  function playMatchAnimation(a: TileId, b: TileId): void {
+    const flying: FlyingTile[] = [];
+    for (const id of [a, b]) {
+      const display = renderer.detachedTile(game, id);
+      if (display) flying.push({ display, center: tileCenter(id) });
+    }
+    // Nothing sensible to fly; the board itself is already correct.
+    if (flying.length !== 2) return;
+    animator.playMatch(flying[0]!, flying[1]!, () => feedback.haptic('match'));
+  }
+
   function flashTiles(ids: readonly number[]): void {
     flash = ids;
     const token = ++flashToken;
@@ -485,6 +537,9 @@ async function start(): Promise<void> {
     const fromDialog = overlayVisible;
     const result = runBooster(kind);
     if (result.ok) charges.spend(kind);
+    // Undo puts a matched tile back and Shuffle repaints every face: a copy
+    // still flying from the old board would paint over the new one (issue #44).
+    if (result.ok && (kind === 'undo' || kind === 'shuffle')) animator.clear();
     redraw();
     if (result.ok) persist();
     // Undo and Shuffle can lift a deadlock: showStatus closes the dialog once
@@ -505,11 +560,15 @@ async function start(): Promise<void> {
     if (fromDialog && !overlayVisible) a11y.focusActive();
   }
 
-  /** The cue a tap earns, or null for the ones the board answers silently. */
+  /**
+   * The cue a tap earns, or null for the ones the board answers silently.
+   *
+   * A match is not in here: issue #44 splits its two channels across two
+   * moments (sound at the tap, haptic at the collision), so applyTap drives
+   * those itself and never asks for a single cue.
+   */
   function tapCue(outcome: TapOutcome): Cue | null {
     switch (outcome.kind) {
-      case 'matched':
-        return 'match';
       case 'mismatch':
       case 'blocked':
         return 'mismatch';
@@ -532,10 +591,23 @@ async function start(): Promise<void> {
     // A match changes the board, so the highlighted hint is stale. Any other
     // tap keeps it: selecting one hinted tile must not hide its partner.
     if (outcome.kind === 'matched') hintPair = [];
-    if (outcome.kind === 'mismatch') flashTiles([outcome.a, outcome.b]);
-    else if (outcome.kind === 'blocked') flashTiles([outcome.id]);
-    const cue = tapCue(outcome);
-    if (cue) feedback.cue(cue);
+    if (outcome.kind === 'mismatch') {
+      flashTiles([outcome.a, outcome.b]);
+      animator.shake([outcome.a, outcome.b]);
+    } else if (outcome.kind === 'blocked') {
+      flashTiles([outcome.id]);
+      animator.shake([outcome.id]);
+    }
+    if (outcome.kind === 'matched') {
+      // Sound answers the tap; the haptic waits for the collision (issue #44).
+      feedback.sound('match');
+      // The copies have to be captured before the redraw that drops the pair —
+      // they live in the effects layer, which the redraw does not touch.
+      playMatchAnimation(outcome.a, outcome.b);
+    } else {
+      const cue = tapCue(outcome);
+      if (cue) feedback.cue(cue);
+    }
     redraw();
     // Spec §7: auto-save on every move. The selection counts as state too — a
     // force-quit between the two taps of a pair resumes with it intact. A tap
@@ -563,6 +635,7 @@ async function start(): Promise<void> {
     game = new Game(generateValidatedLevel(layout, nextSeed));
     flash = [];
     flashToken++;
+    animator.clear();
     hintPair = [];
     shuffleCount = 0;
     elapsed.reset();
@@ -620,6 +693,11 @@ async function start(): Promise<void> {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
       elapsed.pause();
+      // requestAnimationFrame stops on a hidden page, so a match in flight
+      // would freeze here and finish its last 100ms whenever the player comes
+      // back — a stale pair painted over a board that has moved on. The board
+      // underneath is already correct without them, so drop them (issue #44).
+      animator.clear();
       persist();
     } else {
       elapsed.resume();
@@ -688,6 +766,14 @@ async function start(): Promise<void> {
     },
     boardExtent(): { w: number; h: number } {
       return { w: renderer.boardExtent.w, h: renderer.boardExtent.h };
+    },
+    /** Whether any match/shake effect is live (issue #44 QA assertions). */
+    animating(): boolean {
+      return animator.busy;
+    },
+    /** The effective reduced-motion decision, OS preference included. */
+    reducedMotion(): boolean {
+      return settings.value.reducedMotion || prefersReducedMotion();
     },
   };
 }

@@ -16,6 +16,12 @@
 // For issue #14 it force-quits mid-level (a real page reload) and asserts the
 // board, score, selection and settings all come back, and that a won level
 // leaves no save behind.
+// For issue #44 it drives three consecutive matches with no waiting between
+// them (all resolve, nothing is matched twice, and the taps land while earlier
+// pairs are still in flight), asserts the match announcement is written in the
+// tap's own task rather than after the animation, samples the flight itself
+// for travel and frame budget, re-runs it under an emulated
+// prefers-reduced-motion to check nothing travels, and shakes a mismatch.
 
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -137,6 +143,174 @@ function huntDeadlock() {
   return null;
 }
 
+/**
+ * Up to `want` matchable pairs among the free tiles, as [a, b] id pairs. Runs
+ * in the page (issue #44).
+ */
+function freePairs(want) {
+  const slice = window.__slice;
+  const seen = new Map();
+  const pairs = [];
+  for (const c of slice.game.hitCandidates().filter((t) => t.free)) {
+    const face = slice.game.board.get(c.id).face;
+    const partner = seen.get(face);
+    if (partner === undefined) {
+      seen.set(face, c.id);
+      continue;
+    }
+    pairs.push([partner, c.id]);
+    seen.delete(face);
+    if (pairs.length === want) break;
+  }
+  return pairs;
+}
+
+/**
+ * Tap one matchable pair and watch the flight frame by frame (issue #44):
+ * how far the copies actually travelled from where they started, how long the
+ * sequence ran, the frame intervals it ran at, and whether the effects layer
+ * came back empty. Runs in the page.
+ */
+async function flightProbe(pair) {
+  const slice = window.__slice;
+  const canvas = document.querySelector('#board canvas');
+  const box = canvas.getBoundingClientRect();
+  if (!pair) return { tapped: false };
+  const before = slice.game.tilesLeft;
+  for (const id of pair) {
+    const r = slice.tileCssRect(id);
+    canvas.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        clientX: box.x + r.x + r.w / 2,
+        clientY: box.y + r.y + r.h / 2,
+        bubbles: true,
+      }),
+    );
+  }
+  const frames = [];
+  let maxTravel = 0;
+  const started = performance.now();
+  let previous = started;
+  await new Promise((resolve) => {
+    const step = (now) => {
+      frames.push(now - previous);
+      previous = now;
+      for (const child of slice.renderer.effects.children) {
+        // The flying copies pivot on the centre they started from, so the gap
+        // between position and pivot *is* the distance travelled.
+        if (!child.pivot || (child.pivot.x === 0 && child.pivot.y === 0)) continue;
+        maxTravel = Math.max(
+          maxTravel,
+          Math.hypot(child.position.x - child.pivot.x, child.position.y - child.pivot.y),
+        );
+      }
+      if (slice.animating() && now - started < 2000) requestAnimationFrame(step);
+      else resolve();
+    };
+    requestAnimationFrame(step);
+  });
+  // Drop the first interval: it spans the gap from the tap to the first frame.
+  const intervals = frames.slice(1).sort((a, b) => a - b);
+  return {
+    tapped: true,
+    maxTravel,
+    durationMs: performance.now() - started,
+    cleared: before - slice.game.tilesLeft,
+    settled: !slice.animating() && slice.renderer.effects.children.length === 0,
+    frames: intervals.length,
+    slowest: intervals.slice(-4).map((v) => +v.toFixed(1)),
+    median: intervals[Math.floor(intervals.length / 2)] ?? 0,
+    p95: intervals[Math.floor(intervals.length * 0.95)] ?? 0,
+  };
+}
+
+/**
+ * The same frame sampling as flightProbe, but over a select + deselect — two
+ * full-board redraws and no animation at all. This is the control: draw()
+ * tears the board down and rebuilds all 144 tiles on every tap, which costs
+ * far more than a match animation does, so an absolute frame-time floor would
+ * be measuring the renderer rather than this ticket (issue #44).
+ */
+async function baselineProbe() {
+  const slice = window.__slice;
+  const canvas = document.querySelector('#board canvas');
+  const box = canvas.getBoundingClientRect();
+  const target = slice.game.hitCandidates().find((t) => t.free);
+  if (!target) return { tapped: false };
+  const tap = () => {
+    const r = slice.tileCssRect(target.id);
+    canvas.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        clientX: box.x + r.x + r.w / 2,
+        clientY: box.y + r.y + r.h / 2,
+        bubbles: true,
+      }),
+    );
+  };
+  const frames = [];
+  let previous = performance.now();
+  const sampled = new Promise((resolve) => {
+    const step = (now) => {
+      frames.push(now - previous);
+      previous = now;
+      if (frames.length < 24) requestAnimationFrame(step);
+      else resolve();
+    };
+    requestAnimationFrame(step);
+  });
+  tap(); // select
+  tap(); // deselect — a second redraw, still nothing animating
+  await sampled;
+  const intervals = frames.slice(1).sort((a, b) => a - b);
+  return {
+    tapped: true,
+    median: intervals[Math.floor(intervals.length / 2)] ?? 0,
+    p95: intervals[Math.floor(intervals.length * 0.95)] ?? 0,
+  };
+}
+
+/**
+ * Tap two free tiles that do not match and watch the shaken tile's own
+ * container: it must leave its slot and come back to it (issue #44).
+ */
+async function mismatchProbe() {
+  const slice = window.__slice;
+  const canvas = document.querySelector('#board canvas');
+  const box = canvas.getBoundingClientRect();
+  const free = slice.game.hitCandidates().filter((t) => t.free);
+  const first = free[0];
+  const other = free.find((t) => slice.game.board.get(t.id).face !== slice.game.board.get(first.id).face);
+  if (!first || !other) return { tapped: false };
+  for (const id of [first.id, other.id]) {
+    const r = slice.tileCssRect(id);
+    canvas.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        clientX: box.x + r.x + r.w / 2,
+        clientY: box.y + r.y + r.h / 2,
+        bubbles: true,
+      }),
+    );
+  }
+  let maxOffset = 0;
+  const started = performance.now();
+  await new Promise((resolve) => {
+    const step = (now) => {
+      for (const id of [first.id, other.id]) {
+        const node = slice.renderer.tileNode(id);
+        if (node) maxOffset = Math.max(maxOffset, Math.abs(node.position.x));
+      }
+      if (slice.animating() && now - started < 2000) requestAnimationFrame(step);
+      else resolve();
+    };
+    requestAnimationFrame(step);
+  });
+  const resting = [first.id, other.id]
+    .map((id) => slice.renderer.tileNode(id))
+    .filter((n) => n)
+    .every((n) => n.position.x === 0 && n.position.y === 0);
+  return { tapped: true, maxOffset, restedAt0: resting };
+}
+
 function check(ok, label, data) {
   if (ok) return;
   console.error(`  ${label} FAIL:`, data);
@@ -242,6 +416,120 @@ for (const vp of VIEWPORTS) {
     } catch {
       check(false, 'ROTATE BACK', await page.evaluate(measureFit));
     }
+  }
+
+  // 1c. Match feedback animation (issue #44). Everything here is about the
+  //     animation *not* getting in the way: input stays live, the pair is
+  //     really gone from the model at tap time, the announcement is not waiting
+  //     on 320ms of tweening — and the motion itself actually happens, at the
+  //     frame budget, and stops happening under reduced motion.
+  {
+    const pairs = await page.evaluate(freePairs, 3);
+    check(pairs.length === 3, 'MATCH ANIM setup (want 3 free pairs)', { found: pairs.length });
+
+    if (pairs.length === 3) {
+      const before = await page.evaluate(() => window.__slice.game.tilesLeft);
+      const taps = [];
+      for (const [a, b] of pairs) {
+        // Read *before* tapping: from the second pair on, the previous match
+        // must still be in flight — that is the "input is not throttled" claim.
+        const inFlight = await page.evaluate(() => window.__slice.animating());
+        for (const id of [a, b]) {
+          const c = await tileCenter(id);
+          await page.mouse.click(c.x, c.y);
+        }
+        taps.push({
+          inFlight,
+          ...(await page.evaluate(() => ({
+            said: document.getElementById('a11y-status').textContent ?? '',
+            left: window.__slice.game.tilesLeft,
+          }))),
+        });
+      }
+      check(taps.at(-1).left === before - 6, 'RAPID MATCHES (want 6 tiles removed)', {
+        before,
+        after: taps.at(-1).left,
+      });
+      check(
+        taps.every((t) => /matched/i.test(t.said)),
+        'MATCH ANNOUNCED IN THE TAP\'S OWN TASK',
+        taps.map((t) => t.said),
+      );
+      check(
+        taps.slice(1).every((t) => t.inFlight),
+        'TAP ACCEPTED WHILE AN EARLIER MATCH IS STILL FLYING',
+        taps.map((t) => t.inFlight),
+      );
+      const removed = await page.evaluate(
+        (ids) => ids.filter((id) => window.__slice.game.board.get(id).removed).length,
+        pairs.flat(),
+      );
+      check(removed === 6, 'NO DOUBLE MATCH (want all 6 removed exactly once)', { removed });
+    }
+
+    // The control first: the same board, the same redraw, nothing animating.
+    const baseline = await page.evaluate(baselineProbe);
+    // Then the flight itself, sampled frame by frame from inside the page.
+    const flight = await page.evaluate(flightProbe, (await page.evaluate(freePairs, 1))[0]);
+    check(flight.tapped, 'FLIGHT PROBE setup (want a free pair)', flight);
+    if (flight.tapped) {
+      check(flight.maxTravel > 1, 'TILES TRAVEL (want > 1 board px of motion)', {
+        maxTravel: +flight.maxTravel.toFixed(2),
+      });
+      check(flight.settled, 'BOARD SETTLES (want the effects layer empty)', flight);
+      check(flight.durationMs < 400, 'SEQUENCE UNDER 400ms', {
+        durationMs: Math.round(flight.durationMs),
+      });
+      // Two questions, because they have different answers. Does the
+      // animation itself hold 60fps? — the median frame across the flight.
+      // Does it make a tap *worse*? — its worst frame against the worst frame
+      // of a plain select tap, which pays the same full-board redraw and
+      // animates nothing. The redraw spike is pre-existing (issue #45's
+      // renderer) and is the larger of the two by some margin.
+      check(flight.median <= 16.7, 'FRAME BUDGET: 60fps THROUGH THE FLIGHT', {
+        median: +flight.median.toFixed(2),
+        p95: +flight.p95.toFixed(2),
+        frames: flight.frames,
+      });
+      check(
+        flight.p95 <= Math.max(16.7, baseline.p95),
+        'FRAME BUDGET: THE ANIMATION COSTS NO MORE THAN THE REDRAW ALREADY DID',
+        {
+          matchP95: +flight.p95.toFixed(2),
+          plainTapP95: +baseline.p95.toFixed(2),
+          slowest: flight.slowest,
+        },
+      );
+    }
+
+    // Reduced motion, from the OS preference alone: cross-fade, no travel.
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    check(
+      await page.evaluate(() => window.__slice.reducedMotion()),
+      'OS REDUCED-MOTION PREFERENCE HONOURED',
+      {},
+    );
+    const reduced = await page.evaluate(flightProbe, (await page.evaluate(freePairs, 1))[0]);
+    if (reduced.tapped) {
+      check(reduced.maxTravel === 0, 'REDUCED MOTION: NO TRAVEL', {
+        maxTravel: reduced.maxTravel,
+      });
+      check(reduced.cleared === 2, 'REDUCED MOTION: PAIR STILL CLEARS', reduced);
+      check(reduced.settled, 'REDUCED MOTION: BOARD SETTLES', reduced);
+    }
+    await page.emulateMedia({ reducedMotion: null });
+
+    // Mismatch: the red outline is issue #11's; the shake is this ticket's.
+    const shake = await page.evaluate(mismatchProbe);
+    check(shake.tapped, 'MISMATCH PROBE setup (want two unlike free tiles)', shake);
+    if (shake.tapped) {
+      check(shake.maxOffset > 0.5, 'MISMATCH SHAKES', { maxOffset: +shake.maxOffset.toFixed(2) });
+      check(shake.restedAt0, 'SHAKEN TILE ENDS BACK ON ITS SLOT', shake);
+    }
+
+    // Back to a clean deal so the playthrough below starts where it expects.
+    await page.click('#btn-new');
+    await page.waitForFunction(() => !window.__slice.animating());
   }
 
   // 2. Mis-tap forgiveness: tap 6 CSS px outside a free tile's edge → selected.

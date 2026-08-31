@@ -11,6 +11,11 @@
 // two toggles on every cue, so flipping one in the settings screen takes effect
 // on the next tap with nothing to re-wire. The tone synthesis below it is thin
 // browser glue, exercised by the playtest build rather than by unit tests.
+//
+// Issue #44 splits the two channels so one cue can land in two moments: a match
+// sounds when the player taps and taps back when the tiles collide, ~200ms
+// later. Each channel still reads its own toggle on every call, so
+// audio-off/haptics-on and the reverse both keep working.
 
 import type { Settings } from './settings.js';
 
@@ -106,9 +111,21 @@ export class Feedback {
     private readonly vibrate: Vibrate | undefined = undefined,
   ) {}
 
+  /** Both channels at once — the default for a cue that has one moment. */
   cue(cue: Cue): void {
-    const { audio, haptics } = this.settings();
-    if (audio) this.player?.play(cue);
-    if (haptics) this.vibrate?.(HAPTICS[cue]);
+    this.sound(cue);
+    this.haptic(cue);
+  }
+
+  /** The audible half. A match sounds at tap time: the tone is the answer to
+   *  the tap, and delaying it to the collision reads as input lag (#44). */
+  sound(cue: Cue): void {
+    if (this.settings().audio) this.player?.play(cue);
+  }
+
+  /** The physical half. A match taps on contact, when the tiles actually hit
+   *  each other (#44) — which is the whole point of the animation. */
+  haptic(cue: Cue): void {
+    if (this.settings().haptics) this.vibrate?.(HAPTICS[cue]);
   }
 }

@@ -515,6 +515,16 @@
                 <span class="hint">Off by default. The game is complete without them.</span>
               </span>
             </label>
+            <!-- Issue #44: OR'd with the OS prefers-reduced-motion in main.ts,
+                 so a player whose OS pref is off can still ask for less motion
+                 here — and one whose OS pref is on needs no toggle. -->
+            <label class="row" for="set-reduced-motion">
+              <input type="checkbox" id="set-reduced-motion" />
+              <span>
+                Reduced motion
+                <span class="hint">Matched tiles fade out instead of flying together.</span>
+              </span>
+            </label>
             <!-- Issue #45 item 5: the depth cues (shadow, side shading, layer
                  value shift) are meant to carry the board on their own, so this
                  is an aid rather than the fix — off by default. -->
