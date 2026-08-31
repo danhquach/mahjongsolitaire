@@ -45,3 +45,66 @@ jobs:
       - name: UI production build
         working-directory: ui
         run: npm run build
+      - name: Upload web bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-bundle
+          path: ui/dist-web
+          if-no-files-found: error
+          retention-days: 7
+
+  # Issue #15 — playtest deploy. Publishes the exact bundle the `ui` job built and
+  # tested, so a red suite can never reach the playtest URL. Pushes to main go to
+  # production; every other branch/PR gets its own Cloudflare preview URL.
+  deploy:
+    needs: [test, ui]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Two quick pushes must not race: an older deploy finishing last would leave
+    # the playtest URL behind HEAD.
+    concurrency:
+      group: deploy-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      # Not for the bundle (that arrives as an artifact) — wrangler-action installs
+      # wrangler into the workspace, so it needs a real one.
+      - uses: actions/checkout@v4
+      - name: Download web bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: web-bundle
+          path: dist-web
+      # Git permits shell metacharacters ($ ` & | ( ) ' ") in branch names and
+      # wrangler-action runs `command` through a shell, so the ref is validated
+      # here rather than interpolated straight into the deploy command.
+      - name: Resolve deploy branch
+        id: branch
+        env:
+          RAW_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          case "$RAW_BRANCH" in
+            ""|*[!A-Za-z0-9./_-]*)
+              echo "::error::Branch '$RAW_BRANCH' contains characters unsafe for the deploy command."
+              exit 1 ;;
+          esac
+          echo "name=$RAW_BRANCH" >> "$GITHUB_OUTPUT"
+      # Secrets are unset until the one-time Cloudflare setup in
+      # docs/decisions/0006-web-deploy-cloudflare-pages.md is done; skip rather
+      # than fail the run so CI stays green in the meantime.
+      - name: Deploy to Cloudflare Pages
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            pages deploy dist-web
+            --project-name=${{ vars.CLOUDFLARE_PROJECT_NAME || 'lantern-tiles' }}
+            --branch=${{ steps.branch.outputs.name }}
+      - name: Cloudflare secrets not configured
+        if: env.CLOUDFLARE_API_TOKEN == ''
+        run: |
+          echo "::notice::Skipped deploy — set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (see docs/decisions/0006-web-deploy-cloudflare-pages.md)."
