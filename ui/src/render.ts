@@ -30,6 +30,8 @@ export class BoardRenderer {
   private readonly boardLayer = new Container();
   private readonly bounds: Rect;
   private viewScale = 1;
+  /** Tile Size setting (issue #14): a fraction of the fit-to-viewport scale. */
+  private sizeFactor = 1;
 
   constructor(
     private readonly app: Application,
@@ -43,6 +45,16 @@ export class BoardRenderer {
     return this.viewScale;
   }
 
+  /**
+   * Tile Size (spec §7 S–XL, issue #14). The board already fits the viewport,
+   * so the factor scales *down* from that fit — 1 is the largest the screen
+   * allows. Re-fits immediately; the caller redraws.
+   */
+  setSizeFactor(factor: number): void {
+    this.sizeFactor = factor;
+    this.layoutToViewport();
+  }
+
   /** Fit the board into the current renderer size, centered, with a margin. */
   layoutToViewport(): void {
     const margin = 12;
@@ -51,7 +63,8 @@ export class BoardRenderer {
     // divide by resolution again or HiDPI screens get a 1/DPR-scale board.
     const availW = this.app.renderer.width - 2 * margin;
     const availH = this.app.renderer.height - 2 * margin;
-    this.viewScale = Math.min(availW / this.bounds.w, availH / this.bounds.h, 2);
+    const fit = Math.min(availW / this.bounds.w, availH / this.bounds.h, 2);
+    this.viewScale = fit * this.sizeFactor;
     this.boardLayer.scale.set(this.viewScale);
     this.boardLayer.position.set(
       (availW - this.bounds.w * this.viewScale) / 2 + margin - this.bounds.x * this.viewScale,

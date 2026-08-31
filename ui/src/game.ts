@@ -8,6 +8,11 @@
 // depth), and `shuffle()` (face permutation re-validated for solvability).
 // Each reports whether it actually did anything; charge accounting lives in
 // boosters.ts and only spends on a successful use.
+//
+// Issue #14 makes a game in progress round-trippable: `snapshot()` captures
+// everything the deal itself does not imply (shuffled faces, removed tiles, the
+// undo stack, the selection, the score ladder), and the constructor's `resume`
+// argument reopens it. Storage and validation live in save.ts.
 
 import {
   Board,
@@ -18,7 +23,13 @@ import {
   legalPairs,
   shuffleBoard,
 } from '@mahjongsolitaire/core';
-import type { GeneratedLevel, MatchScore, TileId } from '@mahjongsolitaire/core';
+import type {
+  GeneratedLevel,
+  MatchScore,
+  MoveStackState,
+  Tile,
+  TileId,
+} from '@mahjongsolitaire/core';
 import type { Hit, HitCandidate } from './hit-test.js';
 
 export type GameStatus = 'playing' | 'won' | 'stuck';
@@ -35,6 +46,39 @@ export type TapOutcome =
 /** A pair of tile ids the Hint booster is pointing at. */
 export type HintPair = readonly [TileId, TileId];
 
+/**
+ * A game in progress, minus the deal (issue #14, spec §9). Regenerating
+ * `(layoutId, seed)` reproduces the slots; this carries what play changed.
+ *
+ * Faces are indexed by tile id — the Shuffle booster permutes them, so they
+ * cannot be re-derived from the seed once it has been used.
+ */
+export interface GameSnapshot {
+  readonly faces: readonly string[];
+  /** Ids of removed tiles, ascending. */
+  readonly removed: readonly TileId[];
+  readonly stack: MoveStackState;
+}
+
+/**
+ * The deal's tiles with a snapshot's faces and removed flags applied. Faces are
+ * positional in ascending-id order — the same order `snapshot()` writes them —
+ * so the two stay in step without assuming ids are contiguous.
+ */
+function applySnapshot(level: GeneratedLevel, snapshot: GameSnapshot): Tile[] {
+  const tiles = [...level.tiles].sort((a, b) => a.id - b.id);
+  if (snapshot.faces.length !== tiles.length) {
+    throw new RangeError(
+      `snapshot has ${snapshot.faces.length} faces, deal has ${tiles.length} tiles`,
+    );
+  }
+  const removed = new Set(snapshot.removed);
+  for (const id of removed) {
+    if (!tiles.some((t) => t.id === id)) throw new RangeError(`snapshot removes unknown tile ${id}`);
+  }
+  return tiles.map((t, i) => ({ ...t, face: snapshot.faces[i]!, removed: removed.has(t.id) }));
+}
+
 export class Game {
   readonly board: Board;
   private readonly stack: MoveStack;
@@ -43,10 +87,30 @@ export class Game {
   private hintPairs: HintPair[] | null = null;
   private hintCursor = 0;
 
-  constructor(readonly level: GeneratedLevel) {
-    this.board = new Board(level.tiles);
+  /**
+   * A fresh deal, or — with `resume` — a saved game reopened on the same deal.
+   * Throws (leaving nothing half-built) if the snapshot does not fit this deal:
+   * save.ts validates untrusted records before they get here, and main.ts falls
+   * back to a fresh deal on anything that still slips through.
+   */
+  constructor(
+    readonly level: GeneratedLevel,
+    resume?: GameSnapshot,
+  ) {
+    this.board = new Board(resume ? applySnapshot(level, resume) : level.tiles);
     this.scores = new ScoreKeeper();
     this.stack = new MoveStack(this.board, this.scores);
+    if (resume) this.stack.restoreState(resume.stack);
+  }
+
+  /** Everything about this game the deal does not imply (issue #14). */
+  snapshot(): GameSnapshot {
+    const tiles = [...this.board.allTiles()].sort((a, b) => a.id - b.id);
+    return {
+      faces: tiles.map((t) => t.face),
+      removed: tiles.filter((t) => t.removed).map((t) => t.id),
+      stack: this.stack.state,
+    };
   }
 
   get selection(): TileId | null {
@@ -65,6 +129,15 @@ export class Game {
     if (this.tilesLeft === 0) return 'won';
     if (legalPairs(this.board).length === 0) return 'stuck';
     return 'playing';
+  }
+
+  /**
+   * Deterministic hash of the whole tracked state — faces, removed flags,
+   * selection, score ladder. The save/resume acceptance check (issue #14,
+   * spec §11.2) compares this across a force-quit.
+   */
+  stateHash(): number {
+    return this.stack.stateHash();
   }
 
   /** Moves available to the Undo booster (spec §5: unlimited depth). */

@@ -6,6 +6,11 @@
 // timestamps are inputs, and stateHash() is a pure function of the tracked
 // state — the §11.1 acceptance property `apply(moves) → undo(n) → apply(same n)`
 // yields an identical hash.
+//
+// Issue #14 adds `state` / `restoreState`: the stack's own contribution to the
+// spec §9 save state. Board occupancy travels separately (Board's constructor
+// already round-trips `allTiles()`), so the two together restore a game
+// hash-identically — including its remaining undo depth.
 
 import type { Board, TileId } from './board.js';
 import { canMatch, matchPair } from './match.js';
@@ -19,6 +24,18 @@ export interface MoveRecord {
   readonly atMs: number;
   readonly prevSelection: TileId | null;
   readonly prevScores: ScoreSnapshot;
+}
+
+/**
+ * A MoveStack's serializable state (spec §9 save/resume, issue #14). Pair it
+ * with the tiles from `Board.allTiles()` — faces and removed flags included —
+ * to reconstruct a game exactly.
+ */
+export interface MoveStackState {
+  /** Undo records, oldest first. */
+  readonly moves: readonly MoveRecord[];
+  readonly selection: TileId | null;
+  readonly scores: ScoreSnapshot;
 }
 
 export class MoveStack {
@@ -89,6 +106,28 @@ export class MoveStack {
   /** All moves played so far, oldest first (spec §9 replay order). */
   moves(): ReadonlyArray<readonly [TileId, TileId]> {
     return this.stack.map((m) => [m.a, m.b] as const);
+  }
+
+  /** This stack's serializable state (issue #14). */
+  get state(): MoveStackState {
+    return { moves: [...this.stack], selection: this.selected, scores: this.scores.snapshot() };
+  }
+
+  /**
+   * Adopt a previously captured state, score ladder and undo depth included.
+   * The wrapped Board must *already* hold the matching occupancy — callers
+   * rebuild it from the saved tiles first — because the selection is checked
+   * against the live board: a state whose selected tile is not free there is
+   * rejected rather than restored into an unplayable game.
+   */
+  restoreState(state: MoveStackState): void {
+    if (state.selection !== null && !this.board.isFree(state.selection)) {
+      throw new RangeError(`restored selection ${state.selection} is not a free tile`);
+    }
+    this.stack.length = 0;
+    this.stack.push(...state.moves);
+    this.selected = state.selection;
+    this.scores.restore(state.scores);
   }
 
   /**
