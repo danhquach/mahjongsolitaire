@@ -2,6 +2,13 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "ui-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "ui", "run", "dev"],
+      "port": 5173,
+      "autoPort": true
+    },
+    {
       "name": "spike-tech-stack",
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "8123", "--directory", "spike/tech-stack"],

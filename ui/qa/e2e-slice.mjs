@@ -41,12 +41,56 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(0, r));
 const url = `http://127.0.0.1:${server.address().port}/`;
 
+// `hud` / `minTileW` / `minCoverage` are the issue #37 expectations: which edge
+// the measured fit rule must pick, and the board size that choice has to buy.
+// Floors sit ~1px / ~0.02 below the values measured in Chromium on the shipped
+// Turtle layout, so a placement regression fails loudly while antialiasing and
+// font-metric drift do not. Every viewport here is the transpose of another, so
+// the rotation check below can look its target's expectations up in this table.
 const VIEWPORTS = [
   { name: 'phone portrait', width: 390, height: 844, dpr: 3 },
   { name: 'phone landscape', width: 844, height: 390, dpr: 3 },
   { name: 'tablet portrait', width: 810, height: 1080, dpr: 2 },
   { name: 'tablet landscape', width: 1080, height: 810, dpr: 2 },
-];
+].map((vp) => ({
+  ...vp,
+  ...{
+    '390x844': { hud: 'top', minTileW: 23, minCoverage: 0.29 },
+    '844x390': { hud: 'side', minTileW: 34, minCoverage: 0.64 },
+    '810x1080': { hud: 'top', minTileW: 51, minCoverage: 0.5 },
+    '1080x810': { hud: 'top', minTileW: 67, minCoverage: 0.88 },
+  }[`${vp.width}x${vp.height}`],
+}));
+
+const expectationFor = (width, height) =>
+  VIEWPORTS.find((vp) => vp.width === width && vp.height === height);
+
+/**
+ * Board fit as the player gets it, measured through the app's own geometry:
+ * chosen HUD edge, on-screen tile width, and how much of the play area the
+ * board actually covers. Runs in the page (issue #37).
+ */
+function measureFit() {
+  const slice = window.__slice;
+  const rects = slice.game.hitCandidates().map((c) => slice.tileCssRect(c.id));
+  const minX = Math.min(...rects.map((r) => r.x));
+  const maxX = Math.max(...rects.map((r) => r.x + r.w));
+  const minY = Math.min(...rects.map((r) => r.y));
+  const maxY = Math.max(...rects.map((r) => r.y + r.h));
+  const board = document.getElementById('board');
+  const canvas = document.querySelector('#board canvas');
+  return {
+    hud: slice.hudPlacement(),
+    scale: slice.renderer.scale,
+    tileW: rects[0].w,
+    boardW: maxX - minX,
+    boardH: maxY - minY,
+    areaW: board.clientWidth,
+    areaH: board.clientHeight,
+    canvasW: canvas.clientWidth,
+    canvasH: canvas.clientHeight,
+  };
+}
 
 const browser = await chromium.launch({ executablePath: CHROMIUM });
 let failures = 0;
@@ -122,29 +166,81 @@ for (const vp of VIEWPORTS) {
     }, id);
 
   // 1. The board fills the viewport: the scaled board spans ≥ 90% of the
-  //    canvas along its constraining axis (catches HiDPI 1/DPR-scale bugs).
+  //    canvas along its constraining axis (catches HiDPI 1/DPR-scale bugs),
+  //    and — issue #37 — the HUD sits on the edge that buys the larger board,
+  //    with the tile size and play-area coverage that choice is worth.
   {
-    const extent = await page.evaluate(() => {
-      const { game, renderer } = window.__slice;
-      const xs = game.hitCandidates().map((t) => window.__slice.tileCssRect(t.id));
-      const maxX = Math.max(...xs.map((r) => r.x + r.w));
-      const minX = Math.min(...xs.map((r) => r.x));
-      const maxY = Math.max(...xs.map((r) => r.y + r.h));
-      const minY = Math.min(...xs.map((r) => r.y));
-      const canvas = document.querySelector('#board canvas');
-      return {
-        boardW: maxX - minX,
-        boardH: maxY - minY,
-        canvasW: canvas.clientWidth,
-        canvasH: canvas.clientHeight,
-        scale: renderer.scale,
-      };
-    });
-    const fillW = extent.boardW / extent.canvasW;
-    const fillH = extent.boardH / extent.canvasH;
+    const fit = await page.evaluate(measureFit);
+    const fillW = fit.boardW / fit.canvasW;
+    const fillH = fit.boardH / fit.canvasH;
     if (Math.max(fillW, fillH) < 0.9) {
-      console.error(`  EXTENT FAIL (dpr ${vp.dpr}):`, extent);
+      console.error(`  EXTENT FAIL (dpr ${vp.dpr}):`, fit);
       failures++;
+    }
+    const coverage = (fit.boardW * fit.boardH) / (fit.areaW * fit.areaH);
+    check(fit.hud === vp.hud, `HUD PLACEMENT (want ${vp.hud})`, fit);
+    check(fit.tileW >= vp.minTileW, `TILE SIZE (want ≥ ${vp.minTileW}px)`, {
+      tileW: fit.tileW,
+      hud: fit.hud,
+    });
+    check(coverage >= vp.minCoverage, `PLAY-AREA COVERAGE (want ≥ ${vp.minCoverage})`, {
+      coverage: +coverage.toFixed(3),
+      hud: fit.hud,
+    });
+  }
+
+  // 1b. Rotation (issue #37): the placement and the fit are re-decided live on
+  //     an orientation change, not just at startup — and a forgiven tap still
+  //     lands afterwards, so the new scale did not cost input accuracy. Every
+  //     viewport's transpose is in VIEWPORTS, so the target's own expectations
+  //     apply. Ends back where it started; the playthrough below is unaffected.
+  {
+    const rotated = expectationFor(vp.height, vp.width);
+    await page.setViewportSize({ width: vp.height, height: vp.width });
+    let fit;
+    try {
+      // Pixi re-fits on a frame, so poll rather than sleep a fixed time.
+      await page.waitForFunction(
+        (want) => window.__slice.hudPlacement() === want,
+        rotated.hud,
+        { timeout: 4000 },
+      );
+      fit = await page.evaluate(measureFit);
+    } catch {
+      fit = await page.evaluate(measureFit);
+    }
+    const coverage = (fit.boardW * fit.boardH) / (fit.areaW * fit.areaH);
+    check(fit.hud === rotated.hud, `ROTATED HUD PLACEMENT (want ${rotated.hud})`, fit);
+    check(fit.tileW >= rotated.minTileW, `ROTATED TILE SIZE (want ≥ ${rotated.minTileW}px)`, {
+      tileW: fit.tileW,
+      hud: fit.hud,
+    });
+    check(coverage >= rotated.minCoverage, `ROTATED COVERAGE (want ≥ ${rotated.minCoverage})`, {
+      coverage: +coverage.toFixed(3),
+      hud: fit.hud,
+    });
+    // 8dp forgiveness at the rotated scale (spec §7), through a real tap.
+    const probe = await page.evaluate(() => {
+      const t = window.__slice.game
+        .hitCandidates()
+        .filter((c) => c.free)
+        .sort((a, b) => a.slot.x - b.slot.x)[0];
+      const r = window.__slice.tileCssRect(t.id);
+      const c = document.querySelector('#board canvas').getBoundingClientRect();
+      return { id: t.id, x: c.x + r.x - 6, y: c.y + r.y + r.h / 2 };
+    });
+    await page.mouse.click(probe.x, probe.y);
+    const rotatedSel = await page.evaluate(() => window.__slice.game.selection);
+    check(rotatedSel === probe.id, 'ROTATED FORGIVENESS', { want: probe.id, got: rotatedSel });
+    await page.mouse.click(probe.x, probe.y); // deselect
+
+    await page.setViewportSize({ width: vp.width, height: vp.height });
+    try {
+      await page.waitForFunction((want) => window.__slice.hudPlacement() === want, vp.hud, {
+        timeout: 4000,
+      });
+    } catch {
+      check(false, 'ROTATE BACK', await page.evaluate(measureFit));
     }
   }
 

@@ -1,7 +1,7 @@
 # Mahjong Solitaire — Product Roadmap
 
 **Source spec:** [mahjong-solitaire-spec.md](mahjong-solitaire-spec.md)
-**Owner:** PM (Danh) · **Status:** v0.2.1 — 2026-08-30 (approved by independent senior review; minors folded in)
+**Owner:** PM (Danh) · **Status:** v0.3.0 — 2026-08-31 (wk-5 playtest feedback folded in: game feel added to Phase 3, Holder logged to v1.1+ backlog)
 **Target:** iOS + Android · MVP scope per spec §2.1
 
 ---
@@ -55,10 +55,16 @@
 
 ### Phase 3 — Content & progression (M3) · 2 wks
 **Deliverables:** 10 layouts as JSON data; 500-level ladder (curated + generated, interleaved difficulty curve with easy "relief" every ~5); scoring + Super Combo; star ratings; Daily Challenge (date-hash seed, DST/timezone-safe); local progression persistence.
+**Game feel lands here, not in Phase 5** (added 2026-08-31 from the wk-5 playtest): the wk-9 broad playtest is the first real read on retention, and it is worthless if the board is unreadable and matching feels like nothing. Two items:
+- **Tile depth readability (issue #45):** stacked layers currently read as one flat sheet — you cannot see which tiles are free without tapping. Drop shadows + side shading + per-layer value shift. Ships with the 10 layouts because every layout stacks differently.
+- **Match feedback animation (issue #44):** matched tiles fly together and collide instead of vanishing; mismatch shake; reduced-motion alternative. Pairs with Super Combo — a 5s-window scoring mechanic with no visible feedback will not read.
 **Exit criteria:**
 - CI job validates all 500 shipped seeds solvable AND runs 10,000 random seeds × all 10 layouts (spec §11.1) — becomes a permanent release gate.
 - Daily Challenge determinism verified across device/timezone/DST fixtures.
 - Difficulty curve: no level's predicted difficulty (scorer metrics: `forced_move_ratio`, branching factor) deviates > 1 bucket from its ladder position; PM signs off against that report, not by feel.
+- Depth readability: on each of the 10 layouts a first-time player identifies top-layer tiles without tapping; the cue survives greyscale and holds contrast ≥ 4.5:1 (issue #45).
+- Match animation plays at 60fps on the reference low-end device, never blocks input, and honours reduced-motion (issue #44).
+**Cost note:** these two items were not in the original 2-wk Phase 3 estimate. Expect ~+0.5 wk, or burn buffer.
 
 ### Phase 4 — Services (M4) · 2 wks
 **Deliverables:** rewarded video + interstitial + banner via mediation, **all gated behind the settings ads toggle (default OFF, issue #3)** — no ad SDK init while the toggle is off; frequency caps **in code** (never mid-level, ≤ 1/3 levels, ≥ 90s gap, skip after 5s); booster economy (grants, replenishment); analytics event set (spec §10); remote config for level reordering + ad tuning (caps floor stays in code). ~~Remove-Ads IAP + restore~~ deferred to v1.1+ (issue #21).
@@ -70,7 +76,7 @@
 
 ### Phase 5 — Polish, a11y audit, performance (M5) · 3 wks
 Scope note: spec §11.1–11.2 tests run continuously in Phases 1–4 (see their exit criteria); Phase 5 executes §11.3–11.4 and — critically — includes time to **fix** what it finds.
-**Deliverables:** device-matrix pass (small/large phone, 7"/12.9" tablet × both orientations); a11y **audit** (implementation landed in Phase 2): full VoiceOver/TalkBack board traversal, Dynamic Type 200%, contrast ≥ 4.5:1, colorblind-safe suits; interrupt handling (call, background, low-mem kill, rotation); offline/airplane-mode session incl. ad-failure paths; memory (100-level soak, no leak) + battery (30-min session) profiles; store assets + listings; fix window (≈1 wk).
+**Deliverables:** device-matrix pass (small/large phone, 7"/12.9" tablet × both orientations); a11y **audit** (implementation landed in Phase 2): full VoiceOver/TalkBack board traversal, Dynamic Type 200%, contrast ≥ 4.5:1, colorblind-safe suits; interrupt handling (call, background, low-mem kill, rotation); offline/airplane-mode session incl. ad-failure paths; memory (100-level soak, no leak) + battery (30-min session) profiles; store assets + listings; fix window (≈1 wk). Game feel (issues #44, #45) is **audited** here, not built — depth cues under Dynamic Type 200% / colorblind simulation, and match animation under the 60fps floor on a full board.
 **Exit criteria (release gate):**
 - QA §11.3–11.4 executed; §11.1–11.2 suites green in CI; zero S1/S2 open.
 - Performance targets §9 met on reference low-end device.
@@ -98,7 +104,7 @@ Scope note: spec §11.1–11.2 tests run continuously in Phases 1–4 (see their
 
 ## 5. Cross-cutting workstreams (run alongside phases)
 
-- **Art pipeline:** tile set, themes, icon — kickoff wk 1, final by mid-Phase 2, store assets by Phase 5.
+- **Art pipeline:** tile set, themes, icon — kickoff wk 1, final by mid-Phase 2, store assets by Phase 5. Depth rendering (shadow/shading, issue #45) is a renderer concern, not an asset concern — it must work with placeholder art and survive a theme swap.
 - **CI:** from Phase 1 day 1 — core test suite on every commit; seed-validation job added Phase 3; device-farm smoke added Phase 5.
 - **Legal/IP:** name clearance + store-likeness review before Phase 5 asset lock.
 - **Store compliance & release (starts Phase 4):** store accounts + signing/provisioning; Apple ATT prompt + Google UMP consent flow (mandatory for an ad-supported app); privacy manifests / data-safety labels; age rating; app-review submission lead time (days–weeks, rejection possible) built in ahead of the soft-launch date.
@@ -106,6 +112,8 @@ Scope note: spec §11.1–11.2 tests run continuously in Phases 1–4 (see their
 ## 6. Post-launch (v1.1+ backlog, from spec §2.2 — not committed)
 
 Active Mind mode → themes/tile-set monetization → cloud save/sync → trophies/leaderboards → special tiles. Sequence by soft-launch learnings (retention gap vs monetization gap).
+
+**Holder — temporary tile store (issue #43, added 2026-08-31).** Park a free tile in a small box above the board to reach what is under it (Vita Mahjong ships a 4-slot version and scores its use). Parked here rather than in v1 because it is core-engine work, not UI: solver and hint must treat held tiles as matchable, deadlock/shuffle re-solvability changes, and hold/unhold become move types in the determinism contract. The decisive cost is the difficulty scorer — the 500-level ladder (#18) is calibrated with no holder, so an always-available holder forces a re-bucketing pass. **Pull into Phase 3 only if** PM answers #43's open questions (slot count, charged-booster vs always-available, score penalty) *before* ladder calibration starts; after that the ladder rework is the expensive part.
 
 ## 7. Top risks on the roadmap itself
 
