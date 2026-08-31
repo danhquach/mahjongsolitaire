@@ -7,7 +7,9 @@
 Playtest builds deploy to **Cloudflare Pages**, driven by the existing `CI` workflow.
 
 - Push to `main` → production deploy → **https://lantern-tiles.pages.dev**
-- Every other branch / PR → its own Cloudflare **preview URL** (posted on the run's deploy step)
+- Open a pull request → its own Cloudflare **preview URL** (printed by the run's deploy step)
+- A branch with no PR open does **not** deploy — CI only triggers on `main` pushes and pull
+  requests, so pushing a branch alone runs nothing. Open the PR to get a preview URL.
 - The deploy job `needs: [test, ui]`, and publishes the *artifact the `ui` job built* — a red
   suite can never reach the playtest URL, and the deployed bytes are the tested bytes.
 
@@ -28,18 +30,33 @@ Revisit if the repo ever goes public: GitHub Pages would then remove the third-p
 Until these exist the deploy step **skips** with a notice and CI stays green.
 
 1. Create a free Cloudflare account (if none) → **Workers & Pages → Create → Pages → Direct Upload**.
-2. Name the project **`lantern-tiles`** and set its **production branch** to `main`.
-   (Using a different name is fine — set the repo variable `CLOUDFLARE_PROJECT_NAME` to match.)
-3. Create an API token: **My Profile → API Tokens → Create Token → "Edit Cloudflare Workers"**
-   template, or a custom token with the **Account → Cloudflare Pages → Edit** permission only.
+2. Name the project exactly **`lantern-tiles`** and set its **production branch** to `main`.
+   The name is hardcoded in the workflow — see "Why the project name is not configurable" below.
+3. Create an API token: **My Profile → API Tokens → Create Token → Create Custom Token**, with
+   the single permission **Account → Cloudflare Pages → Edit**, and **Account Resources** limited
+   to the one account used in step 1.
+
+   Do *not* use the "Edit Cloudflare Workers" template. It grants Workers Scripts Edit, Workers KV
+   Edit, and Zone → Workers Routes Edit, none of which `pages deploy` needs — a leaked token would
+   then deploy arbitrary Workers and attach routes to zones, rather than merely overwrite a static
+   playtest site. (It may not even carry Pages Edit.)
 4. Copy the **Account ID** from the Workers & Pages sidebar.
 5. In this repo: **Settings → Secrets and variables → Actions** →
    - secret `CLOUDFLARE_API_TOKEN` = the token from step 3
    - secret `CLOUDFLARE_ACCOUNT_ID` = the ID from step 4
-   - *(optional)* variable `CLOUDFLARE_PROJECT_NAME` if the project isn't named `lantern-tiles`
 
-Scope the token to Pages edit only — it is the sole credential in this repo, and nothing in the
-pipeline needs broader account access.
+This token is the only credential in the repo and it is long-lived. Roll it (step 3, then update
+the secret) if it is ever pasted outside the secret store, if CI logs are shared with anyone
+outside the project, or on any suspected compromise; revoke the old one in the same screen.
+
+## Why the project name is not configurable
+
+An earlier draft read the name from a repo variable so the Cloudflare project could be called
+anything. `wrangler-action` runs its `command` input through a shell, so that variable was
+interpolated into a shell command — and unlike the workflow file, repo variables are not
+code-reviewed. The name is now a literal in the workflow, and nothing outside the file reaches
+that command. One project name, pinned in two places, is cheaper than validating an escape hatch
+nobody asked for. If the project ever needs renaming, change it here and in the workflow together.
 
 ## Consequences
 

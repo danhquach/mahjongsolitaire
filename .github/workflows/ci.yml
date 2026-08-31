@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege by default; a job escalates only if it ever needs to.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -55,19 +59,21 @@ jobs:
 
   # Issue #15 — playtest deploy. Publishes the exact bundle the `ui` job built and
   # tested, so a red suite can never reach the playtest URL. Pushes to main go to
-  # production; every other branch/PR gets its own Cloudflare preview URL.
+  # production; a pull request gets its own Cloudflare preview URL. Note this
+  # workflow has no `push` trigger off main, so a branch with no PR open never
+  # runs and therefore never deploys.
   deploy:
     needs: [test, ui]
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    # Only a boolean here, never the token itself: job-level env reaches every
+    # step, including third-party actions that have no business holding it.
+    env:
+      HAS_CLOUDFLARE_CREDS: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
     # Two quick pushes must not race: an older deploy finishing last would leave
     # the playtest URL behind HEAD.
     concurrency:
       group: deploy-${{ github.ref }}
       cancel-in-progress: true
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
       # Not for the bundle (that arrives as an artifact) — wrangler-action installs
       # wrangler into the workspace, so it needs a real one.
@@ -94,17 +100,20 @@ jobs:
       # Secrets are unset until the one-time Cloudflare setup in
       # docs/decisions/0006-web-deploy-cloudflare-pages.md is done; skip rather
       # than fail the run so CI stays green in the meantime.
+      # `command` runs through a shell, so nothing outside this file is
+      # interpolated into it: the project name is fixed (decision 0006 pins it)
+      # and the branch has been through the charset gate above.
       - name: Deploy to Cloudflare Pages
-        if: env.CLOUDFLARE_API_TOKEN != ''
+        if: env.HAS_CLOUDFLARE_CREDS == 'true'
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: >-
             pages deploy dist-web
-            --project-name=${{ vars.CLOUDFLARE_PROJECT_NAME || 'lantern-tiles' }}
+            --project-name=lantern-tiles
             --branch=${{ steps.branch.outputs.name }}
       - name: Cloudflare secrets not configured
-        if: env.CLOUDFLARE_API_TOKEN == ''
+        if: env.HAS_CLOUDFLARE_CREDS != 'true'
         run: |
           echo "::notice::Skipped deploy — set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (see docs/decisions/0006-web-deploy-cloudflare-pages.md)."
