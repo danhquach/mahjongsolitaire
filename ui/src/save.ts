@@ -14,6 +14,16 @@
 // timestamp and the score state before it). Deal geometry still comes from
 // `(layoutId, seed)` — see decision 0007.
 //
+// ## Version 2 (issue #43)
+//
+// The holder made the record a different shape: a move is no longer always a
+// pair (hold and unhold are moves too), and the holder's own contents ride
+// alongside the faces and removed flags. Version 2 is a clean break rather than
+// a shim that reads a v1 record with defaults — this file's whole job is to
+// vouch for what it returns, and "assume the fields I cannot see mean nothing"
+// is the one thing it must not do. A v1 record therefore reads as absent, which
+// this module already has a defined answer for: a fresh deal.
+//
 // ## Trust boundary
 //
 // `parseSave` is the only place untrusted data enters the game. It validates
@@ -23,14 +33,17 @@
 // record from an older build, a hand-edited one, or a layout that has since
 // changed all land there.
 
-import { generateValidatedLevel } from '@mahjongsolitaire/core';
+import { HOLDER_SLOTS, generateValidatedLevel } from '@mahjongsolitaire/core';
 import type { Layout, MoveRecord, ScoreSnapshot, TileId } from '@mahjongsolitaire/core';
 import { Game } from './game.js';
 import type { GameSnapshot } from './game.js';
 import { clearRecord, readRecord, writeRecord } from './storage.js';
 import type { KeyValueStorage } from './storage.js';
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
+/** The slot key is deliberately *not* versioned with the record: the `version`
+ *  field inside is what decides whether a record can be trusted, and renaming
+ *  the key would only orphan the old bytes instead of overwriting them. */
 export const SAVE_STORAGE_KEY = 'mahjong.save.v1';
 
 /** One level in progress. `shuffles` keeps the Shuffle booster's seed sequence
@@ -85,9 +98,20 @@ function parseScores(value: unknown): ScoreSnapshot | null {
   return { score, streak, lastMatchMs: lastMatchMs as number | null };
 }
 
-/** Undo records, oldest first: ids present and each claimed once, timestamps
- *  non-decreasing (the ScoreKeeper rejects a backwards clock, so a save
- *  carrying one is corrupt). */
+/** A holder slot index, or null for "came off the board". */
+function isSlotIndex(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < HOLDER_SLOTS;
+}
+
+/**
+ * Undo records, oldest first: well-formed per kind, matched ids each claimed
+ * once, timestamps non-decreasing (the ScoreKeeper rejects a backwards clock,
+ * so a save carrying one is corrupt).
+ *
+ * Only the shape of one record is decided here. Whether the records *fit each
+ * other* — that every undo in the chain is one the board and holder can
+ * actually perform — is checkUndoChain's job below.
+ */
 function parseMoves(value: unknown): MoveRecord[] | null {
   if (!Array.isArray(value)) return null;
   const moves: MoveRecord[] = [];
@@ -95,21 +119,115 @@ function parseMoves(value: unknown): MoveRecord[] | null {
   let lastMs = -Infinity;
   for (const raw of value) {
     if (!isRecord(raw)) return null;
-    const { a, b, atMs, prevSelection } = raw;
+    const { kind, atMs, prevSelection } = raw;
     const prevScores = parseScores(raw['prevScores']);
-    if (!isCount(a) || !isCount(b) || a === b) return null;
-    // No tile may be claimed by two moves: undoing the second one would call
-    // Board.restore on a tile that is already back on the board, which throws.
-    if (claimed.has(a) || claimed.has(b)) return null;
     if (!isMs(atMs) || atMs < lastMs) return null;
     if (prevSelection !== null && !isCount(prevSelection)) return null;
     if (prevScores === null) return null;
-    claimed.add(a);
-    claimed.add(b);
+    const base = { atMs, prevSelection: prevSelection as TileId | null, prevScores };
     lastMs = atMs;
-    moves.push({ a, b, atMs, prevSelection: prevSelection as TileId | null, prevScores });
+    if (kind === 'match') {
+      const { a, b, heldA, heldB } = raw;
+      if (!isCount(a) || !isCount(b) || a === b) return null;
+      // No tile may be claimed by two matches: undoing the second one would
+      // call Board.restore on a tile that is already back, which throws.
+      if (claimed.has(a) || claimed.has(b)) return null;
+      if (heldA !== null && !isSlotIndex(heldA)) return null;
+      if (heldB !== null && !isSlotIndex(heldB)) return null;
+      claimed.add(a);
+      claimed.add(b);
+      moves.push({
+        ...base,
+        kind: 'match',
+        a,
+        b,
+        heldA: heldA as number | null,
+        heldB: heldB as number | null,
+      });
+    } else if (kind === 'hold' || kind === 'unhold') {
+      const { tile, slotIndex } = raw;
+      if (!isCount(tile) || !isSlotIndex(slotIndex)) return null;
+      moves.push({ ...base, kind, tile, slotIndex });
+    } else {
+      return null; // unknown move kind: a record from a build we do not know
+    }
   }
   return moves;
+}
+
+/** Holder occupancy: within capacity, known-looking ids, no id in two slots. */
+function parseHolder(value: unknown): (TileId | null)[] | null {
+  if (!Array.isArray(value) || value.length > HOLDER_SLOTS) return null;
+  const held = new Set<number>();
+  const slots: (TileId | null)[] = [];
+  for (const raw of value) {
+    if (raw === null) {
+      slots.push(null);
+      continue;
+    }
+    if (!isCount(raw) || held.has(raw)) return null;
+    held.add(raw);
+    slots.push(raw);
+  }
+  // Normalise the length rather than honouring it. An honest capture always
+  // writes one entry per slot, and Board takes its capacity from this array
+  // when it is not told otherwise — so a record with two entries would quietly
+  // hand the player a two-slot holder for the rest of the level.
+  while (slots.length < HOLDER_SLOTS) slots.push(null);
+  return slots;
+}
+
+/**
+ * Walk the undo stack backwards and check every step is one the game could
+ * actually take, ending at a pristine deal — nothing removed, holder empty.
+ *
+ * This is the check that makes the record safe to *play*, not just to load.
+ * Reopening a save only replays the state, so an incoherent stack loads fine
+ * and then throws several undos later, out of a click handler: a match whose
+ * tiles are not currently removed, a hold record for a tile that is not in that
+ * slot, a return into a slot something else is sitting in. Each of those is a
+ * throw from Board, and each is unreachable for an honest capture.
+ *
+ * Reaching the empty start state also *is* the older "moves must partition
+ * `removed`" rule: every removal is accounted for by exactly one match, and
+ * every match by two removals, or the walk does not end clean.
+ *
+ * What this does *not* check, because it cannot: whether the ids are ids this
+ * deal has. That falls to `applySnapshot` in game.ts (unknown removed id) and
+ * to Board's constructor (unknown or removed id in a holder slot), and
+ * `reopen` turns either throw into "no save". The three together are what makes
+ * a parsed record safe to play — change one and re-read the other two.
+ */
+function checkUndoChain(
+  removed: readonly TileId[],
+  holder: readonly (TileId | null)[],
+  moves: readonly MoveRecord[],
+): boolean {
+  const gone = new Set<TileId>(removed);
+  const slots: (TileId | null)[] = [...holder];
+  const heldAt = (id: TileId): number => slots.indexOf(id);
+  for (let i = moves.length - 1; i >= 0; i--) {
+    const move = moves[i]!;
+    if (move.kind === 'match') {
+      if (!gone.delete(move.a) || !gone.delete(move.b)) return false;
+      for (const [id, slot] of [
+        [move.a, move.heldA],
+        [move.b, move.heldB],
+      ] as const) {
+        if (slot === null) continue;
+        if (slot >= slots.length || slots[slot] !== null) return false;
+        slots[slot] = id;
+      }
+    } else if (move.kind === 'hold') {
+      if (move.slotIndex >= slots.length || slots[move.slotIndex] !== move.tile) return false;
+      slots[move.slotIndex] = null;
+    } else {
+      if (move.slotIndex >= slots.length || slots[move.slotIndex] !== null) return false;
+      if (gone.has(move.tile) || heldAt(move.tile) !== -1) return false;
+      slots[move.slotIndex] = move.tile;
+    }
+  }
+  return gone.size === 0 && slots.every((s) => s === null);
 }
 
 function parseSnapshot(value: unknown): GameSnapshot | null {
@@ -121,26 +239,23 @@ function parseSnapshot(value: unknown): GameSnapshot | null {
   // Ascending and duplicate-free — `snapshot()` writes them that way, and a
   // repeated id would restore one tile of a pair twice.
   if (removed.some((id, i) => i > 0 && id <= (removed[i - 1] as number))) return null;
+  const holder = parseHolder(value['holder']);
+  if (holder === null) return null;
   if (!isRecord(stack)) return null;
   const moves = parseMoves(stack['moves']);
   const scores = parseScores(stack['scores']);
   const selection = stack['selection'];
   if (moves === null || scores === null) return null;
   if (selection !== null && !isCount(selection)) return null;
-  // Every removal is the trace of exactly one played move, and every move
-  // accounts for two removals — the moves must *partition* `removed`. Checking
-  // membership and count alone is not enough: a record could claim one tile
-  // twice and orphan another, which parses, reopens, and hashes identically to
-  // an honest game, then throws out of the click handler several undos later.
-  // parseMoves has already rejected a repeated id, so equal sizes plus
-  // one-way membership give set equality here.
-  const claimedIds = moves.flatMap((m) => [m.a, m.b]);
-  if (claimedIds.length !== removed.length) return null;
+  // A held tile is still in play, so it cannot also be removed.
   const removedSet = new Set(removed as number[]);
-  if (claimedIds.some((id) => !removedSet.has(id))) return null;
+  if (holder.some((id) => id !== null && removedSet.has(id))) return null;
+  // …and the whole undo stack has to be one the board and holder can walk back.
+  if (!checkUndoChain(removed as TileId[], holder, moves)) return null;
   return {
     faces: faces as string[],
     removed: removed as TileId[],
+    holder,
     stack: { moves, selection: selection as TileId | null, scores },
   };
 }

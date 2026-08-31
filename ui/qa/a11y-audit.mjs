@@ -11,6 +11,8 @@
 //   1. every tile is a named, traversable node in reading order;
 //   2. every interactive target is ≥ 48×48 dp on every shipped viewport;
 //   3. every action is ≤ 2 taps from the board;
+//  3b. the holder strip (issue #43) is a named group of named slots, empty ones
+//      out of the tab order, and the whole park/return loop works by keyboard;
 //   4. a pair can be matched with the keyboard alone, outcomes are announced,
 //      and focus survives the tiles being removed;
 //   5. the end-of-level dialog is modal and takes focus;
@@ -229,7 +231,15 @@ for (const vp of VIEWPORTS) {
     const UNREACHABLE = 99;
     const controls = await page.evaluate((unreachable) => {
       return [...document.querySelectorAll('button')]
-        .filter((n) => !n.classList.contains('tile-node') && n.offsetParent !== null)
+        // Tiles are not HUD actions, and neither are the holder's slots
+        // (issue #43): a slot is a tile-shaped target like a board tile, and an
+        // empty one is a placeholder with nothing to do. Section 3b audits them.
+        .filter(
+          (n) =>
+            !n.classList.contains('tile-node') &&
+            !n.classList.contains('slot') &&
+            n.offsetParent !== null,
+        )
         .map((n) => {
           const r = n.getBoundingClientRect();
           // Booster labels carry a charge count, so the stable name is the
@@ -249,10 +259,123 @@ for (const vp of VIEWPORTS) {
       controls,
     );
     check(
-      controls.map((c) => c.name).join('|') === 'New game|Restart|Settings|Hint|Undo|Shuffle',
+      controls.map((c) => c.name).join('|') ===
+        'New game|Restart|Settings|Hint|Undo|Hold|Shuffle',
       'board screen exposes the complete slice action set',
       controls,
     );
+  }
+
+  // --- 3b. The holder strip (issue #43) as assistive technology sees it. ----
+  {
+    // The strip is the one part of the board that is real DOM rather than a
+    // mirror of the canvas, so its semantics are audited here directly: the
+    // group is named and counted, an empty slot is out of the tab order (there
+    // is nothing to activate), and a parked tile is a named, reachable target
+    // at the same 48dp floor every other control has to clear.
+    const empty = await page.evaluate(() => {
+      const slots = [...document.querySelectorAll('#holder .slot')];
+      return {
+        group: document.getElementById('holder').getAttribute('aria-label'),
+        role: document.getElementById('holder').getAttribute('role'),
+        count: slots.length,
+        allDisabled: slots.every((n) => n.disabled),
+        named: slots.map((n) => n.getAttribute('aria-label')),
+        small: slots.filter((n) => {
+          const r = n.getBoundingClientRect();
+          return r.width < 48 || r.height < 48;
+        }).length,
+      };
+    });
+    check(empty.role === 'group' && /0 of 4 slots used/.test(empty.group ?? ''),
+      'the holder is a named group that reports its state', empty);
+    check(empty.count === 4, 'the holder exposes one node per slot', empty);
+    check(empty.allDisabled, 'an empty slot is not a tab stop', empty);
+    check(
+      empty.named.every((n, i) => n === `Holder slot ${i + 1}, empty`),
+      'every empty slot names itself',
+      empty,
+    );
+    check(empty.small === 0, `every holder slot is ≥ ${MIN_TOUCH_TARGET}dp`, empty);
+
+    // Park a tile through the real control and re-audit the filled slot.
+    const parked = await page.evaluate(() => {
+      const b = window.__slice.game.board;
+      const id = b.freeTileIds()[0];
+      document.querySelector(`#a11y-layer [data-tile-id="${id}"]`).click();
+      // Read the control's name while the tile is selected and before the
+      // press: after it, the selection is gone and so is the "Hold" reading.
+      const holdLabel = document.getElementById('btn-hold').getAttribute('aria-label');
+      document.getElementById('btn-hold').click();
+      const slot = document.querySelector(`#holder [data-tile-id="${id}"]`);
+      const r = slot?.getBoundingClientRect();
+      return {
+        id,
+        group: document.getElementById('holder').getAttribute('aria-label'),
+        label: slot?.getAttribute('aria-label') ?? null,
+        pressed: slot?.getAttribute('aria-pressed'),
+        disabled: slot?.disabled,
+        big: r ? r.width >= 48 && r.height >= 48 : false,
+        holdLabel,
+        said: document.getElementById('a11y-status').textContent,
+      };
+    });
+    check(/1 of 4 slots used/.test(parked.group ?? ''), 'the group recounts', parked);
+    check(
+      parked.label !== null && /, in holder slot 1$/.test(parked.label),
+      'a parked tile is named by face and slot',
+      parked,
+    );
+    check(parked.pressed === 'false' && parked.disabled === false,
+      'and is a live, unpressed target', parked);
+    check(parked.big, `and is ≥ ${MIN_TOUCH_TARGET}dp`, parked);
+    check(/held in slot 1/.test(parked.said ?? ''), 'the hold is announced', parked.said);
+    check(/hold, park the selected tile/i.test(parked.holdLabel ?? ''),
+      'and Hold named its job before the press', parked);
+
+    // Keyboard alone: focus the slot, activate it with a real Enter — not a
+    // synthesised click, which would skip the browser's own key-to-activation
+    // step and prove nothing about the keyboard — and the control flips to
+    // Return. The whole holder loop without a pointer.
+    const focused = await page.evaluate(() => {
+      const slot = document.querySelector('#holder .slot.filled');
+      slot.focus();
+      return document.activeElement === slot;
+    });
+    check(focused, 'a filled slot takes keyboard focus', { focused });
+    await page.keyboard.press('Enter');
+    const byKeyboard = await page.evaluate(() => ({
+      action: window.__slice.holder().action,
+      holdLabel: document.getElementById('btn-hold').getAttribute('aria-label'),
+      pressed: document.querySelector('#holder .slot.filled')?.getAttribute('aria-pressed'),
+    }));
+    check(
+      byKeyboard.action === 'return' && /return/i.test(byKeyboard.holdLabel ?? ''),
+      'Enter on the slot selects it and turns Hold into Return',
+      byKeyboard,
+    );
+    check(byKeyboard.pressed === 'true', 'and the slot reads as pressed', byKeyboard);
+
+    // Returning the tile puts an id the board layer has not seen back into
+    // traversal order, which rebuilds every tile node. The board's single tab
+    // stop has to survive that — it is the player's place on a 144-tile board.
+    const afterReturn = await page.evaluate(() => {
+      const board = document.querySelector('#a11y-layer .tile-node[tabindex="0"]');
+      board.focus();
+      const before = board.dataset.tileId;
+      document.getElementById('btn-hold').click(); // return the held tile
+      const stops = [...document.querySelectorAll('#a11y-layer .tile-node[tabindex="0"]')];
+      return { before, after: stops[0]?.dataset.tileId ?? null, stopCount: stops.length };
+    });
+    check(afterReturn.stopCount === 1, 'the board keeps exactly one tab stop', afterReturn);
+    check(
+      afterReturn.after === afterReturn.before,
+      'and it stays on the tile it was on across a return',
+      afterReturn,
+    );
+
+    // Leave the board as it was found.
+    await page.evaluate(() => document.getElementById('btn-new').click());
   }
 
   // --- 4. Keyboard-only play: traverse, match, hear the outcome. -----------

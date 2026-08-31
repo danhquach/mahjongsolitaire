@@ -184,6 +184,96 @@
           padding: 8px 10px;
         }
       }
+      /* --- Holder (issue #43) ----------------------------------------------
+         A row of slot buttons above the board, inside a column the board
+         shares. Being in the flow (rather than absolutely positioned over the
+         canvas like the booster rail) is the point: the strip's height comes
+         off the board's fit, so a parked tile can never sit on top of a tile
+         that is still in play.
+
+         Slots keep the spec §7 48dp minimum in both axes and are painted from
+         the renderer's own palette when filled (see src/holder.ts) — an empty
+         slot is a dashed outline, so four of them read as "this is a place
+         tiles can go" before the player has used one. */
+      #play-area {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+      }
+      /* The strip follows the HUD's own axis (issue #37): a row above the board
+         when the HUD took the top edge, a column beside it when the HUD took a
+         side. Landscape has width to spare and no height to spare, and a 68px
+         row there cost the board a sixth of its height — a 60px column costs it
+         a fourteenth of its width. Both cases are *measured*, not assumed:
+         applyHudPlacement reads #board back per candidate, so the strip's
+         footprint is already part of the placement decision. */
+      #app[data-hud='top'] #play-area {
+        flex-direction: column;
+      }
+      #app[data-hud='side'] #play-area {
+        flex-direction: row;
+      }
+      #holder {
+        flex: none;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px;
+      }
+      #app[data-hud='side'] #holder {
+        flex-direction: column;
+        padding: 8px 6px;
+      }
+      #holder .slot {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 48px;
+        height: 56px;
+        padding: 0;
+        border: 2px dashed #4d7c5a;
+        border-radius: 8px;
+        background: transparent;
+        color: #bbf7d0;
+        font-family: system-ui, sans-serif;
+      }
+      #holder .slot.filled {
+        border-style: solid;
+      }
+      #holder .slot .glyph {
+        font-size: 26px;
+        font-weight: bold;
+        line-height: 1;
+      }
+      /* Same corner tag as the painted tile, same job: telling two faces apart
+         at a glance without relying on colour (spec §7). */
+      #holder .slot .tag {
+        position: absolute;
+        top: 2px;
+        left: 4px;
+        font-size: 13px;
+        font-weight: bold;
+      }
+      /* The two cues the board uses, in the board's colours (render.ts). */
+      #holder .slot.selected {
+        outline: 3px solid #f59e0b;
+        outline-offset: 1px;
+      }
+      #holder .slot.hinted {
+        outline: 3px solid #2563eb;
+        outline-offset: 1px;
+      }
+      #holder .slot.flashed {
+        outline: 3px solid #dc2626;
+        outline-offset: 1px;
+      }
+      #holder .slot:focus-visible {
+        outline: 4px solid #f59e0b;
+        outline-offset: 2px;
+      }
       #board {
         flex: 1;
         position: relative;
@@ -398,163 +488,186 @@
         <button id="btn-new" type="button">New game</button>
         <button id="btn-restart" type="button">Restart</button>
       </header>
-      <div id="board">
-        <div id="a11y-layer"></div>
-        <!-- The way into settings lives here rather than in the header: at
-             375dp the header is already a full row, and a sixth control there
-             wraps it and costs the board 54px of height. Top-right keeps it one
-             tap from the board (spec §7) and out of the thumb rail. -->
-        <button
-          id="btn-settings"
-          type="button"
-          data-action="Settings"
-          title="Settings"
-          aria-label="Settings"
-        >
-          <!-- A gear reads as a gear only with teeth *on* a rim: a hub plus
-               loose spokes reads as a sunburst at 26px. -->
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="12" cy="12" r="6.6" />
-            <circle class="solid" cx="12" cy="12" r="2.4" />
-            <path
-              d="M12 5.4V2.2M12 18.6v3.2M5.4 12H2.2M18.6 12h3.2M7.33 7.33 5.07 5.07M16.67 16.67l2.26 2.26M16.67 7.33l2.26-2.26M7.33 16.67l-2.26 2.26"
-            />
-          </svg>
-        </button>
-        <div id="booster-rail" role="group" aria-label="Boosters">
-          <!-- Placeholder icon art (bulb / back-arrow / crossing arrows), like
-               the tile faces. `aria-hidden` on the drawing: the spoken name is
-               the button's aria-label, which main.ts keeps in sync with the
-               balance; `title` gives sighted players a hover tooltip. -->
+      <!-- Holder (issue #43) + board share a column, so the strip is above the
+           board whichever edge the HUD took (issue #37). The strip is a flex
+           sibling of #board, which is what Pixi sizes to: it takes its own
+           height out of the fit and the board re-fits around it. -->
+      <div id="play-area">
+        <div id="holder"></div>
+        <div id="board">
+          <div id="a11y-layer"></div>
+          <!-- The way into settings lives here rather than in the header: at
+               375dp the header is already a full row, and a sixth control there
+               wraps it and costs the board 54px of height. Top-right keeps it one
+               tap from the board (spec §7) and out of the thumb rail. -->
           <button
-            id="btn-hint"
+            id="btn-settings"
             type="button"
-            data-action="Hint"
-            title="Hint"
-            aria-label="Hint, 5 charges left"
+            data-action="Settings"
+            title="Settings"
+            aria-label="Settings"
           >
+            <!-- A gear reads as a gear only with teeth *on* a rim: a hub plus
+                 loose spokes reads as a sunburst at 26px. -->
             <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path class="solid" d="M12 2a6.4 6.4 0 0 0-3.7 11.6V16h7.4v-2.4A6.4 6.4 0 0 0 12 2Z" />
-              <path d="M9.4 18.8h5.2" />
-              <path d="M10.4 21.6h3.2" />
+              <circle cx="12" cy="12" r="6.6" />
+              <circle class="solid" cx="12" cy="12" r="2.4" />
+              <path
+                d="M12 5.4V2.2M12 18.6v3.2M5.4 12H2.2M18.6 12h3.2M7.33 7.33 5.07 5.07M16.67 16.67l2.26 2.26M16.67 7.33l2.26-2.26M7.33 16.67l-2.26 2.26"
+              />
             </svg>
-            <span class="charges" id="charges-hint">5</span>
           </button>
-          <button
-            id="btn-undo"
-            type="button"
-            data-action="Undo"
-            title="Undo"
-            aria-label="Undo, 5 charges left"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M7 9h6.5a5.5 5.5 0 1 1 0 11H8" />
-              <path class="solid" d="M8.6 3.4 2.8 9l5.8 5.6z" />
-            </svg>
-            <span class="charges" id="charges-undo">5</span>
-          </button>
-          <button
-            id="btn-shuffle"
-            type="button"
-            data-action="Shuffle"
-            title="Shuffle"
-            aria-label="Shuffle, 5 charges left"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M3.5 20.5 18.5 5.5" />
-              <path d="M3.5 3.5 8.5 8.5" />
-              <path d="M14 14l4.5 4.5" />
-              <path class="solid" d="M13.5 3.5h7v7z" />
-              <path class="solid" d="M20.5 13.5v7h-7z" />
-            </svg>
-            <span class="charges" id="charges-shuffle">5</span>
-          </button>
-        </div>
-        <div
-          id="overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="overlay-title"
-          aria-describedby="overlay-text"
-        >
-          <div class="card">
-            <h2 id="overlay-title"></h2>
-            <p id="overlay-text"></p>
-            <!-- Deadlock way out (spec §4: never hard-fail the player); shown
-                 only for the stuck dialog, hidden on a win. -->
-            <button id="overlay-shuffle" type="button" data-action="Shuffle" hidden>Shuffle</button>
-            <button id="overlay-undo" type="button" data-action="Undo" hidden>Undo</button>
-            <button id="overlay-restart" type="button">Restart level</button>
-            <button id="overlay-new" type="button">New game</button>
+          <div id="booster-rail" role="group" aria-label="Boosters">
+            <!-- Placeholder icon art (bulb / back-arrow / crossing arrows), like
+                 the tile faces. `aria-hidden` on the drawing: the spoken name is
+                 the button's aria-label, which main.ts keeps in sync with the
+                 balance; `title` gives sighted players a hover tooltip. -->
+            <button
+              id="btn-hint"
+              type="button"
+              data-action="Hint"
+              title="Hint"
+              aria-label="Hint, 5 charges left"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path class="solid" d="M12 2a6.4 6.4 0 0 0-3.7 11.6V16h7.4v-2.4A6.4 6.4 0 0 0 12 2Z" />
+                <path d="M9.4 18.8h5.2" />
+                <path d="M10.4 21.6h3.2" />
+              </svg>
+              <span class="charges" id="charges-hint">5</span>
+            </button>
+            <button
+              id="btn-undo"
+              type="button"
+              data-action="Undo"
+              title="Undo"
+              aria-label="Undo, 5 charges left"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 9h6.5a5.5 5.5 0 1 1 0 11H8" />
+                <path class="solid" d="M8.6 3.4 2.8 9l5.8 5.6z" />
+              </svg>
+              <span class="charges" id="charges-undo">5</span>
+            </button>
+            <!-- Hold is always available (PM decision 2026-08-31), so it carries
+                 no charge badge — the only thing that can stop it is a full
+                 holder, and main.ts spells that out in the accessible name. A
+                 tray with a tile dropping into it; the label flips to Return when
+                 the selected tile is already in the holder. -->
+            <button id="btn-hold" type="button" data-action="Hold" title="Hold" aria-label="Hold">
+              <!-- The holder itself: a box of slots with one of them filled. A
+                   tray with an arrow dropping into it was the first draft and
+                   read as "download" — the thing this button is about is the
+                   box, so draw the box. -->
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M2.6 5.4h18.8v13.2H2.6z" />
+                <path class="solid" d="M5.8 8.6h5v6.8h-5z" />
+                <path d="M13.4 8.6h4.8v6.8h-4.8z" />
+              </svg>
+            </button>
+            <button
+              id="btn-shuffle"
+              type="button"
+              data-action="Shuffle"
+              title="Shuffle"
+              aria-label="Shuffle, 5 charges left"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3.5 20.5 18.5 5.5" />
+                <path d="M3.5 3.5 8.5 8.5" />
+                <path d="M14 14l4.5 4.5" />
+                <path class="solid" d="M13.5 3.5h7v7z" />
+                <path class="solid" d="M20.5 13.5v7h-7z" />
+              </svg>
+              <span class="charges" id="charges-shuffle">5</span>
+            </button>
           </div>
-        </div>
-        <div id="settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-          <div class="card">
-            <h2 id="settings-title">Settings</h2>
-            <!-- Audio and haptics are separate checkboxes on purpose: spec §7
-                 wants them independently toggleable, both ON by default. -->
-            <label class="row" for="set-audio">
-              <input type="checkbox" id="set-audio" />
-              <span>Sound effects</span>
-            </label>
-            <label class="row" for="set-haptics">
-              <input type="checkbox" id="set-haptics" />
-              <span>Vibration</span>
-            </label>
-            <label class="row" for="set-timed">
-              <input type="checkbox" id="set-timed" />
-              <span>
-                Show a timer
-                <span class="hint">Counts up. There is never a time limit.</span>
-              </span>
-            </label>
-            <label class="row" for="set-ads">
-              <input type="checkbox" id="set-ads" />
-              <span>
-                Show ads
-                <span class="hint">Off by default. The game is complete without them.</span>
-              </span>
-            </label>
-            <!-- Issue #44: OR'd with the OS prefers-reduced-motion in main.ts,
-                 so a player whose OS pref is off can still ask for less motion
-                 here — and one whose OS pref is on needs no toggle. -->
-            <label class="row" for="set-reduced-motion">
-              <input type="checkbox" id="set-reduced-motion" />
-              <span>
-                Reduced motion
-                <span class="hint">Matched tiles fade out instead of flying together.</span>
-              </span>
-            </label>
-            <!-- Issue #45 item 5: the depth cues (shadow, side shading, layer
-                 value shift) are meant to carry the board on their own, so this
-                 is an aid rather than the fix — off by default. -->
-            <label class="row" for="set-highlight-free">
-              <input type="checkbox" id="set-highlight-free" />
-              <span>
-                Highlight free tiles
-                <span class="hint">Dims the tiles that are covered or hemmed in.</span>
-              </span>
-            </label>
-            <fieldset>
-              <legend>Tile size</legend>
-              <label class="row" for="set-size-s">
-                <input type="radio" name="tile-size" id="set-size-s" value="s" />
-                <span>Small</span>
+          <div
+            id="overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="overlay-title"
+            aria-describedby="overlay-text"
+          >
+            <div class="card">
+              <h2 id="overlay-title"></h2>
+              <p id="overlay-text"></p>
+              <!-- Deadlock way out (spec §4: never hard-fail the player); shown
+                   only for the stuck dialog, hidden on a win. -->
+              <button id="overlay-shuffle" type="button" data-action="Shuffle" hidden>Shuffle</button>
+              <button id="overlay-undo" type="button" data-action="Undo" hidden>Undo</button>
+              <button id="overlay-restart" type="button">Restart level</button>
+              <button id="overlay-new" type="button">New game</button>
+            </div>
+          </div>
+          <div id="settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+            <div class="card">
+              <h2 id="settings-title">Settings</h2>
+              <!-- Audio and haptics are separate checkboxes on purpose: spec §7
+                   wants them independently toggleable, both ON by default. -->
+              <label class="row" for="set-audio">
+                <input type="checkbox" id="set-audio" />
+                <span>Sound effects</span>
               </label>
-              <label class="row" for="set-size-m">
-                <input type="radio" name="tile-size" id="set-size-m" value="m" />
-                <span>Medium</span>
+              <label class="row" for="set-haptics">
+                <input type="checkbox" id="set-haptics" />
+                <span>Vibration</span>
               </label>
-              <label class="row" for="set-size-l">
-                <input type="radio" name="tile-size" id="set-size-l" value="l" />
-                <span>Large</span>
+              <label class="row" for="set-timed">
+                <input type="checkbox" id="set-timed" />
+                <span>
+                  Show a timer
+                  <span class="hint">Counts up. There is never a time limit.</span>
+                </span>
               </label>
-              <label class="row" for="set-size-xl">
-                <input type="radio" name="tile-size" id="set-size-xl" value="xl" />
-                <span>Extra large</span>
+              <label class="row" for="set-ads">
+                <input type="checkbox" id="set-ads" />
+                <span>
+                  Show ads
+                  <span class="hint">Off by default. The game is complete without them.</span>
+                </span>
               </label>
-            </fieldset>
-            <button id="settings-close" type="button">Done</button>
+              <!-- Issue #44: OR'd with the OS prefers-reduced-motion in main.ts,
+                   so a player whose OS pref is off can still ask for less motion
+                   here — and one whose OS pref is on needs no toggle. -->
+              <label class="row" for="set-reduced-motion">
+                <input type="checkbox" id="set-reduced-motion" />
+                <span>
+                  Reduced motion
+                  <span class="hint">Matched tiles fade out instead of flying together.</span>
+                </span>
+              </label>
+              <!-- Issue #45 item 5: the depth cues (shadow, side shading, layer
+                   value shift) are meant to carry the board on their own, so this
+                   is an aid rather than the fix — off by default. -->
+              <label class="row" for="set-highlight-free">
+                <input type="checkbox" id="set-highlight-free" />
+                <span>
+                  Highlight free tiles
+                  <span class="hint">Dims the tiles that are covered or hemmed in.</span>
+                </span>
+              </label>
+              <fieldset>
+                <legend>Tile size</legend>
+                <label class="row" for="set-size-s">
+                  <input type="radio" name="tile-size" id="set-size-s" value="s" />
+                  <span>Small</span>
+                </label>
+                <label class="row" for="set-size-m">
+                  <input type="radio" name="tile-size" id="set-size-m" value="m" />
+                  <span>Medium</span>
+                </label>
+                <label class="row" for="set-size-l">
+                  <input type="radio" name="tile-size" id="set-size-l" value="l" />
+                  <span>Large</span>
+                </label>
+                <label class="row" for="set-size-xl">
+                  <input type="radio" name="tile-size" id="set-size-xl" value="xl" />
+                  <span>Extra large</span>
+                </label>
+              </fieldset>
+              <button id="settings-close" type="button">Done</button>
+            </div>
           </div>
         </div>
       </div>

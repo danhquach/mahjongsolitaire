@@ -10,14 +10,18 @@
 // Issue #37 makes the HUD edge itself part of the fit: applyHudPlacement()
 // measures the board area each candidate placement would leave and keeps the
 // one that fits the board larger (hud-fit.ts).
+// Issue #43 adds the holder: a strip of four slots above the board (holder.ts)
+// and a Hold control in the rail that acts on the selection — park a free tile,
+// or take a parked one back. It is always available, so it has no charge badge;
+// a full holder disables the control instead of ending the level.
 // Issue #44 gives the match its feedback: the pair flies together and collides
 // (effects.ts / anim.ts) while the board redraws without it, the sound answers
 // the tap and the haptic waits for the impact, and reduced motion — OS
 // preference or in-app toggle — substitutes a cross-fade.
 
 import { Application } from 'pixi.js';
-import { generateValidatedLevel, parseLayout } from '@mahjongsolitaire/core';
-import type { Slot, TileId } from '@mahjongsolitaire/core';
+import { HOLDER_SLOTS, generateValidatedLevel, parseLayout } from '@mahjongsolitaire/core';
+import type { MoveRecord, Slot, TileId } from '@mahjongsolitaire/core';
 import { A11yLayer, Announcer, slotPosition } from './a11y.js';
 import type { A11yTile } from './a11y.js';
 import { BoosterCharges } from './boosters.js';
@@ -29,6 +33,7 @@ import { Feedback, navigatorVibrate, webAudioPlayer } from './feedback.js';
 import type { Cue } from './feedback.js';
 import { faceStyle } from './faces.js';
 import { Game } from './game.js';
+import { HolderStrip } from './holder.js';
 import { TILE_H, TILE_W, tileRect } from './geometry.js';
 import type { Rect } from './geometry.js';
 import { hitTest } from './hit-test.js';
@@ -40,7 +45,7 @@ import { SettingsStore, TILE_SIZE_FACTOR, TILE_SIZE_LABEL, TILE_SIZES } from './
 import type { TileSize } from './settings.js';
 import { localKeyValueStorage } from './storage.js';
 import type { Hit } from './hit-test.js';
-import type { HintPair, TapOutcome } from './game.js';
+import type { HintPair, HolderAction, TapOutcome } from './game.js';
 
 /** Spec §7: mis-tap forgiveness radius, in dp (≈ CSS px on the web). */
 const FORGIVENESS_DP = 8;
@@ -91,6 +96,8 @@ async function start(): Promise<void> {
   const a11yRoot = el<HTMLDivElement>('a11y-layer');
   const header = el<HTMLElement>('app-header');
   const boosterRail = el<HTMLDivElement>('booster-rail');
+  const holderRoot = el<HTMLDivElement>('holder');
+  const holdButton = el<HTMLButtonElement>('btn-hold');
   const settingsPanel = el<HTMLDivElement>('settings');
   const settingsButton = el<HTMLButtonElement>('btn-settings');
   const timeStat = el<HTMLElement>('time-stat');
@@ -176,6 +183,15 @@ async function start(): Promise<void> {
   }
 
   const a11y = new A11yLayer(a11yRoot, (id) => activateTile(id));
+  const holder = new HolderStrip(holderRoot, HOLDER_SLOTS, (id) => activateHeld(id));
+
+  /** Accessible name and label of the Hold control, per what it would do now. */
+  const HOLD_LABEL: Record<HolderAction, { title: string; label: string }> = {
+    hold: { title: 'Hold', label: 'Hold, park the selected tile' },
+    return: { title: 'Return', label: 'Return the held tile to the board' },
+    full: { title: 'Hold', label: 'Hold, the holder is full' },
+    none: { title: 'Hold', label: 'Hold, select a tile first' },
+  };
 
   function label(id: TileId): string {
     return faceStyle(game.board.get(id).face).label;
@@ -191,6 +207,14 @@ async function start(): Promise<void> {
     scoreEl.textContent = String(game.score);
     tilesLeftEl.textContent = String(game.tilesLeft);
     syncBoosterButtons();
+    syncHoldButton();
+    holder.sync({
+      slots: game.holderSlots(),
+      faceOf: (id) => game.board.get(id).face,
+      selection: game.selection,
+      hint: hintPair,
+      flash,
+    });
     drawClock();
     a11y.sync(a11yTiles(), game.selection, (t) => tileCssRect(t.slot));
   }
@@ -216,6 +240,26 @@ async function start(): Promise<void> {
   function persist(): void {
     if (game.status() === 'won') saves.clear();
     else saves.write(captureSave(game, { shuffles: shuffleCount, elapsedMs: elapsed.ms }));
+  }
+
+  /**
+   * The Hold control (issue #43). Always available, so there is no balance to
+   * show — what changes is what it *does*: `.spent` and an aria-disabled state
+   * are the "full holder" cue (rule 5 disables Hold; it never ends the level),
+   * and the label flips to Return when the selected tile is already parked.
+   *
+   * Like the boosters, the button stays clickable at its dead end so a press
+   * can explain itself — a `disabled` control cannot, and some assistive
+   * technology skips one entirely.
+   */
+  function syncHoldButton(): void {
+    const action = game.holderAction();
+    const { title, label } = HOLD_LABEL[action];
+    holdButton.classList.toggle('spent', action === 'full');
+    holdButton.setAttribute('aria-disabled', String(action === 'full'));
+    holdButton.setAttribute('aria-label', label);
+    holdButton.title = title;
+    holdButton.dataset['action'] = title;
   }
 
   /** Charge badges + accessible names. Buttons stay enabled at zero charges so
@@ -260,10 +304,13 @@ async function start(): Promise<void> {
     } else {
       const ways = [
         canShuffle ? 'Shuffle re-randomizes the tiles still on the board' : null,
-        canUndo ? 'Undo takes back your last match' : null,
+        canUndo ? 'Undo takes back your last move' : null,
       ].filter((w) => w !== null);
       overlayTitle.textContent = 'No moves left';
-      overlayText.textContent = `This deal has no matching free pair remaining.${
+      // "…or in the holder" is not padding: the stuck check looks through every
+      // hold the holder still has room for (issue #43), so a player staring at
+      // an empty slot needs telling that parking a tile has been considered.
+      overlayText.textContent = `No matching pair is left within reach, on the board or in the holder.${
         ways.length > 0 ? ` ${ways.join('; ')}.` : ''
       }`;
       announcer.say(
@@ -285,6 +332,7 @@ async function start(): Promise<void> {
    */
   function setBackgroundInert(inert: boolean): void {
     a11y.setInert(inert);
+    holder.setInert(inert);
     for (const region of [header, boosterRail, settingsButton]) {
       if (inert) region.setAttribute('inert', '');
       else region.removeAttribute('inert');
@@ -436,7 +484,15 @@ async function start(): Promise<void> {
    * awaited: the next tap is accepted mid-flight, and the tiles it would fly
    * are already out of the model, so they cannot be matched twice.
    */
-  function playMatchAnimation(a: TileId, b: TileId): void {
+  function playMatchAnimation(a: TileId, b: TileId, heldBefore: ReadonlySet<TileId>): void {
+    // A tile matched out of the holder has no board position to fly from — the
+    // strip is HUD, not board space — so a holder match is not flown at all.
+    // The slot emptying is its own feedback; the impact haptic still fires here
+    // rather than waiting for a collision that never happens (issue #43).
+    if (heldBefore.has(a) || heldBefore.has(b)) {
+      feedback.haptic('match');
+      return;
+    }
     const flying: FlyingTile[] = [];
     for (const id of [a, b]) {
       const display = renderer.detachedTile(game, id);
@@ -483,10 +539,26 @@ async function start(): Promise<void> {
   /** Where a hinted tile is, in the same words the a11y layer uses. */
   function describePair(pair: HintPair): string {
     const at = (id: TileId): string => {
+      // A held tile is not on the board any more: naming the slot it came from
+      // would send a screen-reader player to an empty space (issue #43).
+      if (game.board.isHeld(id)) return 'in the holder';
       const { row, col } = slotPosition(game.board.get(id).slot);
       return `row ${row} column ${col}`;
     };
     return `two ${label(pair[0])} tiles, ${at(pair[0])} and ${at(pair[1])}`;
+  }
+
+  /** What an undone move gives back — a pair, a parked tile, or a returned one
+   *  (issue #43 makes all three undoable). */
+  function describeUndo(move: MoveRecord): string {
+    switch (move.kind) {
+      case 'match':
+        return `${label(move.a)} pair restored. ${game.tilesLeft} tiles left. Score ${game.score}.`;
+      case 'hold':
+        return `${label(move.tile)} taken back out of the holder.`;
+      case 'unhold':
+        return `${label(move.tile)} put back in the holder.`;
+    }
   }
 
   /**
@@ -503,13 +575,10 @@ async function start(): Promise<void> {
         return { ok: true, message: `Hint: ${describePair(pair)}.` };
       }
       case 'undo': {
-        const pair = game.undo();
-        if (pair === null) return { ok: false, message: 'Nothing to undo yet.' };
+        const move = game.undo();
+        if (move === null) return { ok: false, message: 'Nothing to undo yet.' };
         hintPair = [];
-        return {
-          ok: true,
-          message: `Undo: ${label(pair[0])} pair restored. ${game.tilesLeft} tiles left. Score ${game.score}.`,
-        };
+        return { ok: true, message: `Undo: ${describeUndo(move)}` };
       }
       case 'shuffle': {
         // Deterministic per (level seed, shuffle index) so a replay of the same
@@ -580,6 +649,12 @@ async function start(): Promise<void> {
     }
   }
 
+  /** Ids sitting in the holder right now — captured before a tap, because after
+   *  a match the tiles are removed and no longer say where they came from. */
+  function heldIds(): ReadonlySet<TileId> {
+    return new Set(game.holderSlots().filter((id): id is TileId => id !== null));
+  }
+
   function applyTap(hit: Hit): void {
     // Elapsed *play* time, not performance.now(): a resumed page restarts
     // performance.now() at 0 while the restored combo ladder still holds the
@@ -587,7 +662,20 @@ async function start(): Promise<void> {
     // goes backwards. Elapsed time is saved with the game, so it is the one
     // clock that stays monotonic across a force-quit (core's own contract:
     // "monotonic within a game — e.g. elapsed game time").
-    const outcome: TapOutcome = game.tap(hit, elapsed.ms);
+    const before = heldIds();
+    finishTap(game.tap(hit, elapsed.ms), before);
+  }
+
+  /** Tap on a tile in the holder (issue #43): same select / match semantics as
+   *  a free board tile, reached through the strip's own button. */
+  function activateHeld(id: TileId): void {
+    if (game.status() !== 'playing') return;
+    const before = heldIds();
+    finishTap(game.tapHeld(id, elapsed.ms), before);
+  }
+
+  /** Everything a resolved tap owes the player: feedback, save, announcement. */
+  function finishTap(outcome: TapOutcome, heldBefore: ReadonlySet<TileId>): void {
     // A match changes the board, so the highlighted hint is stale. Any other
     // tap keeps it: selecting one hinted tile must not hide its partner.
     if (outcome.kind === 'matched') hintPair = [];
@@ -603,7 +691,7 @@ async function start(): Promise<void> {
       feedback.sound('match');
       // The copies have to be captured before the redraw that drops the pair —
       // they live in the effects layer, which the redraw does not touch.
-      playMatchAnimation(outcome.a, outcome.b);
+      playMatchAnimation(outcome.a, outcome.b, heldBefore);
     } else {
       const cue = tapCue(outcome);
       if (cue) feedback.cue(cue);
@@ -618,6 +706,49 @@ async function start(): Promise<void> {
     // writes in the same tick coalesce and the first is never spoken.
     if (game.status() === 'playing') announce(outcome);
     showStatus();
+  }
+
+  /**
+   * One press of the Hold control (issue #43). Nothing is charged — the holder
+   * is always available — so the only outcomes are "it moved" and a spoken
+   * reason why it did not.
+   */
+  function useHold(): void {
+    if (game.status() !== 'playing') return;
+    const outcome = game.useHolder(elapsed.ms);
+    switch (outcome.kind) {
+      case 'held':
+        hintPair = [];
+        feedback.cue('select');
+        redraw();
+        persist();
+        announcer.say(
+          `${label(outcome.id)} held in slot ${outcome.slot + 1}. ${
+            game.holderFull ? 'Holder full.' : `${game.tilesLeft} tiles left.`
+          }`,
+        );
+        // Parking a tile changes what is free, which can *lift* a deadlock —
+        // that is the only reason this is here. A hold can never end the level:
+        // it removes nothing, and a held tile still counts as in play
+        // (spec §3.5 as amended by decision 0008).
+        showStatus();
+        return;
+      case 'returned':
+        hintPair = [];
+        feedback.cue('select');
+        redraw();
+        persist();
+        announcer.say(`${label(outcome.id)} returned to the board.`);
+        showStatus();
+        return;
+      case 'full':
+        feedback.cue('mismatch');
+        announcer.say('The holder is full. Match a held tile to free a slot.');
+        return;
+      case 'none':
+        announcer.say('Select a free tile first, then press Hold.');
+        return;
+    }
   }
 
   /**
@@ -674,6 +805,7 @@ async function start(): Promise<void> {
     if (applyHudPlacement()) app.resize();
   });
 
+  holdButton.addEventListener('click', () => useHold());
   boosterUi.hint.button.addEventListener('click', () => useBooster('hint'));
   boosterUi.undo.button.addEventListener('click', () => useBooster('undo'));
   boosterUi.shuffle.button.addEventListener('click', () => useBooster('shuffle'));
@@ -745,6 +877,23 @@ async function start(): Promise<void> {
     },
     get hintPair() {
       return hintPair;
+    },
+    /** Holder state + what the Hold control would do (issue #43 QA). */
+    holder(): {
+      slots: readonly (TileId | null)[];
+      full: boolean;
+      holdsUsed: number;
+      action: HolderAction;
+    } {
+      return {
+        slots: game.holderSlots(),
+        full: game.holderFull,
+        holdsUsed: game.holdsUsed,
+        action: game.holderAction(),
+      };
+    },
+    useHold() {
+      useHold();
     },
     /** Settings + save-slot state (issue #14 QA assertions). */
     settings() {

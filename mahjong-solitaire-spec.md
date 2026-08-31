@@ -85,9 +85,17 @@ A tile is **free** (selectable) iff:
 
 Vertical adjacency does not block.
 
+**Holder** *(added by decision 0008, PM 2026-08-31 — issue #43)*: a tile may also
+be parked in one of 4 off-board **holder slots**. A held tile is still in play
+and is always **matchable** (it is off the lattice, so nothing can block it), but
+it occupies no slot, so whatever it was covering becomes free. Only a free tile
+can be held, a held tile can always be returned to its own slot, and a full
+holder refuses the move rather than ending the level. Tiles therefore have three
+states: on the board, held, removed.
+
 ### 3.3 Matching
 - Tap tile A (selected, highlighted), tap tile B.
-- If A ≠ B, both free, and `match(A.face, B.face)` → remove both, award score.
+- If A ≠ B, both **matchable** (free on the board, or held — decision 0008), and `match(A.face, B.face)` → remove both, award score.
 - Otherwise deselect / reselect.
 - Tapping the selected tile deselects it.
 
@@ -98,8 +106,8 @@ Vertical adjacency does not block.
 Standard 144: 36 Dots, 36 Bamboo, 36 Characters, 16 Winds, 12 Dragons, 4 Flowers, 4 Seasons. Flowers and Seasons ship as two identical copies of two faces each (`flower-1` ×2, `flower-2` ×2; `season-1` ×2, `season-2` ×2 — decision 0005) so every tile has an identical partner. Layouts may use fewer tiles but always an even count per face.
 
 ### 3.5 Win / loss
-- **Win:** all tiles removed.
-- **Deadlock:** no free matching pair exists → offer Shuffle (free the first time per level, then rewarded-ad/booster). Never hard-fail the player.
+- **Win:** all tiles removed. Held tiles count as in play — an empty board with a tile still parked is not a win (decision 0008).
+- **Deadlock:** no matching pair is reachable → offer Shuffle (free the first time per level, then rewarded-ad/booster). Never hard-fail the player. *Reachable* includes what the holder can open up (decision 0008): parking a free tile can free the tile under it, so a board with no pair on it is only a deadlock once no sequence of holds within the holder's remaining capacity exposes one.
 - No timer by default. Timed mode is an opt-in setting.
 
 ---
@@ -123,6 +131,7 @@ Naïve random dealing produces unsolvable boards. Use **reverse construction**:
   - `layer_count`, `tile_count`
   - `forced_move_ratio` (turns with exactly one legal pair)
 - Bucket into Easy / Medium / Hard / Expert; ladder interleaves buckets on a rising curve with a "relief" easy level every ~5.
+- Difficulty is scored on a **no-holder** position, which is a lower bound on how easily a level plays now that the holder is always available (decision 0008) — the ladder has to be bucketed against holder-aware play.
 
 **Layouts:** Turtle, Pyramid, Fortress, Spider, Butterfly, Cat, Bridge, plus original layouts. Layouts are data files (JSON), not code.
 
@@ -134,9 +143,10 @@ Naïve random dealing produces unsolvable boards. Use **reverse construction**:
 |---|---|---|
 | **Hint** | Highlights one valid free pair; cycles through pairs on repeat taps | Costs 1 charge; no penalty to score in casual mode |
 | **Undo** | Restores the last removed pair (full move stack, unlimited depth) | 1 charge per undo; must restore selection state and score |
-| **Shuffle** | Re-randomizes faces of all *remaining* tiles, preserving slot occupancy | Must re-run solvability check; regenerate if unsolvable |
+| **Shuffle** | Re-randomizes faces of the tiles still *on the board*, preserving slot occupancy | Must re-run solvability check; regenerate if unsolvable. Held tiles keep their faces (decision 0008) |
+| **Hold** | Parks the selected free tile in the holder, or returns the selected held tile to the board | **Not a charged booster** (decision 0008): free and always available. Refused only when the holder is full. Hold, unhold and holder-match are undoable moves |
 
-Starting grant: 5 of each. Replenishment: daily login grant, level milestones, rewarded video, IAP bundle.
+Starting grant: 5 of each of the three charged boosters; Hold has no balance. Replenishment: daily login grant, level milestones, rewarded video, IAP bundle.
 
 ---
 
@@ -245,12 +255,13 @@ Key metrics: D1/D7/D30 retention, levels/session, abandon rate by level (difficu
 - Match rules: identical-face match for all tiles (decision 0005 — no wildcard groups), self-match rejection, non-free rejection.
 - Generator: for each layout × 10,000 seeds → assert solvable, assert tile count even per face, assert every slot filled.
 - Solver: known-solvable and known-deadlocked fixtures.
-- Undo: property test — `apply(moves) → undo(n) → apply(same n)` yields identical state hash.
-- Shuffle: post-shuffle board is always solvable; slot occupancy unchanged.
+- Undo: property test — `apply(moves) → undo(n) → apply(same n)` yields identical state hash, on a move list containing holds and returns (decision 0008).
+- Shuffle: post-shuffle board is always solvable; slot occupancy unchanged; held tiles keep their faces and are still counted for parity.
+- Holder: property test — no sequence of holds can turn a solvable position unwinnable; a full holder refuses Hold rather than ending the level; solver and hint never report "no moves" while a holder pair exists.
 - Combo/scoring boundary tests at the 5s window edges.
 
 ### 11.2 Integration
-- Save/restore across force-quit at every move index of a sample level.
+- Save/restore across force-quit at every move index of a sample level, including a play-through that uses the holder (holder contents and hold count restored exactly).
 - Booster charge accounting vs. rewarded-ad callbacks (including ad-failed and ad-abandoned paths).
 - IAP restore, including Remove-Ads on a fresh install.
 - Daily Challenge determinism across devices, timezones, and DST boundaries.

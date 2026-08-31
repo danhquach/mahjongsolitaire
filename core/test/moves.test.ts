@@ -51,13 +51,13 @@ test('play rejects unplayable pairs without changing state', () => {
   assert.equal(stack.depth, 0);
 });
 
-test('select requires a free tile', () => {
+test('select requires a matchable tile', () => {
   const board = new Board([
     { id: 0, slot: slot(0, 0, 0), face: 'dots-1' },
     { id: 1, slot: slot(0, 0, 1), face: 'dots-1' }, // covers tile 0
   ]);
   const stack = new MoveStack(board);
-  assert.throws(() => stack.select(0), /not free/);
+  assert.throws(() => stack.select(0), /not matchable/);
   stack.select(1);
   assert.equal(stack.selection, 1);
 });
@@ -71,7 +71,7 @@ test('undo restores the pair, the score, and the selection', () => {
   stack.select(2);
   const before = stack.stateHash();
   stack.play(2, 3, 1000);
-  assert.equal(stack.undo(), true);
+  assert.equal(stack.undo()?.kind, 'match');
   assert.equal(board.get(2).removed, false);
   assert.equal(board.get(3).removed, false);
   assert.equal(scores.total, 0);
@@ -79,8 +79,8 @@ test('undo restores the pair, the score, and the selection', () => {
   assert.equal(stack.stateHash(), before);
 });
 
-test('undo on an empty stack returns false', () => {
-  assert.equal(new MoveStack(rowBoard()).undo(), false);
+test('undo on an empty stack returns null', () => {
+  assert.equal(new MoveStack(rowBoard()).undo(), null);
 });
 
 test('undo restores the combo ladder, not just the total', () => {
@@ -121,7 +121,7 @@ test('property: apply(moves) → undo(n) → apply(same n) yields identical stat
       // undo(n), then re-apply the same n moves with the same timestamps.
       const undone = played.slice(played.length - n);
       const baseMs = (played.length - n) * 1000;
-      for (let i = 0; i < n; i++) assert.equal(stack.undo(), true);
+      for (let i = 0; i < n; i++) assert.notEqual(stack.undo(), null);
       assert.notEqual(stack.stateHash(), hashAfterApply);
       undone.forEach((move, i) => stack.play(move[0], move[1], baseMs + (i + 1) * 1000));
 
@@ -202,6 +202,6 @@ test('restoreState rejects a selection the restored board cannot select', () => 
   const corrupt = { ...stack.state, selection: 0 as TileId }; // 0 was removed
   assert.throws(
     () => new MoveStack(new Board(board.allTiles())).restoreState(corrupt),
-    /not a free tile/,
+    /not a matchable tile/,
   );
 });

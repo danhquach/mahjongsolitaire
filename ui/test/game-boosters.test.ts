@@ -106,7 +106,11 @@ test('undo restores the pair, the score and the selection', () => {
   assert.equal(game.score, 100);
 
   const restored = game.undo();
-  assert.deepEqual(restored && [...restored].sort(), [a, b].sort());
+  assert.equal(restored?.kind, 'match');
+  assert.deepEqual(
+    restored?.kind === 'match' ? [restored.a, restored.b].sort() : null,
+    [a, b].sort(),
+  );
   assert.equal(game.tilesLeft, tilesAfterMatch + 2);
   assert.equal(game.score, 0);
   assert.equal(game.board.get(a).removed, false);
@@ -196,8 +200,8 @@ test('undo across a shuffle still restores a matching pair', () => {
   playMoves(game, 2);
   game.shuffle(4242);
   const restored = game.undo();
-  assert.notEqual(restored, null);
-  const [a, b] = restored!;
+  assert.equal(restored?.kind, 'match');
+  const { a, b } = restored as { a: number; b: number };
   assert.equal(game.board.get(a).face, game.board.get(b).face);
   assert.equal(canMatch(game.board, a, b).ok, true);
 });
