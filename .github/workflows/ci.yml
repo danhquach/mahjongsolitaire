@@ -58,11 +58,11 @@ jobs:
           retention-days: 7
 
   # Issue #15 — playtest deploy. Publishes the exact bundle the `ui` job built and
-  # tested, so a red suite can never reach the playtest URL. Pushes to main go to
-  # production; a pull request gets its own Cloudflare preview URL. Note this
-  # workflow has no `push` trigger off main, so a branch with no PR open never
-  # runs and therefore never deploys.
+  # tested, so a red suite can never reach the playtest URL. Only `main` publishes:
+  # the target is a Worker serving static assets, where a deploy replaces the live
+  # version, so running this on PRs would let any PR overwrite the playtest URL.
   deploy:
+    if: github.ref == 'refs/heads/main'
     needs: [test, ui]
     runs-on: ubuntu-latest
     # Only a boolean here, never the token itself: job-level env reaches every
@@ -78,41 +78,25 @@ jobs:
       # Not for the bundle (that arrives as an artifact) — wrangler-action installs
       # wrangler into the workspace, so it needs a real one.
       - uses: actions/checkout@v4
+      # Into the path wrangler.jsonc points `assets.directory` at, so a CI deploy
+      # and a local `wrangler deploy` upload the same tree.
       - name: Download web bundle
         uses: actions/download-artifact@v8
         with:
           name: web-bundle
-          path: dist-web
-      # Git permits shell metacharacters ($ ` & | ( ) ' ") in branch names and
-      # wrangler-action runs `command` through a shell, so the ref is validated
-      # here rather than interpolated straight into the deploy command.
-      - name: Resolve deploy branch
-        id: branch
-        env:
-          RAW_BRANCH: ${{ github.head_ref || github.ref_name }}
-        run: |
-          case "$RAW_BRANCH" in
-            ""|*[!A-Za-z0-9./_-]*)
-              echo "::error::Branch '$RAW_BRANCH' contains characters unsafe for the deploy command."
-              exit 1 ;;
-          esac
-          echo "name=$RAW_BRANCH" >> "$GITHUB_OUTPUT"
+          path: ui/dist-web
       # Secrets are unset until the one-time Cloudflare setup in
       # docs/decisions/0006-web-deploy-cloudflare-pages.md is done; skip rather
       # than fail the run so CI stays green in the meantime.
-      # `command` runs through a shell, so nothing outside this file is
-      # interpolated into it: the project name is fixed (decision 0006 pins it)
-      # and the branch has been through the charset gate above.
-      - name: Deploy to Cloudflare Pages
+      # Every argument is fixed in-repo — name and asset directory come from
+      # wrangler.jsonc — so nothing interpolated reaches the shell.
+      - name: Deploy to Cloudflare
         if: env.HAS_CLOUDFLARE_CREDS == 'true'
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: >-
-            pages deploy dist-web
-            --project-name=lantern-tiles
-            --branch=${{ steps.branch.outputs.name }}
+          command: deploy
       - name: Cloudflare secrets not configured
         if: env.HAS_CLOUDFLARE_CREDS != 'true'
         run: |
