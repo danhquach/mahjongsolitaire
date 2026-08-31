@@ -96,12 +96,36 @@ export class BoardRenderer {
       this.boardLayer.addChild(g);
 
       const style = faceStyle(tile.face);
-      const glyph = new Text({
-        text: style.glyph,
-        style: { fontSize: TILE_H * 0.42, fill: style.color, fontFamily: 'sans-serif' },
-      });
-      glyph.anchor.set(0.5);
-      glyph.position.set(r.x + TILE_W / 2, r.y + TILE_H * 0.58);
+      if (style.pips) {
+        // Per-rank pip art (issue #35): dots/bamboo draw their actual count.
+        // Pip area sits below the corner tag, inset from the tile edges.
+        const inset = TILE_W * 0.16;
+        const areaX = r.x + inset;
+        const areaY = r.y + TILE_H * 0.26;
+        const areaW = TILE_W - 2 * inset;
+        const areaH = TILE_H - TILE_H * 0.26 - inset * 0.6;
+        const pipG = new Graphics();
+        for (const pip of style.pips) {
+          const px = areaX + pip.x * areaW;
+          const py = areaY + pip.y * areaH;
+          if (style.pipShape === 'stick') {
+            const sw = TILE_W * 0.07;
+            const sh = TILE_H * 0.16;
+            pipG.roundRect(px - sw / 2, py - sh / 2, sw, sh, sw / 2).fill(style.color);
+          } else {
+            pipG.circle(px, py, TILE_W * 0.065).fill(style.color);
+          }
+        }
+        this.boardLayer.addChild(pipG);
+      } else {
+        const glyph = new Text({
+          text: style.glyph,
+          style: { fontSize: TILE_H * 0.42, fill: style.color, fontFamily: 'sans-serif' },
+        });
+        glyph.anchor.set(0.5);
+        glyph.position.set(r.x + TILE_W / 2, r.y + TILE_H * 0.58);
+        this.boardLayer.addChild(glyph);
+      }
       const tag = new Text({
         text: style.tag,
         style: {
@@ -112,7 +136,7 @@ export class BoardRenderer {
         },
       });
       tag.position.set(r.x + 5, r.y + 3);
-      this.boardLayer.addChild(glyph, tag);
+      this.boardLayer.addChild(tag);
     }
   }
 }
