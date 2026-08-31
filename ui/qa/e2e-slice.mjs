@@ -16,6 +16,9 @@
 // For issue #14 it force-quits mid-level (a real page reload) and asserts the
 // board, score, selection and settings all come back, and that a won level
 // leaves no save behind.
+// For issue #43 it parks a tile with the Hold button, checks the strip and the
+// freed tile underneath, returns it, matches a pair out of the holder, and
+// force-quits with a tile still parked.
 // For issue #44 it drives three consecutive matches with no waiting between
 // them (all resolve, nothing is matched twice, and the taps land while earlier
 // pairs are still in flight), asserts the match announcement is written in the
@@ -64,7 +67,9 @@ const VIEWPORTS = [
     '390x844': { hud: 'top', minTileW: 23, minCoverage: 0.29 },
     '844x390': { hud: 'side', minTileW: 34, minCoverage: 0.64 },
     '810x1080': { hud: 'top', minTileW: 51, minCoverage: 0.5 },
-    '1080x810': { hud: 'top', minTileW: 67, minCoverage: 0.88 },
+    // Lowered for issue #43: the holder strip takes its height out of the fit
+    // (68px of 810 here), which costs this viewport ~9% of its tile width.
+    '1080x810': { hud: 'top', minTileW: 60, minCoverage: 0.79 },
   }[`${vp.width}x${vp.height}`],
 }));
 
@@ -98,18 +103,31 @@ function measureFit() {
   };
 }
 
+/** Deals one deadlock hunt will play through before giving up (see huntDeadlock). */
+const DEADLOCK_HUNT_DEALS = 40;
+
 const browser = await chromium.launch({ executablePath: CHROMIUM });
 let failures = 0;
 
 /**
  * Deal and play naive greedy lines in the page until one deadlocks — how a real
  * player walks into a dead end — and report the stuck dialog's state. Returns
- * null if 12 deals all worked out. Runs entirely in the page (tile activation
+ * null if every deal worked out. Runs entirely in the page (tile activation
  * through the a11y layer), so it costs no round-trips per move.
+ *
+ * The deal budget was 12 until issue #43. The holder made real deadlocks rarer
+ * twice over — `status()` now looks through hold sequences before it says stuck,
+ * and this hunt itself parks a tile when no pair is visible — which pushed the
+ * skip rate on phone viewports from 0 to ~30% (measured: 7 skips in 24 hunts).
+ * A skip is a silent hole in the spec §4 "never hard-fail" coverage, so the
+ * budget is sized to close it rather than left where it was. Deals are played
+ * in-page with no round trips, so this costs wall-clock, not flakiness.
  */
-function huntDeadlock() {
+function huntDeadlock(maxDeals) {
   const slice = window.__slice;
-  const click = (id) => document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.click();
+  // Either layer: board tiles carry data-tile-id in #a11y-layer, held ones in
+  // the holder strip (issue #43).
+  const click = (id) => document.querySelector(`[data-tile-id="${id}"]`)?.click();
   const pairs = () => {
     const byFace = {};
     for (const c of slice.game.hitCandidates()) {
@@ -119,14 +137,29 @@ function huntDeadlock() {
       .filter((ids) => ids.length > 1)
       .map((ids) => [ids[0], ids[1]]);
   };
-  for (let deal = 0; deal < 12; deal++) {
+  for (let deal = 0; deal < maxDeals; deal++) {
     document.getElementById('btn-new').click();
-    for (let move = 0; slice.game.status() === 'playing' && move < 200; move++) {
+    for (let move = 0; slice.game.status() === 'playing' && move < 400; move++) {
       const options = pairs();
       // Deterministic but unstrategic pick: the point is to lose sometimes.
-      const [a, b] = options[(deal * 7 + move * 3) % options.length];
-      click(a);
-      click(b);
+      // With no pair on the board, fall back to the game's own hint, which can
+      // name a holder pair the board-only scan above cannot see (issue #43).
+      const pair = options.length
+        ? options[(deal * 7 + move * 3) % options.length]
+        : slice.game.hint();
+      if (pair) {
+        click(pair[0]);
+        click(pair[1]);
+        continue;
+      }
+      // No pair anywhere, and the game still says 'playing': the way on is the
+      // holder — parking a free tile frees what it covered. This is the branch
+      // that used to crash the hunt, because "playing" no longer implies "a
+      // pair is on the board".
+      const free = slice.game.board.freeTileIds();
+      if (free.length === 0) break;
+      click(free[(deal * 5 + move) % free.length]);
+      document.getElementById('btn-hold').click();
     }
     if (slice.game.status() === 'stuck') {
       return {
@@ -554,6 +587,177 @@ for (const vp of VIEWPORTS) {
     await page.mouse.click(probe.x, probe.y); // deselect via the same forgiven tap
   }
 
+  // 2b. The holder (issue #43), driven through its real controls: park a free
+  //     tile with the Hold button, check the strip shows it and the tile it was
+  //     covering is now free, take it back with the same button (now Return),
+  //     park it again and clear it against its partner, then force-quit with a
+  //     tile still parked.
+  {
+    const before = failures;
+    const slotMetrics = () =>
+      page.evaluate(() => {
+        const slots = [...document.querySelectorAll('#holder .slot')];
+        return {
+          count: slots.length,
+          filled: slots.filter((n) => n.classList.contains('filled')).length,
+          emptyAreDisabled: slots.every((n) => n.classList.contains('filled') || n.disabled),
+          tooSmall: slots.filter((n) => {
+            const r = n.getBoundingClientRect();
+            return r.width < 48 || r.height < 48;
+          }).length,
+          groupLabel: document.getElementById('holder').getAttribute('aria-label'),
+          holdLabel: document.getElementById('btn-hold').getAttribute('aria-label'),
+        };
+      });
+
+    const empty = await slotMetrics();
+    check(empty.count === 4, 'the holder shows four slots', empty);
+    check(empty.filled === 0, 'a fresh deal starts with an empty holder', empty);
+    check(empty.emptyAreDisabled, 'an empty slot is not a tab stop', empty);
+    check(empty.tooSmall === 0, 'every holder slot is a 48dp target', empty);
+    check(/0 of 4 slots used/.test(empty.groupLabel ?? ''), 'the strip names its state', empty);
+    check(/select a tile first/i.test(empty.holdLabel ?? ''), 'Hold says what it needs', empty);
+
+    // A free tile that is the *sole* cover of some tile below it, and whose
+    // partner is also free: parking it proves both halves at once — the tile
+    // underneath is uncovered, and it can then be matched out of the holder.
+    // "Sole" matters: Turtle's half-offset rows let two upper tiles straddle one
+    // lower tile, and parking either of those uncovers nothing.
+    const target = await page.evaluate(() => {
+      const b = window.__slice.game.board;
+      const present = b.presentTiles();
+      const free = b.freeTileIds();
+      const byFace = {};
+      for (const id of free) (byFace[b.get(id).face] ??= []).push(id);
+      const covers = (a, t) =>
+        a.slot.z === t.slot.z + 1 &&
+        Math.abs(a.slot.x - t.slot.x) < 2 &&
+        Math.abs(a.slot.y - t.slot.y) < 2;
+      for (const id of free) {
+        const partner = (byFace[b.get(id).face] ?? []).find((x) => x !== id);
+        if (partner === undefined) continue;
+        const self = b.get(id);
+        const witness = present.find(
+          (t) => covers(self, t) && present.filter((c) => covers(c, t)).length === 1,
+        );
+        if (witness) return { id, partner, witness: witness.id };
+      }
+      return null;
+    });
+    check(target !== null, 'the deal has a tile worth parking', target);
+    if (target !== null) {
+      const tilesBefore = await page.evaluate(() => window.__slice.game.tilesLeft);
+      const coveredBefore = await page.evaluate(
+        (t) => window.__slice.game.board.isCovered(t.witness),
+        target,
+      );
+      check(coveredBefore, 'the tile under it starts covered', target);
+
+      const c = await tileCenter(target.id);
+      await page.mouse.click(c.x, c.y); // select it on the canvas
+      await page.click('#btn-hold');
+      const parked = await page.evaluate(
+        (t) => ({
+          holder: window.__slice.holder(),
+          onBoard: window.__slice.game.board.presentTiles().some((x) => x.id === t.id),
+          stillCovered: window.__slice.game.board.isCovered(t.witness),
+          slotLabel: document
+            .querySelector(`#holder [data-tile-id="${t.id}"]`)
+            ?.getAttribute('aria-label'),
+          said: document.getElementById('a11y-status').textContent,
+          tilesLeft: window.__slice.game.tilesLeft,
+        }),
+        target,
+      );
+      const strip = await slotMetrics();
+      check(parked.holder.slots[0] === target.id, 'the tile is in the first slot', parked);
+      check(parked.holder.holdsUsed === 1, 'the hold is counted', parked);
+      check(!parked.onBoard, 'a parked tile is off the board', parked);
+      check(parked.tilesLeft === tilesBefore, 'but still counts as a tile left', parked);
+      check(!parked.stillCovered, 'parking uncovers the tile underneath', parked);
+      check(/in holder slot 1/.test(parked.slotLabel ?? ''), 'the slot names its tile', parked);
+      check(/held in slot 1/.test(parked.said ?? ''), 'the hold is announced', parked.said);
+      check(strip.filled === 1, 'the strip draws the parked tile', strip);
+      check(/1 of 4 slots used/.test(strip.groupLabel ?? ''), 'and counts it', strip);
+
+      // Selecting the parked tile turns Hold into Return, and Return puts it
+      // back in its own slot — always legal (issue #43 rule 4).
+      await page.click(`#holder [data-tile-id="${target.id}"]`);
+      const asReturn = await page.evaluate(() => ({
+        action: window.__slice.holder().action,
+        label: document.getElementById('btn-hold').getAttribute('aria-label'),
+        pressed: document
+          .querySelector('#holder .slot.filled')
+          ?.getAttribute('aria-pressed'),
+      }));
+      check(asReturn.action === 'return', 'the control flips to Return', asReturn);
+      check(/return/i.test(asReturn.label ?? ''), 'and says so', asReturn);
+      check(asReturn.pressed === 'true', 'the selected slot reads as pressed', asReturn);
+      await page.click('#btn-hold');
+      const returned = await page.evaluate(
+        (t) => ({
+          holder: window.__slice.holder(),
+          onBoard: window.__slice.game.board.presentTiles().some((x) => x.id === t.id),
+          free: window.__slice.game.board.isFree(t.id),
+        }),
+        target,
+      );
+      check(returned.holder.slots[0] === null, 'the slot is empty again', returned);
+      check(returned.onBoard && returned.free, 'the tile is back on the board, free', returned);
+      check(returned.holder.holdsUsed === 1, 'a return does not un-count the hold', returned);
+
+      // Park it again, then match it out of the holder against its partner.
+      const c2 = await tileCenter(target.id);
+      await page.mouse.click(c2.x, c2.y);
+      await page.click('#btn-hold');
+      const p = await tileCenter(target.partner);
+      await page.mouse.click(p.x, p.y);
+      await page.click(`#holder [data-tile-id="${target.id}"]`);
+      const matched = await page.evaluate(() => ({
+        holder: window.__slice.holder(),
+        tilesLeft: window.__slice.game.tilesLeft,
+        score: window.__slice.game.score,
+        filled: [...document.querySelectorAll('#holder .slot.filled')].length,
+      }));
+      check(matched.holder.slots[0] === null, 'a holder match frees the slot', matched);
+      check(matched.tilesLeft === tilesBefore - 2, 'and clears both tiles', matched);
+      check(matched.score === 100, 'and scores like any other pair', matched);
+      check(matched.filled === 0, 'and the strip empties', matched);
+
+      // Park one more tile and force-quit: the holder is part of the save.
+      const spare = await page.evaluate(() => window.__slice.game.board.freeTileIds()[0]);
+      const sc = await tileCenter(spare);
+      await page.mouse.click(sc.x, sc.y);
+      await page.click('#btn-hold');
+      const beforeQuit = await page.evaluate(() => ({
+        holder: window.__slice.holder(),
+        hash: window.__slice.stateHash(),
+      }));
+      await page.reload();
+      await page.waitForFunction(() => window.__slice !== undefined);
+      const afterQuit = await page.evaluate(() => ({
+        holder: window.__slice.holder(),
+        hash: window.__slice.stateHash(),
+        filled: [...document.querySelectorAll('#holder .slot.filled')].length,
+      }));
+      check(
+        JSON.stringify(afterQuit.holder.slots) === JSON.stringify(beforeQuit.holder.slots) &&
+          afterQuit.hash === beforeQuit.hash &&
+          afterQuit.holder.holdsUsed === beforeQuit.holder.holdsUsed,
+        'the holder comes back after a force-quit',
+        { beforeQuit, afterQuit },
+      );
+      check(afterQuit.filled === 1, 'and the strip redraws it', afterQuit);
+    }
+    console.log(
+      `${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: holder park / return / match / resume`,
+    );
+    // A fresh deal for the end-to-end play-through below. Through the app's own
+    // control, not localStorage + reload: the unload handler writes the save on
+    // the way out, so a cleared slot would be refilled before the next boot.
+    await page.click('#btn-new');
+  }
+
   // 3. Play the generator's solution witness end-to-end with real taps.
   const solution = await page.evaluate(() => window.__slice.game.level.solution);
   for (const [a, b] of solution) {
@@ -745,9 +949,9 @@ for (const vp of VIEWPORTS) {
   //    honestly and falls back to Undo.
   {
     const before = failures;
-    const stuck = await page.evaluate(huntDeadlock);
+    const stuck = await page.evaluate(huntDeadlock, DEADLOCK_HUNT_DEALS);
     if (stuck === null) {
-      console.log(`  note — ${vp.name}: no deadlock in 12 naive deals; stuck-dialog check skipped`);
+      console.log(`  note — ${vp.name}: no deadlock in ${DEADLOCK_HUNT_DEALS} naive deals; stuck-dialog check skipped`);
     } else {
       check(stuck.title === 'No moves left', 'deadlock raises the stuck dialog', stuck);
       check(stuck.shuffleOffered, 'stuck dialog offers Shuffle', stuck);
@@ -829,9 +1033,9 @@ for (const vp of VIEWPORTS) {
     );
     await page.reload();
     await page.waitForFunction(() => window.__slice !== undefined);
-    const stuck = await page.evaluate(huntDeadlock);
+    const stuck = await page.evaluate(huntDeadlock, DEADLOCK_HUNT_DEALS);
     if (stuck === null) {
-      console.log(`  note — ${vp.name}: no deadlock in 12 naive deals; Undo-only check skipped`);
+      console.log(`  note — ${vp.name}: no deadlock in ${DEADLOCK_HUNT_DEALS} naive deals; Undo-only check skipped`);
     } else {
       check(!stuck.shuffleOffered, 'a spent Shuffle is not offered', stuck);
       check(stuck.undoOffered, 'Undo is offered as the remaining way out', stuck);
@@ -851,7 +1055,13 @@ for (const vp of VIEWPORTS) {
       );
       check(resumed.charges.undo === 4, 'the rescue undo spent one charge', resumed.charges);
       check(resumed.focusIsTile, 'focus returns to the board, not <body>', resumed);
-      check(/pair restored\./.test(resumed.said), 'the undo rescue is announced', resumed.said);
+      // Whatever came back is named: a pair, or a hold the hunt took to get
+      // here (issue #43 makes holds undoable moves too).
+      check(
+        /(pair restored|the holder)\./.test(resumed.said),
+        'the undo rescue is announced',
+        resumed.said,
+      );
       console.log(
         `${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: deadlock rescued by Undo when Shuffle is spent (deal ${stuck.deal + 1})`,
       );

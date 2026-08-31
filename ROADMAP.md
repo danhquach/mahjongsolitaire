@@ -1,7 +1,7 @@
 # Mahjong Solitaire — Product Roadmap
 
 **Source spec:** [mahjong-solitaire-spec.md](mahjong-solitaire-spec.md)
-**Owner:** PM (Danh) · **Status:** v0.3.0 — 2026-08-31 (wk-5 playtest feedback folded in: game feel added to Phase 3, Holder logged to v1.1+ backlog)
+**Owner:** PM (Danh) · **Status:** v0.4.0 — 2026-08-31 (wk-5 playtest feedback folded in: game feel added to Phase 3; Holder pulled from the v1.1+ backlog into Phase 3 per decision 0008)
 **Target:** iOS + Android · MVP scope per spec §2.1
 
 ---
@@ -58,10 +58,11 @@
 **Game feel lands here, not in Phase 5** (added 2026-08-31 from the wk-5 playtest): the wk-9 broad playtest is the first real read on retention, and it is worthless if the board is unreadable and matching feels like nothing. Two items:
 - **Tile depth readability (issue #45):** stacked layers currently read as one flat sheet — you cannot see which tiles are free without tapping. Drop shadows + side shading + per-layer value shift. Ships with the 10 layouts because every layout stacks differently.
 - **Match feedback animation (issue #44):** matched tiles fly together and collide instead of vanishing; mismatch shake; reduced-motion alternative. Pairs with Super Combo — a 5s-window scoring mechanic with no visible feedback will not read.
+- **Holder — temporary tile store (issue #43, pulled in 2026-08-31):** four off-board slots a free tile can be parked in to reach what is under it, always available and free (decision 0008). Core-engine work, not UI: hold / unhold / holder-match are move types in the determinism contract, held tiles are matchable to the solver and hint, and the deadlock check now looks through hold sequences before it offers Shuffle. **It has to land before ladder calibration**, which is why it is here and not in v1.1: an always-available assist lowers every level's effective difficulty, and re-bucketing 500 levels afterwards is the expensive path.
 **Exit criteria:**
 - CI job validates all 500 shipped seeds solvable AND runs 10,000 random seeds × all 10 layouts (spec §11.1) — becomes a permanent release gate.
 - Daily Challenge determinism verified across device/timezone/DST fixtures.
-- Difficulty curve: no level's predicted difficulty (scorer metrics: `forced_move_ratio`, branching factor) deviates > 1 bucket from its ladder position; PM signs off against that report, not by feel.
+- Difficulty curve: no level's predicted difficulty (scorer metrics: `forced_move_ratio`, branching factor) deviates > 1 bucket from its ladder position; PM signs off against that report, not by feel. **Bucketed against holder-aware play** (issue #43 / decision 0008): `assessDifficulty` scores a no-holder position, which is a lower bound on how easily a level actually plays now.
 - Depth readability: on each of the 10 layouts a first-time player identifies top-layer tiles without tapping; the cue survives greyscale and holds contrast ≥ 4.5:1 (issue #45).
 - Match animation plays at 60fps on the reference low-end device, never blocks input, and honours reduced-motion (issue #44).
 **Cost note:** these two items were not in the original 2-wk Phase 3 estimate. Expect ~+0.5 wk, or burn buffer.
@@ -113,7 +114,7 @@ Scope note: spec §11.1–11.2 tests run continuously in Phases 1–4 (see their
 
 Active Mind mode → themes/tile-set monetization → cloud save/sync → trophies/leaderboards → special tiles. Sequence by soft-launch learnings (retention gap vs monetization gap).
 
-**Holder — temporary tile store (issue #43, added 2026-08-31).** Park a free tile in a small box above the board to reach what is under it (Vita Mahjong ships a 4-slot version and scores its use). Parked here rather than in v1 because it is core-engine work, not UI: solver and hint must treat held tiles as matchable, deadlock/shuffle re-solvability changes, and hold/unhold become move types in the determinism contract. The decisive cost is the difficulty scorer — the 500-level ladder (#18) is calibrated with no holder, so an always-available holder forces a re-bucketing pass. **Pull into Phase 3 only if** PM answers #43's open questions (slot count, charged-booster vs always-available, score penalty) *before* ladder calibration starts; after that the ladder rework is the expensive part.
+~~**Holder — temporary tile store (issue #43).**~~ **Pulled into Phase 3, 2026-08-31.** The condition this entry set was met: PM answered the three open questions (4 slots, always available, no score penalty) while #18 had not started, so the ladder is calibrated *with* the holder rather than re-bucketed after it. Shipped as decision 0008.
 
 ## 7. Top risks on the roadmap itself
 

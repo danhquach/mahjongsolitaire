@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { generateValidatedLevel, parseLayout } from '@mahjongsolitaire/core';
+import { HOLDER_SLOTS, generateValidatedLevel, parseLayout } from '@mahjongsolitaire/core';
 import type { Layout, TileId } from '@mahjongsolitaire/core';
 import { Game } from '../src/game.js';
 import { SAVE_STORAGE_KEY, SAVE_VERSION, SaveStore, captureSave, parseSave, reopen } from '../src/save.js';
@@ -55,7 +55,15 @@ function fingerprint(game: Game) {
     selection: game.selection,
     undoDepth: game.undoDepth,
     status: game.status(),
+    holder: game.holderSlots(),
+    holdsUsed: game.holdsUsed,
   };
+}
+
+/** Tap a tile wherever it is: on the board, or in the holder (issue #43). */
+function tapAnywhere(game: Game, id: TileId, nowMs: number): void {
+  if (game.board.isHeld(id)) game.tapHeld(id, nowMs);
+  else game.tap(free(id), nowMs);
 }
 
 // --- the acceptance criterion -------------------------------------------------
@@ -76,6 +84,50 @@ test('spec §11.2: save/restore at every move index of the Turtle sample level',
     game.tap(free(move[1]), index * 2 + 1);
   }
   assert.equal(game.tilesLeft, 0, 'the sample level was played to completion');
+});
+
+test('issue #43: save/restore at every move index of a level played with holds', () => {
+  // Same force-quit sweep as above, on a game that uses the holder throughout:
+  // the solution witness stays playable regardless, because a parked tile is
+  // still matchable — it just has to be tapped in the holder rather than on the
+  // board. Holds and returns are interleaved on a fixed cadence so the sweep
+  // crosses every holder state: empty, part full, full, and emptied again.
+  const level = generateValidatedLevel(TURTLE, SAMPLE_SEED);
+  const game = new Game(level);
+  let holds = 0;
+  let returns = 0;
+  for (let index = 0; index <= level.solution.length; index++) {
+    const resumed = forceQuit(game, { shuffles: 0, elapsedMs: index * 1500 });
+    assert.notEqual(resumed, null, `move index ${index}: resume was refused`);
+    assert.deepEqual(fingerprint(resumed!), fingerprint(game), `move index ${index}`);
+
+    const move = level.solution[index];
+    if (!move) break;
+    const t = index * 4;
+    // Park a free tile every third move, and give one back every seventh, so a
+    // force-quit lands on a mid-hold state and on a returned one.
+    if (index % 3 === 0 && !game.holderFull) {
+      const target = game.board.freeTileIds()[0];
+      if (target !== undefined) {
+        game.tap(free(target), t);
+        if (game.useHolder(t + 1).kind === 'held') holds++;
+      }
+    } else if (index % 7 === 0) {
+      const parked = game.holderSlots().find((id) => id !== null);
+      if (parked !== undefined && parked !== null) {
+        game.tapHeld(parked, t);
+        if (game.useHolder(t + 1).kind === 'returned') returns++;
+      }
+    }
+    // A fresh selection, so the pair below is not read as a mismatch.
+    game.tap({ kind: 'miss' }, t + 2);
+    tapAnywhere(game, move[0], t + 2);
+    tapAnywhere(game, move[1], t + 3);
+  }
+  assert.equal(game.tilesLeft, 0, 'the sample level was played to completion');
+  assert.ok(holds > 4, `the sweep should exercise the holder (${holds} holds)`);
+  assert.ok(returns > 0, `and a return (${returns})`);
+  assert.equal(game.holdsUsed, holds);
 });
 
 test('a resumed game keeps playing identically to one that never quit', () => {
@@ -159,17 +211,45 @@ function sampleSave(): SaveState {
   return captureSave(game, { shuffles: 0, elapsedMs: 1000 });
 }
 
+/** The same, with a tile parked and a hold/return pair in the move stack —
+ *  what the holder-specific rejection cases below need something to corrupt. */
+function heldSave(): SaveState {
+  const game = new Game(generateValidatedLevel(TURTLE, SAMPLE_SEED));
+  const [a, b] = game.level.solution[0]!;
+  game.tap(free(a), 100);
+  game.useHolder(110); // park it…
+  game.tapHeld(a, 120);
+  game.useHolder(130); // …and give it back, so both kinds are in the stack
+  game.tap(free(a), 140);
+  game.useHolder(150); // park it again and leave it there
+  game.tap({ kind: 'miss' }, 160);
+  game.tap(free(b), 170);
+  game.tapHeld(a, 180); // a match played out of the holder
+  const parked = game.level.solution[1]![0];
+  game.tap(free(parked), 190);
+  game.useHolder(200);
+  return captureSave(game, { shuffles: 0, elapsedMs: 1000 });
+}
+
 const snap = (save: Record<string, unknown>): Record<string, unknown> =>
   save['snapshot'] as Record<string, unknown>;
 const stack = (save: Record<string, unknown>): Record<string, unknown> =>
   snap(save)['stack'] as Record<string, unknown>;
 
 /** Deep clone through JSON — mutating a save the way a hand-edit would. */
-function corrupt(mutate: (save: Record<string, unknown>) => void): unknown {
-  const raw = JSON.parse(JSON.stringify(sampleSave())) as Record<string, unknown>;
+function corrupt(
+  mutate: (save: Record<string, unknown>) => void,
+  base: SaveState = sampleSave(),
+): unknown {
+  const raw = JSON.parse(JSON.stringify(base)) as Record<string, unknown>;
   mutate(raw);
   return raw;
 }
+
+const holderOf = (save: Record<string, unknown>): (number | null)[] =>
+  snap(save)['holder'] as (number | null)[];
+const movesOf = (save: Record<string, unknown>): Record<string, unknown>[] =>
+  stack(save)['moves'] as Record<string, unknown>[];
 
 test('a well-formed save parses; an absent one is simply absent', () => {
   assert.notEqual(parseSave(JSON.parse(JSON.stringify(sampleSave()))), null);
@@ -179,7 +259,10 @@ test('a well-formed save parses; an absent one is simply absent', () => {
 
 test('parseSave rejects every malformed record instead of trusting it', () => {
   const cases: Record<string, (save: Record<string, unknown>) => void> = {
-    'wrong version': (s) => void (s['version'] = 2),
+    // A v1 record is a *shape* this build cannot vouch for (no holder, no move
+    // kinds), so it reads as absent and the player gets a fresh deal (#43).
+    'a stale version': (s) => void (s['version'] = 1),
+    'a version from the future': (s) => void (s['version'] = 99),
     'missing layoutId': (s) => void delete s['layoutId'],
     'non-integer seed': (s) => void (s['seed'] = 1.5),
     'unsafe-integer seed': (s) => void (s['seed'] = Number.MAX_SAFE_INTEGER + 2),
@@ -220,10 +303,93 @@ test('parseSave rejects every malformed record instead of trusting it', () => {
     },
     'malformed score snapshot': (s) => void (stack(s)['scores'] = { score: -1, streak: 0, lastMatchMs: null }),
     'non-integer selection': (s) => void (stack(s)['selection'] = 'first'),
+    'an unknown move kind': (s) => void (movesOf(s)[0]!['kind'] = 'teleport'),
+    'a move with no kind at all': (s) => void delete movesOf(s)[0]!['kind'],
   };
   for (const [name, mutate] of Object.entries(cases)) {
     assert.equal(parseSave(corrupt(mutate)), null, `should reject: ${name}`);
   }
+});
+
+test('parseSave rejects a holder the rest of the record does not agree with', () => {
+  // Every one of these loads and hashes like an honest game and then throws out
+  // of Board several undos later, which is exactly what the record has to be
+  // checked for rather than discovered by playing it (issue #43).
+  const cases: Record<string, (save: Record<string, unknown>) => void> = {
+    'no holder field at all': (s) => void delete snap(s)['holder'],
+    'a holder longer than its capacity': (s) =>
+      void (snap(s)['holder'] = [0, 1, 2, 3, 4, 5, 6, 7, 8]),
+    'the same tile in two slots': (s) => {
+      const holder = holderOf(s);
+      holder[1] = holder.find((id) => id !== null) ?? 0;
+    },
+    'a held tile that is also removed': (s) =>
+      void (holderOf(s)[1] = (snap(s)['removed'] as number[])[0]!),
+    'a non-integer slot': (s) => void (holderOf(s)[1] = 1.5 as unknown as number),
+    'a hold record whose tile is not in that slot': (s) => {
+      const hold = movesOf(s).find((m) => m['kind'] === 'hold')!;
+      hold['tile'] = 999;
+    },
+    'a hold record naming a slot out of range': (s) => {
+      const hold = movesOf(s).find((m) => m['kind'] === 'hold')!;
+      hold['slotIndex'] = 99;
+    },
+    'a return naming a slot the tile was not in': (s) => {
+      const unhold = movesOf(s).find((m) => m['kind'] === 'unhold')!;
+      unhold['slotIndex'] = ((unhold['slotIndex'] as number) + 1) % HOLDER_SLOTS;
+    },
+    'a match claiming a holder slot that is taken': (s) => {
+      const match = movesOf(s).find((m) => m['kind'] === 'match')!;
+      match['heldA'] = holderOf(s).findIndex((id) => id !== null);
+      match['heldB'] = null;
+    },
+    'a holder left full at the start of the stack': (s) => {
+      stack(s)['moves'] = [];
+      snap(s)['removed'] = [];
+    },
+  };
+  const base = heldSave();
+  assert.notEqual(parseSave(JSON.parse(JSON.stringify(base))), null, 'the base save is honest');
+  assert.ok(
+    base.snapshot.holder.some((id) => id !== null),
+    'the base save has a tile parked',
+  );
+  for (const [name, mutate] of Object.entries(cases)) {
+    assert.equal(parseSave(corrupt(mutate, base)), null, `should reject: ${name}`);
+  }
+});
+
+test('a short holder array is padded, not honoured as a smaller holder', () => {
+  // Board takes its capacity from the array it is given, so a hand-edited
+  // record with fewer entries would shrink the holder for the rest of the level.
+  const raw = JSON.parse(JSON.stringify(sampleSave())) as Record<string, unknown>;
+  (raw['snapshot'] as Record<string, unknown>)['holder'] = [null, null];
+  const parsed = parseSave(raw);
+  assert.notEqual(parsed, null, 'a short holder is still a readable record');
+  assert.equal(parsed!.snapshot.holder.length, HOLDER_SLOTS);
+  const resumed = reopen(TURTLE, parsed!)!;
+  assert.notEqual(resumed, null);
+  assert.equal(resumed.holderSlots().length, HOLDER_SLOTS);
+  // And all four slots are usable, not two.
+  for (let i = 0; i < HOLDER_SLOTS; i++) {
+    const target = resumed.board.freeTileIds()[0]!;
+    resumed.tap(free(target), i * 2);
+    assert.equal(resumed.useHolder(i * 2 + 1).kind, 'held', `slot ${i + 1}`);
+  }
+  assert.equal(resumed.holderFull, true);
+});
+
+test('a resumed game can undo all the way back through its holds', () => {
+  // The whole point of validating the undo chain: what parses must also play.
+  const resumed = forceQuit(new Game(generateValidatedLevel(TURTLE, SAMPLE_SEED)));
+  assert.notEqual(resumed, null);
+  const fromHolder = reopen(TURTLE, heldSave())!;
+  assert.notEqual(fromHolder, null);
+  assert.ok(fromHolder.holdsUsed > 0);
+  while (fromHolder.undoDepth > 0) assert.notEqual(fromHolder.undo(), null);
+  assert.deepEqual(fromHolder.holderSlots(), [null, null, null, null]);
+  assert.equal(fromHolder.tilesLeft, fromHolder.level.tiles.length);
+  assert.equal(fromHolder.score, 0);
 });
 
 test('unreadable storage reads as no save, and a blocked write is not fatal', () => {

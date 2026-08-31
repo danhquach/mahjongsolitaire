@@ -16,9 +16,25 @@
 // tiles), which keeps reverse-constructed deals in the low-millisecond range.
 // The same search powers the Hint booster (spec §5): a hint is the first move
 // of a found winning line, falling back to any legal pair in lost positions.
+//
+// The holder (issue #43) is first-class here, not an afterthought: a held tile
+// is a search node with no adjacency at all, so the existing free-tile test
+// already answers "always free" for it and the parity precheck already counts
+// it. Two consequences worth stating, because the deadlock dialog rests on
+// them:
+//   * Holding can only *help*. It takes a tile off the lattice, which frees at
+//     least as many tiles as before and never fewer, and any winning line of
+//     the un-held position is still a winning line of the held one. So a
+//     position the solver calls solvable stays solvable across any sequence of
+//     holds — the property issue #43 asks to be tested rather than assumed.
+//   * The converse fails: holding *unblocks* without needing a matching
+//     partner, so some positions are winnable only with the holder. The search
+//     itself does not plan holds (a plain `solve` answers the question the
+//     generator and Shuffle ask, which is about the deal, not the assist), so
+//     `hasPlayableMove` below is the one place that looks ahead through them.
 
 import { Board, footprintsOverlap } from './board.js';
-import type { Tile, TileId } from './board.js';
+import type { Tile, TileId, TileInput } from './board.js';
 import { mulberry32 } from './rng.js';
 
 export type SolveVerdict = 'solvable' | 'unsolvable' | 'unknown';
@@ -34,6 +50,10 @@ export interface SolveResult {
 export interface SolveOptions {
   /** DFS state budget; exceeding it yields verdict 'unknown'. */
   readonly maxStates?: number;
+  /** Holder occupancy for the position (issue #43) — pass `board.holderSlots()`
+   *  alongside `board.allTiles()`, or held tiles read as ordinary board tiles
+   *  sitting in slots they have actually vacated. */
+  readonly holder?: readonly (TileId | null)[];
 }
 
 /** Generous for reverse-constructed deals (typically well under 1k states)
@@ -46,11 +66,12 @@ export const DEFAULT_MAX_STATES = 100_000;
  *  attempt, cheap enough to be noise when a deal needs the DFS anyway. */
 const PLAYOUT_RESTARTS = 50;
 
-/** All currently playable pairs: free tiles with identical faces, each pair
- *  [low, high] id, lexicographically ordered (deterministic hint cycling). */
+/** All currently playable pairs: matchable tiles — free on the board or held
+ *  (issue #43) — with identical faces, each pair [low, high] id,
+ *  lexicographically ordered (deterministic hint cycling). */
 export function legalPairs(board: Board): Array<[TileId, TileId]> {
   const byFace = new Map<string, TileId[]>();
-  for (const id of board.freeTileIds()) {
+  for (const id of board.matchableTileIds()) {
     const face = board.get(id).face;
     let ids = byFace.get(face);
     if (!ids) byFace.set(face, (ids = []));
@@ -65,7 +86,9 @@ export function legalPairs(board: Board): Array<[TileId, TileId]> {
   return pairs.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
 }
 
-/** Search-internal tile: adjacency precomputed once (indices, not ids). */
+/** Search-internal tile: adjacency precomputed once (indices, not ids). A held
+ *  tile's four lists all stay empty — it is off the lattice, so it blocks
+ *  nothing and nothing blocks it, which is exactly what `isFree` then reads. */
 interface Node {
   readonly id: TileId;
   readonly face: string;
@@ -78,8 +101,8 @@ interface Node {
   readonly blocks: number[];
 }
 
-function buildNodes(present: readonly Tile[]): Node[] {
-  const nodes: Node[] = present.map((t) => ({
+function buildNodes(inPlay: readonly Tile[], held: ReadonlySet<TileId>): Node[] {
+  const nodes: Node[] = inPlay.map((t) => ({
     id: t.id,
     face: t.face,
     above: [],
@@ -87,11 +110,12 @@ function buildNodes(present: readonly Tile[]): Node[] {
     right: [],
     blocks: [],
   }));
-  for (let i = 0; i < present.length; i++) {
-    const a = present[i]!.slot;
-    for (let j = 0; j < present.length; j++) {
-      if (i === j) continue;
-      const b = present[j]!.slot;
+  for (let i = 0; i < inPlay.length; i++) {
+    if (held.has(inPlay[i]!.id)) continue;
+    const a = inPlay[i]!.slot;
+    for (let j = 0; j < inPlay.length; j++) {
+      if (i === j || held.has(inPlay[j]!.id)) continue;
+      const b = inPlay[j]!.slot;
       if (b.z === a.z + 1 && footprintsOverlap(a.x, a.y, b.x, b.y)) {
         nodes[i]!.above.push(j);
         nodes[j]!.blocks.push(i);
@@ -112,24 +136,24 @@ function buildNodes(present: readonly Tile[]): Node[] {
  * honored, as in the Board constructor). Bounded DFS + memoized dead states;
  * budget exhaustion reports 'unknown' — callers treat it as failure (reseed).
  */
-export function solve(
-  tiles: Iterable<Omit<Tile, 'removed'> & { removed?: boolean }>,
-  options: SolveOptions = {},
-): SolveResult {
+export function solve(tiles: Iterable<TileInput>, options: SolveOptions = {}): SolveResult {
   const maxStates = options.maxStates ?? DEFAULT_MAX_STATES;
-  // The Board validates the lattice (ids, slots, overlaps); the search itself
-  // runs on precomputed adjacency below.
-  const present = new Board(tiles).presentTiles();
+  // The Board validates the lattice (ids, slots, overlaps) and the holder;
+  // the search itself runs on precomputed adjacency below.
+  const board = options.holder ? new Board(tiles, { holder: options.holder }) : new Board(tiles);
+  const present = board.inPlayTiles();
+  const held = new Set(board.heldTileIds());
 
   // Parity precheck: identical-only matching means every face must have an
-  // even present count. (Also catches odd total tile counts.)
+  // even in-play count — held tiles included, since they still need a partner.
+  // (Also catches odd total tile counts.)
   const presentByFace = new Map<string, number>();
   for (const t of present) presentByFace.set(t.face, (presentByFace.get(t.face) ?? 0) + 1);
   for (const count of presentByFace.values()) {
     if (count % 2 !== 0) return { verdict: 'unsolvable', solution: null, statesVisited: 0 };
   }
 
-  const nodes = buildNodes(present);
+  const nodes = buildNodes(present, held);
   const n = nodes.length;
   const removed = new Array<boolean>(n).fill(false);
   const mask = new Uint32Array((n >>> 5) + 1);
@@ -303,7 +327,53 @@ export function solve(
  * position still deserves a highlight), or null with no legal pair at all.
  */
 export function findHint(board: Board, options: SolveOptions = {}): readonly [TileId, TileId] | null {
-  const result = solve(board.allTiles(), options);
+  const result = solve(board.allTiles(), { ...options, holder: board.holderSlots() });
   if (result.verdict === 'solvable' && result.solution!.length > 0) return result.solution![0]!;
   return legalPairs(board)[0] ?? null;
+}
+
+/** Node budget for the hold lookahead: ample for a real deadlock (a handful of
+ *  free tiles and at most a few slots) and a hard stop on a pathological one. */
+export const DEFAULT_MAX_HOLD_STATES = 5_000;
+
+/**
+ * Is any move available — a legal pair right now, or one that holding would
+ * expose (issue #43)?
+ *
+ * This is the deadlock question, and the holder changes it. Parking a free tile
+ * vacates its slot, which can free the tile underneath and reveal a pair, so
+ * "no legal pair" is no longer "no moves left" while the holder has room. A
+ * deadlock dialog that ignored this would offer Shuffle over a move the player
+ * already has — and with the holder always available (PM decision 2026-08-31)
+ * that is not a corner case.
+ *
+ * Only holds are searched. Unholding puts a blocker back on the board and frees
+ * a slot, and a returning tile can never expose what a hold could not, so it
+ * cannot turn a dead position live. States are keyed by the set of held tiles,
+ * and running out of budget answers false — a conservative "treat it as stuck",
+ * never a phantom move. The probe is a private copy, so the caller's board is
+ * untouched whatever happens.
+ */
+export function hasPlayableMove(board: Board, options: { maxStates?: number } = {}): boolean {
+  if (legalPairs(board).length > 0) return true;
+  const probe = new Board(board.allTiles(), {
+    holder: board.holderSlots(),
+    holderCapacity: board.holderCapacity,
+  });
+  let budget = options.maxStates ?? DEFAULT_MAX_HOLD_STATES;
+  const seen = new Set<string>();
+  const search = (): boolean => {
+    if (probe.holderFull()) return false;
+    for (const id of probe.freeTileIds()) {
+      if (budget-- <= 0) return false;
+      probe.hold(id);
+      const key = probe.heldTileIds().join(',');
+      const live = seen.has(key) ? false : legalPairs(probe).length > 0 || search();
+      seen.add(key);
+      probe.unhold(id);
+      if (live) return true;
+    }
+    return false;
+  };
+  return search();
 }

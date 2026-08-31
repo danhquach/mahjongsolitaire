@@ -179,10 +179,14 @@ export class A11yLayer {
     this.order = traversalOrder(tiles);
     const hadFocus = this.root.contains(document.activeElement);
 
-    // Tiles are only ever added by a new deal, never mid-level: a full rebuild
-    // is needed exactly when an unseen id shows up, and it is the only way to
-    // guarantee DOM order matches traversal order.
+    // A tile can come *back* to the board — a new deal, an undone match, or a
+    // held tile returned from the holder (issue #43) — and a rebuild is the only
+    // way to guarantee DOM order still matches traversal order. It used to be a
+    // new-deal-only path, which is why it simply dropped the tab stop; a return
+    // is a mid-level move the player just made, so the tab stop follows the tile
+    // it was already on rather than jumping to the top of the board.
     if (this.order.some((t) => !this.nodes.has(t.id))) {
+      const wasActive = this.activeId;
       this.root.replaceChildren();
       this.nodes.clear();
       for (const t of this.order) {
@@ -190,7 +194,7 @@ export class A11yLayer {
         this.nodes.set(t.id, node);
         this.root.appendChild(node);
       }
-      this.activeId = null;
+      this.activeId = wasActive !== null && this.nodes.has(wasActive) ? wasActive : null;
     } else {
       const present = new Set(this.order.map((t) => t.id));
       for (const [id, node] of this.nodes) {

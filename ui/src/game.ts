@@ -13,6 +13,13 @@
 // everything the deal itself does not imply (shuffled faces, removed tiles, the
 // undo stack, the selection, the score ladder), and the constructor's `resume`
 // argument reopens it. Storage and validation live in save.ts.
+//
+// Issue #43 adds the holder: four off-board slots a free tile can be parked in
+// to reach what is under it. It is always available (PM decision 2026-08-31),
+// so it is not a charged booster — but it *is* a move, and every core primitive
+// here already accounts for it: a held tile is matchable, so `hint` and the
+// stuck check see holder pairs, and `useHolder` is one control whose meaning
+// follows the selection (park a board tile, or return a parked one).
 
 import {
   Board,
@@ -20,12 +27,14 @@ import {
   ScoreKeeper,
   canMatch,
   findHint,
+  hasPlayableMove,
   legalPairs,
   shuffleBoard,
 } from '@mahjongsolitaire/core';
 import type {
   GeneratedLevel,
   MatchScore,
+  MoveRecord,
   MoveStackState,
   Tile,
   TileId,
@@ -57,8 +66,21 @@ export interface GameSnapshot {
   readonly faces: readonly string[];
   /** Ids of removed tiles, ascending. */
   readonly removed: readonly TileId[];
+  /** Holder occupancy (issue #43), one entry per slot, null where empty. */
+  readonly holder: readonly (TileId | null)[];
   readonly stack: MoveStackState;
 }
+
+/** What the Hold control does on the current selection (issue #43). One button
+ *  covers both directions: rule 2 parks a free tile, rule 4 takes it back. */
+export type HolderAction = 'hold' | 'return' | 'full' | 'none';
+
+export type HoldOutcome =
+  | { readonly kind: 'held'; readonly id: TileId; readonly slot: number }
+  | { readonly kind: 'returned'; readonly id: TileId }
+  /** Rule 5: a full holder refuses the move. It never ends the level. */
+  | { readonly kind: 'full' }
+  | { readonly kind: 'none' };
 
 /**
  * The deal's tiles with a snapshot's faces and removed flags applied. Faces are
@@ -97,7 +119,9 @@ export class Game {
     readonly level: GeneratedLevel,
     resume?: GameSnapshot,
   ) {
-    this.board = new Board(resume ? applySnapshot(level, resume) : level.tiles);
+    this.board = resume
+      ? new Board(applySnapshot(level, resume), { holder: resume.holder })
+      : new Board(level.tiles);
     this.scores = new ScoreKeeper();
     this.stack = new MoveStack(this.board, this.scores);
     if (resume) this.stack.restoreState(resume.stack);
@@ -109,6 +133,7 @@ export class Game {
     return {
       faces: tiles.map((t) => t.face),
       removed: tiles.filter((t) => t.removed).map((t) => t.id),
+      holder: this.board.holderSlots(),
       stack: this.stack.state,
     };
   }
@@ -121,13 +146,34 @@ export class Game {
     return this.stack.score;
   }
 
+  /** Tiles still in play — the holder's included, or parking the last pair
+   *  would read as a win (issue #43). */
   get tilesLeft(): number {
-    return this.board.presentTiles().length;
+    return this.board.inPlayTiles().length;
+  }
+
+  /** Holder occupancy, slot by slot (issue #43) — what the holder strip draws. */
+  holderSlots(): readonly (TileId | null)[] {
+    return this.board.holderSlots();
+  }
+
+  get holderFull(): boolean {
+    return this.board.holderFull();
+  }
+
+  /** Holds taken on this level. Nothing deducts for them in v1; the count is
+   *  kept because Vita Mahjong reports a per-level holder average and a later
+   *  star rating may want it (issue #43, PM decision 2026-08-31). */
+  get holdsUsed(): number {
+    return this.stack.holdsUsed;
   }
 
   status(): GameStatus {
     if (this.tilesLeft === 0) return 'won';
-    if (legalPairs(this.board).length === 0) return 'stuck';
+    // Not `legalPairs`: with the holder always available, parking a free tile
+    // can expose a pair, so a board with no pair *right now* is not
+    // necessarily stuck (issue #43 — hasPlayableMove looks through holds).
+    if (!hasPlayableMove(this.board)) return 'stuck';
     return 'playing';
   }
 
@@ -160,15 +206,65 @@ export class Game {
   }
 
   /**
-   * Undo booster (spec §5): restore the last matched pair, with the score and
-   * selection exactly as they were before it. Returns the restored pair, or
-   * null on an empty move stack (nothing happened, nothing to charge for).
+   * Undo booster (spec §5): take back the last move — a match, a hold or a
+   * return (issue #43) — with the board, holder, score and selection exactly as
+   * they were before it. Returns the undone record, or null on an empty move
+   * stack (nothing happened, nothing to charge for).
    */
-  undo(): HintPair | null {
-    const last = this.stack.moves().at(-1) ?? null;
-    if (!this.stack.undo()) return null;
+  undo(): MoveRecord | null {
+    const record = this.stack.undo();
+    if (record === null) return null;
     this.forgetHints();
-    return last;
+    return record;
+  }
+
+  // --- holder (issue #43) -----------------------------------------------------
+
+  /**
+   * What the Hold control would do right now. One button covers both
+   * directions, because the selection already says which one the player means:
+   * a free board tile is parked, a parked tile is returned.
+   */
+  holderAction(): HolderAction {
+    const selected = this.stack.selection;
+    if (selected === null) return 'none';
+    if (this.board.isHeld(selected)) return 'return';
+    return this.board.holderFull() ? 'full' : 'hold';
+  }
+
+  /**
+   * Run the Hold control on the current selection. Nothing is charged and
+   * nothing can fail destructively: a full holder and an empty selection both
+   * report back and leave the game exactly as it was (issue #43 rule 5).
+   */
+  useHolder(nowMs: number): HoldOutcome {
+    const selected = this.stack.selection;
+    switch (this.holderAction()) {
+      case 'hold': {
+        const slot = this.stack.hold(selected!, nowMs);
+        if (slot === null) return { kind: 'full' };
+        this.forgetHints(); // the board changed: the cycled pairs are stale
+        return { kind: 'held', id: selected!, slot };
+      }
+      case 'return':
+        this.stack.unhold(selected!, nowMs);
+        this.forgetHints();
+        return { kind: 'returned', id: selected! };
+      case 'full':
+        return { kind: 'full' };
+      case 'none':
+        return { kind: 'none' };
+    }
+  }
+
+  /**
+   * Tap on a tile in the holder. Same semantics as a tap on a free board tile —
+   * select, deselect, match — because a held tile is matchable; the holder just
+   * reaches it through its own control instead of the canvas hit test.
+   */
+  tapHeld(id: TileId, nowMs: number): TapOutcome {
+    if (!this.board.isHeld(id)) return { kind: 'none' };
+    return this.tapPlayable(id, nowMs);
   }
 
   /**
@@ -182,7 +278,9 @@ export class Game {
    * (removed tiles keep their faces; only present tiles are permuted).
    */
   shuffle(seed: number): boolean {
-    if (this.tilesLeft === 0) return false;
+    // Board tiles, not `tilesLeft`: shuffle permutes the faces of what is on
+    // the board, and held tiles keep theirs (issue #43).
+    if (this.board.presentTiles().length === 0) return false;
     try {
       shuffleBoard(this.board, seed);
     } catch {
@@ -228,26 +326,31 @@ export class Game {
       case 'blocked':
         // Keep any selection — a stray tap on a buried tile shouldn't cost it.
         return { kind: 'blocked', id: hit.id };
-      case 'free': {
-        const selected = this.stack.selection;
-        if (selected === null) {
-          this.stack.select(hit.id);
-          return { kind: 'selected', id: hit.id };
-        }
-        if (selected === hit.id) {
-          this.stack.clearSelection();
-          return { kind: 'deselected', id: hit.id };
-        }
-        if (canMatch(this.board, selected, hit.id).ok) {
-          const score = this.stack.play(selected, hit.id, nowMs);
-          this.forgetHints(); // the board changed: the cycled pairs are stale
-          return { kind: 'matched', a: selected, b: hit.id, score };
-        }
-        // Face mismatch: combo breaks (§6), selection moves to the new tile.
-        this.scores.recordMismatch();
-        this.stack.select(hit.id);
-        return { kind: 'mismatch', a: selected, b: hit.id };
-      }
+      case 'free':
+        return this.tapPlayable(hit.id, nowMs);
     }
+  }
+
+  /** Select / deselect / match on a matchable tile — free on the board, or in
+   *  the holder (issue #43). Shared by both input paths. */
+  private tapPlayable(id: TileId, nowMs: number): TapOutcome {
+    const selected = this.stack.selection;
+    if (selected === null) {
+      this.stack.select(id);
+      return { kind: 'selected', id };
+    }
+    if (selected === id) {
+      this.stack.clearSelection();
+      return { kind: 'deselected', id };
+    }
+    if (canMatch(this.board, selected, id).ok) {
+      const score = this.stack.play(selected, id, nowMs);
+      this.forgetHints(); // the board changed: the cycled pairs are stale
+      return { kind: 'matched', a: selected, b: id, score };
+    }
+    // Face mismatch: combo breaks (§6), selection moves to the new tile.
+    this.scores.recordMismatch();
+    this.stack.select(id);
+    return { kind: 'mismatch', a: selected, b: id };
   }
 }
