@@ -1,11 +1,12 @@
-// Player settings (issue #14, spec §7). Five independent preferences, each
+// Player settings (issue #14, spec §7). Six independent preferences, each
 // persisted the moment it changes so the settings screen needs no Save button:
 //
-//   audio     gentle sound effects — default ON (§7)
-//   haptics   gentle vibration     — default ON, independent of audio (§7)
-//   tileSize  S / M / L / XL       — default XL (§1.2/§7: oversized tiles)
-//   timedMode opt-in elapsed clock — default OFF (§6: no timer pressure)
-//   ads       ads master toggle    — default OFF (§8, decision 0004, issue #3)
+//   audio        gentle sound effects  — default ON (§7)
+//   haptics      gentle vibration      — default ON, independent of audio (§7)
+//   tileSize     S / M / L / XL        — default XL (§1.2/§7: oversized tiles)
+//   timedMode    opt-in elapsed clock  — default OFF (§6: no timer pressure)
+//   ads          ads master toggle     — default OFF (§8, decision 0004, #3)
+//   highlightFree dim the blocked tiles — default OFF (issue #45)
 //
 // Nothing reads `ads` yet: ads are suspended for v1.0 and issue #20 gates the
 // ad-SDK init on this toggle in Phase 4. It ships now so the settings screen
@@ -50,6 +51,15 @@ export interface Settings {
   readonly tileSize: TileSize;
   readonly timedMode: boolean;
   readonly ads: boolean;
+  /**
+   * Shade blocked tiles one depth step further back so the free ones are the
+   * bright tiles (issue #45 item 5). Default OFF: the drop shadow, side
+   * shading and per-layer value shift are meant to make the stack readable on
+   * their own, and dimming half the board is a strong enough change that it
+   * should be the player's choice, not ours. Doubles as an accessibility aid
+   * for players who cannot resolve the depth cues.
+   */
+  readonly highlightFree: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -58,6 +68,7 @@ export const DEFAULT_SETTINGS: Settings = {
   tileSize: 'xl',
   timedMode: false,
   ads: false,
+  highlightFree: false,
 };
 
 export const SETTINGS_STORAGE_KEY = 'mahjong.settings.v1';
@@ -70,7 +81,7 @@ function isTileSize(value: unknown): value is TileSize {
 export function parseSettings(record: unknown): Settings {
   if (typeof record !== 'object' || record === null) return DEFAULT_SETTINGS;
   const raw = record as Record<string, unknown>;
-  const bool = (key: 'audio' | 'haptics' | 'timedMode' | 'ads'): boolean =>
+  const bool = (key: 'audio' | 'haptics' | 'timedMode' | 'ads' | 'highlightFree'): boolean =>
     typeof raw[key] === 'boolean' ? (raw[key] as boolean) : DEFAULT_SETTINGS[key];
   return {
     audio: bool('audio'),
@@ -78,6 +89,7 @@ export function parseSettings(record: unknown): Settings {
     tileSize: isTileSize(raw['tileSize']) ? raw['tileSize'] : DEFAULT_SETTINGS.tileSize,
     timedMode: bool('timedMode'),
     ads: bool('ads'),
+    highlightFree: bool('highlightFree'),
   };
 }
 
