@@ -27,7 +27,13 @@ A cross-platform mahjong solitaire (tile-matching) game — accessibility-first,
 | End of week 9 | Feature-complete MVP: 500 levels, Daily Challenge, ads/IAP |
 | Week 12 | Release-quality build → soft launch |
 
-Playtest builds deploy automatically on push (see the "Web deploy pipeline" issue). URL will be added here once the pipeline lands.
+### Playtest URL
+
+**https://lantern-tiles.pages.dev** — the current `main` build, redeployed automatically by CI on every push once tests are green. Open it on any phone, tablet, or desktop browser; nothing to install.
+
+Open a pull request and it gets its own Cloudflare preview URL, printed by the CI run's *Deploy to Cloudflare Pages* step — so a change can be playtested before it lands. Pushing a branch without a PR deploys nothing; CI only runs on `main` pushes and pull requests.
+
+> The URL goes live once the one-time Cloudflare setup in [decision 0006](docs/decisions/0006-web-deploy-cloudflare-pages.md) is done (two repo secrets). Until then CI builds the bundle and skips the deploy step with a notice.
 
 ## Planned repository layout
 
