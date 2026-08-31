@@ -1,2 +1,7 @@
 # Wrangler local state (deploy/dev scratch); never committed.
 .wrangler/
+
+# Per-agent scratch memory. Local-only: these files record absolute paths from
+# the machine that wrote them, so committing them would publish a local username.
+.claude/agent-memory/
+**/.claude/agent-memory/
