@@ -784,6 +784,12 @@ async function start(): Promise<void> {
       });
     }
     el<HTMLButtonElement>('settings-close').addEventListener('click', () => closeSettings());
+    // Tapping the dimmed backdrop dismisses the panel (issue #107). Settings
+    // persist per change, so dismissal loses nothing; the target check keeps
+    // taps on the card itself from closing it.
+    settingsPanel.addEventListener('click', (ev) => {
+      if (ev.target === settingsPanel) closeSettings();
+    });
     settingsButton.addEventListener('click', () => openSettings());
     // Escape is the expected way out of a modal, and the only one for a
     // keyboard player who tabbed past the Done button. Listened for on the
