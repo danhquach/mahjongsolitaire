@@ -32,9 +32,12 @@ export interface A11yTile {
   readonly face: string;
   readonly free: boolean;
   /** Face hidden this frame (issue #64): announce as face-down, never by face.
-   *  Computed visibility, not deal-time concealment — a peeked or selected
-   *  tile shows its face, so it announces it too. */
+   *  Computed visibility, not deal-time concealment — a peeked tile shows its
+   *  face, so it announces it too. */
   readonly concealed?: boolean;
+  /** This tile's face matches a held tile (issue #93): activating it clears
+   *  the pair rather than parking it, and the label says which. */
+  readonly pairsWithHeld?: boolean;
 }
 
 /**
@@ -47,41 +50,40 @@ export function traversalOrder(tiles: readonly A11yTile[]): A11yTile[] {
 }
 
 /**
- * Spoken name for a tile: what it is, whether it can be played, and where it
- * sits. The row/column is what lets a screen-reader player find the second
- * half of a pair after hearing the first.
+ * Spoken name for a tile: what it is, whether it can be played, where it sits,
+ * and what activating it does. The row/column is what lets a screen-reader
+ * player find the second half of a pair after hearing the first.
  *
- * A selected free tile also spells out what activating it *again* does
- * (issue #62): parking is now a board move rather than a rail control, and a
- * second activation is the whole gesture. Sighted players discover that by
- * trying it; a screen-reader player has to be told, so this is the explicit
- * park action the ticket asks for — reachable with two ordinary activations
- * and no timing window, which keeps spec §7's "no double-tap" rule intact.
+ * Issue #93 made one tap the whole gesture, so every free tile spells its
+ * action out: clear the pair when its match is already in the holder, send it
+ * to the holder otherwise. Sighted players discover that by trying it; a
+ * screen-reader player has to be told.
  *
- * `parkEndsLevel` is the warning half of that, and it is not optional politeness
- * (issue #63): with one holder slot left, the very same second activation loses
- * the level. A sighted player has the marked last slot in the strip to look at;
- * this sentence is that cue, for someone who cannot.
+ * `parkEndsLevel` is the warning half of that, and it is not optional
+ * politeness (issue #63): with one holder slot left, the very tap that parks
+ * an unmatched tile loses the level. A sighted player has the marked last slot
+ * in the strip to look at; this sentence is that cue, for someone who cannot.
  */
-export function tileAriaLabel(tile: A11yTile, selected = false, parkEndsLevel = false): string {
+export function tileAriaLabel(tile: A11yTile, parkEndsLevel = false): string {
   const state = tile.free ? 'available' : 'blocked';
   const { row, col } = slotPosition(tile.slot);
   // A face-down tile must announce as face-down, not by its face (issue #64) —
   // reading the glyph out would hand a screen-reader player what a sighted one
-  // cannot see. It is never `selected` here: a selection pins its reveal, so a
-  // selected tile always reaches the face-up branch below.
+  // cannot see. The first activation only peeks (issue #93), so that is the
+  // whole action on offer.
   if (tile.concealed) {
     const peek = tile.free ? ', activate to peek at it' : '';
     return `Face-down tile, ${state}, row ${row}, column ${col}${peek}`;
   }
   const { label } = faceStyle(tile.face);
-  const park =
-    selected && tile.free
-      ? parkEndsLevel
-        ? ', selected, activate again to park it in the last holder slot, which ends the level'
-        : ', selected, activate again to park it in the holder'
-      : '';
-  return `${label}, ${state}, row ${row}, column ${col}${park}`;
+  const action = !tile.free
+    ? ''
+    : tile.pairsWithHeld
+      ? ', activate to clear it with its match in the holder'
+      : parkEndsLevel
+        ? ', activate to send it to the last holder slot, which ends the level'
+        : ', activate to send it to the holder';
+  return `${label}, ${state}, row ${row}, column ${col}${action}`;
 }
 
 /**
@@ -154,7 +156,8 @@ export function nextInDirection(
 
 /**
  * Polite live region. Canvas changes are invisible to assistive technology, so
- * every outcome (match, mismatch, blocked tap, win, stuck) is spoken here.
+ * every outcome (match, park, peek, blocked tap, win, loss, stuck) is spoken
+ * here.
  */
 export class Announcer {
   constructor(private readonly node: HTMLElement) {}
@@ -178,6 +181,10 @@ export class A11yLayer {
   private readonly nodes = new Map<TileId, HTMLButtonElement>();
   private order: A11yTile[] = [];
   private activeId: TileId | null = null;
+  /** Last sync's traversal order — where a vanished tab stop was, so the next
+   *  one can be its nearest surviving neighbour (issue #93: every activation
+   *  of a free tile removes its node, so this fallback runs on every move). */
+  private lastOrderIds: TileId[] = [];
 
   constructor(
     private readonly root: HTMLElement,
@@ -207,13 +214,14 @@ export class A11yLayer {
    */
   sync(
     tiles: readonly A11yTile[],
-    selection: TileId | null,
     cssRect: CssRectOf,
-    /** One holder slot left, so a park would end the level (issue #63). */
+    /** One holder slot left, so parking an unmatched tile ends the level
+     *  (issue #63; reworded for issue #93). */
     parkEndsLevel = false,
   ): void {
     this.order = traversalOrder(tiles);
     const hadFocus = this.root.contains(document.activeElement);
+    const wasActiveBefore = this.activeId;
 
     // A tile can come *back* to the board — a new deal, an undone match, or a
     // held tile returned from the holder (issue #43) — and a rebuild is the only
@@ -249,14 +257,20 @@ export class A11yLayer {
       node.style.top = `${r.y}px`;
       node.style.width = `${r.w}px`;
       node.style.height = `${r.h}px`;
-      node.setAttribute('aria-label', tileAriaLabel(t, selection === t.id, parkEndsLevel));
-      node.setAttribute('aria-pressed', String(selection === t.id));
+      node.setAttribute('aria-label', tileAriaLabel(t, parkEndsLevel));
       node.setAttribute('aria-disabled', String(!t.free));
     }
 
     if (this.activeId === null || !this.nodes.has(this.activeId)) {
-      const fallback = this.order.find((t) => t.free) ?? this.order[0];
-      this.activeId = fallback?.id ?? null;
+      // Under issue #93 the activated tile always leaves the board (park or
+      // match), so the tab stop would otherwise jump to the top of the board
+      // on every single move — stay on the nearest surviving neighbour in
+      // traversal order instead, falling back to the first free tile only
+      // when there is no previous position to stay near (a fresh deal).
+      this.activeId =
+        this.nearestSurvivor(wasActiveBefore) ??
+        (this.order.find((t) => t.free) ?? this.order[0])?.id ??
+        null;
       // A match removes the node the user just activated; put focus back on
       // the board rather than letting it fall to <body>.
       if (hadFocus && this.activeId !== null && document.activeElement === document.body) {
@@ -266,6 +280,22 @@ export class A11yLayer {
     for (const [id, node] of this.nodes) {
       node.tabIndex = id === this.activeId ? 0 : -1;
     }
+    this.lastOrderIds = this.order.map((t) => t.id);
+  }
+
+  /** The surviving tile nearest to `lostId`'s place in the previous traversal
+   *  order — forward first on a tie, matching reading direction. */
+  private nearestSurvivor(lostId: TileId | null): TileId | null {
+    if (lostId === null) return null;
+    const at = this.lastOrderIds.indexOf(lostId);
+    if (at === -1) return null;
+    for (let d = 1; d < this.lastOrderIds.length; d++) {
+      for (const idx of [at + d, at - d]) {
+        const id = this.lastOrderIds[idx];
+        if (id !== undefined && this.nodes.has(id)) return id;
+      }
+    }
+    return null;
   }
 
   /** Put focus on the board's current tab stop (returning from a dialog). */

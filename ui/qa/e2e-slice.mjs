@@ -14,11 +14,11 @@
 // drives the three boosters through their real buttons, checking that a charge
 // is spent per successful use and that the balances survive a page reload.
 // For issue #14 it force-quits mid-level (a real page reload) and asserts the
-// board, score, selection and settings all come back, and that a won level
+// board, score, holder and settings all come back, and that a won level
 // leaves no save behind.
-// For issue #43 it parks a tile with the Hold button, checks the strip and the
-// freed tile underneath, returns it, matches a pair out of the holder, and
-// force-quits with a tile still parked.
+// For issue #43/#93 it parks a tile with one tap, checks the strip and the
+// freed tile underneath, matches a pair in the holder, and force-quits with a
+// tile still parked.
 // For issue #44 it drives three consecutive matches with no waiting between
 // them (all resolve, nothing is matched twice, and the taps land while earlier
 // pairs are still in flight), asserts the match announcement is written in the
@@ -126,12 +126,12 @@ let failures = 0;
  */
 function huntDeadlock(maxDeals) {
   const slice = window.__slice;
-  // Either layer: board tiles carry data-tile-id in #a11y-layer, held ones in
-  // the holder strip (issue #43).
-  const click = (id) => document.querySelector(`[data-tile-id="${id}"]`)?.click();
+  // Board tiles carry data-tile-id in #a11y-layer. Held tiles are not
+  // activatable any more (issue #93): a pair with one half in the holder is
+  // played by tapping the board half.
+  const click = (id) => document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.click();
   // Issue #64: the first tap on a face-down tile only peeks at it — the tap
-  // that acts is the next one. Held tiles are never face-down, so a holder
-  // button still takes a single click.
+  // that acts is the next one.
   const activate = (id) => {
     if (slice.game.isFaceHidden(id)) click(id);
     click(id);
@@ -148,33 +148,37 @@ function huntDeadlock(maxDeals) {
   for (let deal = 0; deal < maxDeals; deal++) {
     document.getElementById('btn-new').click();
     for (let move = 0; slice.game.status() === 'playing' && move < 400; move++) {
-      const options = pairs();
+      const held = new Set(slice.holder().slots.filter((id) => id !== null));
+      const heldFaces = new Set([...held].map((id) => slice.game.board.get(id).face));
+      // A board tile whose match is already parked clears in one tap (#93) —
+      // asked of the game's own rule, not a re-derived face set.
+      const clearer = slice.game
+        .hitCandidates()
+        .find((c) => c.free && slice.game.pairsWithHeld(c.id));
+      if (clearer) {
+        click(clearer.id);
+        continue;
+      }
+      const options = pairs().filter(([a]) => !held.has(a));
       // Deterministic but unstrategic pick: the point is to lose sometimes.
-      // With no pair on the board, fall back to the game's own hint, which can
-      // name a holder pair the board-only scan above cannot see (issue #43).
-      const pair = options.length
-        ? options[(deal * 7 + move * 3) % options.length]
-        : slice.game.hint();
-      if (pair) {
+      const pair = options.length ? options[(deal * 7 + move * 3) % options.length] : null;
+      // Every pair transits the holder now (issue #93): the first tap parks,
+      // the second clears. That transit needs a slot that is not the fatal
+      // fourth, so a board pair is only played with two vacancies in hand.
+      if (pair && slice.holder().vacancies >= 2) {
         activate(pair[0]);
         activate(pair[1]);
         continue;
       }
-      // No pair anywhere, and the game still says 'playing': the way on is the
-      // holder — parking a free tile frees what it covered. This is the branch
-      // that used to crash the hunt, because "playing" no longer implies "a
-      // pair is on the board".
-      const free = slice.game.board.freeTileIds();
-      // Issue #63: the park that fills the last slot loses the level, and this
-      // hunt is looking for a *deadlock*. Stop one slot short, exactly as
-      // hasPlayableMove does.
+      // No pair playable: park a free singleton — parking frees what it
+      // covered. Issue #63: the park that fills the last slot loses the level,
+      // and this hunt is looking for a *deadlock*; stop one slot short.
+      const free = slice.game.board
+        .freeTileIds()
+        .filter((id) => !heldFaces.has(slice.game.board.get(id).face));
       if (free.length === 0 || slice.holder().vacancies < 2) break;
       const target = free[(deal * 5 + move) % free.length];
-      // Issue #62: parking is two activations of the same tile. The first can
-      // be a *clear* instead, when the face is already in the holder — in which
-      // case the move is already made and there is nothing to activate again.
       activate(target);
-      if (slice.selection === target) click(target);
     }
     if (slice.game.status() === 'stuck') {
       return {
@@ -201,9 +205,20 @@ function freePairs(want) {
   const pairs = [];
   // Face-up only (issue #64): the probes tap each tile of a pair once, so a
   // face-down tile — whose first tap is a peek — would break their accounting.
+  const parkedFaces = new Set(
+    slice
+      .holder()
+      .slots.filter((id) => id !== null)
+      .map((id) => slice.game.board.get(id).face),
+  );
   for (const c of slice.game
     .hitCandidates()
-    .filter((t) => t.free && !slice.game.isFaceHidden(t.id))) {
+    .filter(
+      (t) =>
+        t.free &&
+        !slice.game.isFaceHidden(t.id) &&
+        !parkedFaces.has(slice.game.board.get(t.id).face),
+    )) {
     const face = slice.game.board.get(c.id).face;
     const partner = seen.get(face);
     if (partner === undefined) {
@@ -218,10 +233,10 @@ function freePairs(want) {
 }
 
 /**
- * Tap one matchable pair and watch the flight frame by frame (issue #44):
- * how far the copies actually travelled from where they started, how long the
- * sequence ran, the frame intervals it ran at, and whether the effects layer
- * came back empty. Runs in the page.
+ * Tap one matchable pair and watch the tray effects frame by frame (issue
+ * #93): how far the flying DOM copies actually travelled, how long the
+ * sequence ran, the frame intervals it ran at, and whether the fx layer came
+ * back empty. Runs in the page.
  */
 async function flightProbe(pair) {
   const slice = window.__slice;
@@ -229,6 +244,7 @@ async function flightProbe(pair) {
   const box = canvas.getBoundingClientRect();
   if (!pair) return { tapped: false };
   const before = slice.game.tilesLeft;
+  const origins = new Map();
   for (const id of pair) {
     const r = slice.tileCssRect(id);
     canvas.dispatchEvent(
@@ -247,16 +263,13 @@ async function flightProbe(pair) {
     const step = (now) => {
       frames.push(now - previous);
       previous = now;
-      for (const child of slice.renderer.effects.children) {
-        // The flying copies pivot on the centre they started from, so the gap
-        // between position and pivot *is* the distance travelled.
-        if (!child.pivot || (child.pivot.x === 0 && child.pivot.y === 0)) continue;
-        maxTravel = Math.max(
-          maxTravel,
-          Math.hypot(child.position.x - child.pivot.x, child.position.y - child.pivot.y),
-        );
+      for (const node of document.querySelectorAll('#fx-layer .fx-tile')) {
+        const r = node.getBoundingClientRect();
+        const from = origins.get(node) ?? { x: r.x, y: r.y };
+        if (!origins.has(node)) origins.set(node, from);
+        maxTravel = Math.max(maxTravel, Math.hypot(r.x - from.x, r.y - from.y));
       }
-      if (slice.animating() && now - started < 2000) requestAnimationFrame(step);
+      if (slice.animating() && now - started < 2500) requestAnimationFrame(step);
       else resolve();
     };
     requestAnimationFrame(step);
@@ -268,7 +281,8 @@ async function flightProbe(pair) {
     maxTravel,
     durationMs: performance.now() - started,
     cleared: before - slice.game.tilesLeft,
-    settled: !slice.animating() && slice.renderer.effects.children.length === 0,
+    settled:
+      !slice.animating() && document.querySelectorAll('#fx-layer *').length === 0,
     frames: intervals.length,
     slowest: intervals.slice(-4).map((v) => +v.toFixed(1)),
     median: intervals[Math.floor(intervals.length / 2)] ?? 0,
@@ -277,30 +291,34 @@ async function flightProbe(pair) {
 }
 
 /**
- * The same frame sampling as flightProbe, but over a select + deselect — two
- * full-board redraws and no animation at all. Deselecting is Escape since
- * issue #62; a second tap on the tile would park it and change the board. This is the control: draw()
- * tears the board down and rebuilds all 144 tiles on every tap, which costs
- * far more than a match animation does, so an absolute frame-time floor would
- * be measuring the renderer rather than this ticket (issue #44).
+ * The same frame sampling as flightProbe, but over a plain park tap and its
+ * undo — full-board redraws with no pair-clear sequence. This is the control:
+ * draw() tears the board down and rebuilds all 144 tiles on every tap, which
+ * costs far more than the animation does, so an absolute frame-time floor
+ * would be measuring the renderer rather than the effects (issue #44 / #93).
  */
 async function baselineProbe() {
   const slice = window.__slice;
   const canvas = document.querySelector('#board canvas');
   const box = canvas.getBoundingClientRect();
-  // Face-up (issue #64): the tap must select, not peek.
-  const target = slice.game.hitCandidates().find((t) => t.free && !slice.game.isFaceHidden(t.id));
-  if (!target) return { tapped: false };
-  const tap = () => {
-    const r = slice.tileCssRect(target.id);
-    canvas.dispatchEvent(
-      new PointerEvent('pointerdown', {
-        clientX: box.x + r.x + r.w / 2,
-        clientY: box.y + r.y + r.h / 2,
-        bubbles: true,
-      }),
+  const parkedFaces = new Set(
+    slice
+      .holder()
+      .slots.filter((id) => id !== null)
+      .map((id) => slice.game.board.get(id).face),
+  );
+  // Face-up, and a face the holder does not carry (issue #93): the tap must
+  // park, not peek and not clear a pair.
+  const target = slice.game
+    .hitCandidates()
+    .find(
+      (t) =>
+        t.free &&
+        !slice.game.isFaceHidden(t.id) &&
+        !parkedFaces.has(slice.game.board.get(t.id).face),
     );
-  };
+  if (!target || slice.holder().vacancies < 2) return { tapped: false };
+  const r = slice.tileCssRect(target.id);
   const frames = [];
   let previous = performance.now();
   const sampled = new Promise((resolve) => {
@@ -312,11 +330,17 @@ async function baselineProbe() {
     };
     requestAnimationFrame(step);
   });
-  tap(); // select
-  // Deselect — a second redraw, still nothing animating (issue #62: Escape,
-  // because a second tap on the same tile parks it).
-  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  canvas.dispatchEvent(
+    new PointerEvent('pointerdown', {
+      clientX: box.x + r.x + r.w / 2,
+      clientY: box.y + r.y + r.h / 2,
+      bubbles: true,
+    }),
+  );
   await sampled;
+  // Put the tile back so the probe leaves the board as it found it. Free —
+  // charge accounting only spends on the button path, and this is the model.
+  window.__slice.game.undo();
   const intervals = frames.slice(1).sort((a, b) => a - b);
   return {
     tapped: true,
@@ -326,47 +350,30 @@ async function baselineProbe() {
 }
 
 /**
- * Tap two free tiles that do not match and watch the shaken tile's own
- * container: it must leave its slot and come back to it (issue #44).
+ * Activate a blocked tile and watch its own container: it must leave its slot
+ * and come back to it (issue #44's shake; a mismatch no longer exists under
+ * issue #93, so the blocked tap is the shake's remaining trigger).
  */
-async function mismatchProbe() {
+async function blockedProbe() {
   const slice = window.__slice;
-  const canvas = document.querySelector('#board canvas');
-  const box = canvas.getBoundingClientRect();
-  // Face-up (issue #64): each tile is tapped once, and that tap must act.
-  const free = slice.game
-    .hitCandidates()
-    .filter((t) => t.free && !slice.game.isFaceHidden(t.id));
-  const first = free[0];
-  const other = free.find((t) => slice.game.board.get(t.id).face !== slice.game.board.get(first.id).face);
-  if (!first || !other) return { tapped: false };
-  for (const id of [first.id, other.id]) {
-    const r = slice.tileCssRect(id);
-    canvas.dispatchEvent(
-      new PointerEvent('pointerdown', {
-        clientX: box.x + r.x + r.w / 2,
-        clientY: box.y + r.y + r.h / 2,
-        bubbles: true,
-      }),
-    );
-  }
+  const target = slice.game.hitCandidates().find((t) => !t.free);
+  if (!target) return { tapped: false };
+  // Through the a11y layer: a blocked tile's own button routes a real blocked
+  // activation without having to find an uncovered sliver to aim a pointer at.
+  document.querySelector(`#a11y-layer [data-tile-id="${target.id}"]`)?.click();
   let maxOffset = 0;
   const started = performance.now();
   await new Promise((resolve) => {
     const step = (now) => {
-      for (const id of [first.id, other.id]) {
-        const node = slice.renderer.tileNode(id);
-        if (node) maxOffset = Math.max(maxOffset, Math.abs(node.position.x));
-      }
+      const node = slice.renderer.tileNode(target.id);
+      if (node) maxOffset = Math.max(maxOffset, Math.abs(node.position.x));
       if (slice.animating() && now - started < 2000) requestAnimationFrame(step);
       else resolve();
     };
     requestAnimationFrame(step);
   });
-  const resting = [first.id, other.id]
-    .map((id) => slice.renderer.tileNode(id))
-    .filter((n) => n)
-    .every((n) => n.position.x === 0 && n.position.y === 0);
+  const node = slice.renderer.tileNode(target.id);
+  const resting = !node || (node.position.x === 0 && node.position.y === 0);
   return { tapped: true, maxOffset, restedAt0: resting };
 }
 
@@ -405,14 +412,13 @@ for (const vp of VIEWPORTS) {
     }, id);
 
   /** Tap a board tile the way a player has to (issue #64): a face-down tile
-   *  takes one extra tap first — the peek — before the tap that acts. */
+   *  takes one extra tap first — the peek — before the tap that acts. A tile
+   *  already in the holder (its partner will fetch it) takes no tap at all. */
   const tapTile = async (id) => {
+    if (await page.evaluate((i) => window.__slice.game.board.isHeld(i), id)) return;
     const c = await tileCenter(id);
     if (await page.evaluate((i) => window.__slice.game.isFaceHidden(i), id)) {
       await page.mouse.click(c.x, c.y);
-      // Issue #77: the peek itself completes the pair when the revealed face
-      // matches the current selection — the acting tap is already spent.
-      if (await page.evaluate((i) => window.__slice.game.board.get(i).removed, id)) return;
     }
     await page.mouse.click(c.x, c.y);
   };
@@ -482,15 +488,22 @@ for (const vp of VIEWPORTS) {
       return { id: t.id, x: c.x + r.x - 6, y: c.y + r.y + r.h / 2 };
     });
     // Issue #64: if the leftmost tile is face-down, peek it first (one center
-    // tap) so the edge tap below selects instead of peeking.
+    // tap) so the edge tap below acts instead of peeking.
     if (await page.evaluate((i) => window.__slice.game.isFaceHidden(i), probe.id)) {
       const cc = await tileCenter(probe.id);
       await page.mouse.click(cc.x, cc.y);
     }
     await page.mouse.click(probe.x, probe.y);
-    const rotatedSel = await page.evaluate(() => window.__slice.game.selection);
-    check(rotatedSel === probe.id, 'ROTATED FORGIVENESS', { want: probe.id, got: rotatedSel });
-    await page.keyboard.press('Escape'); // deselect (issue #62)
+    // The forgiven tap acts (issue #93: it goes to the holder, or clears a
+    // pair there) — either way the tile has left the board.
+    const rotatedActed = await page.evaluate(
+      (i) => !window.__slice.game.board.presentTiles().some((t) => t.id === i),
+      probe.id,
+    );
+    check(rotatedActed, 'ROTATED FORGIVENESS', { want: probe.id, acted: rotatedActed });
+    // A fresh deal: the probe parked a tile the sections below do not expect.
+    await page.click('#btn-restart');
+    await page.waitForFunction(() => !window.__slice.dealing);
 
     await page.setViewportSize({ width: vp.width, height: vp.height });
     try {
@@ -560,8 +573,10 @@ for (const vp of VIEWPORTS) {
       check(flight.maxTravel > 1, 'TILES TRAVEL (want > 1 board px of motion)', {
         maxTravel: +flight.maxTravel.toFixed(2),
       });
-      check(flight.settled, 'BOARD SETTLES (want the effects layer empty)', flight);
-      check(flight.durationMs < 400, 'SEQUENCE UNDER 400ms', {
+      check(flight.settled, 'BOARD SETTLES (want the fx layer empty)', flight);
+      // Flight + dwell + clear is 550ms (anim.ts); the score popup rides
+      // another 650ms after the clear. All decoration — input never waits.
+      check(flight.durationMs < 1300, 'SEQUENCE UNDER 1300ms', {
         durationMs: Math.round(flight.durationMs),
       });
       // Two questions, because they have different answers. Does the
@@ -603,11 +618,12 @@ for (const vp of VIEWPORTS) {
     }
     await page.emulateMedia({ reducedMotion: null });
 
-    // Mismatch: the red outline is issue #11's; the shake is this ticket's.
-    const shake = await page.evaluate(mismatchProbe);
-    check(shake.tapped, 'MISMATCH PROBE setup (want two unlike free tiles)', shake);
+    // Blocked tap: the red outline is issue #11's; the shake is issue #44's
+    // (the mismatch trigger retired with issue #93).
+    const shake = await page.evaluate(blockedProbe);
+    check(shake.tapped, 'BLOCKED PROBE setup (want a blocked tile)', shake);
     if (shake.tapped) {
-      check(shake.maxOffset > 0.5, 'MISMATCH SHAKES', { maxOffset: +shake.maxOffset.toFixed(2) });
+      check(shake.maxOffset > 0.5, 'BLOCKED TAP SHAKES', { maxOffset: +shake.maxOffset.toFixed(2) });
       check(shake.restedAt0, 'SHAKEN TILE ENDS BACK ON ITS SLOT', shake);
     }
 
@@ -629,25 +645,30 @@ for (const vp of VIEWPORTS) {
       const c = document.querySelector('#board canvas').getBoundingClientRect();
       return { id: t.id, x: c.x + r.x - 6, y: c.y + r.y + r.h / 2 };
     });
-    // Issue #64: peek a face-down leftmost tile first, so the edge tap selects.
+    // Issue #64: peek a face-down leftmost tile first, so the edge tap acts.
     if (await page.evaluate((i) => window.__slice.game.isFaceHidden(i), probe.id)) {
       const cc = await tileCenter(probe.id);
       await page.mouse.click(cc.x, cc.y);
     }
     await page.mouse.click(probe.x, probe.y);
-    const sel = await page.evaluate(() => window.__slice.game.selection);
-    if (sel !== probe.id) {
-      console.error(`  FORGIVENESS FAIL: expected selection ${probe.id}, got ${sel}`);
+    const acted = await page.evaluate(
+      (i) => !window.__slice.game.board.presentTiles().some((t) => t.id === i),
+      probe.id,
+    );
+    if (!acted) {
+      console.error(`  FORGIVENESS FAIL: tile ${probe.id} did not act on the forgiven tap`);
       failures++;
     }
-    await page.keyboard.press('Escape'); // deselect (issue #62: a second tap parks)
+    // A fresh deal: the forgiven tap parked a tile section 2b must not inherit.
+    await page.click('#btn-restart');
+    await page.waitForFunction(() => !window.__slice.dealing);
   }
 
-  // 2b. The holder (issues #43, #62), driven the way a player drives it: park a
-  //     free tile by tapping it twice on the canvas, check the strip shows it
-  //     and the tile it was covering is now free, clear it against its partner
-  //     in a single tap, then force-quit with a tile still parked. The rail's
-  //     Hold control is gone (#62), so its absence is checked too.
+  // 2b. The holder (issues #43, #93), driven the way a player drives it: park a
+  //     free tile with one tap on the canvas, check the strip shows it and the
+  //     tile it was covering is now free, clear it against its partner in a
+  //     single tap, then force-quit with a tile still parked. The rail's Hold
+  //     control is gone (#62), so its absence is checked too.
   {
     const before = failures;
     const slotMetrics = () =>
@@ -656,7 +677,7 @@ for (const vp of VIEWPORTS) {
         return {
           count: slots.length,
           filled: slots.filter((n) => n.classList.contains('filled')).length,
-          emptyAreDisabled: slots.every((n) => n.classList.contains('filled') || n.disabled),
+          allDisabled: slots.every((n) => n.disabled),
           tooSmall: slots.filter((n) => {
             const r = n.getBoundingClientRect();
             return r.width < 48 || r.height < 48;
@@ -669,7 +690,7 @@ for (const vp of VIEWPORTS) {
     const empty = await slotMetrics();
     check(empty.count === 4, 'the holder shows four slots', empty);
     check(empty.filled === 0, 'a fresh deal starts with an empty holder', empty);
-    check(empty.emptyAreDisabled, 'an empty slot is not a tab stop', empty);
+    check(empty.allDisabled, 'slots are information, not controls (issue #93)', empty);
     check(empty.tooSmall === 0, 'every holder slot is a 48dp target', empty);
     check(/0 of 4 slots used/.test(empty.groupLabel ?? ''), 'the strip names its state', empty);
     check(!empty.holdButton, 'the rail no longer carries a Hold control (issue #62)', empty);
@@ -690,7 +711,7 @@ for (const vp of VIEWPORTS) {
         Math.abs(a.slot.x - t.slot.x) < 2 &&
         Math.abs(a.slot.y - t.slot.y) < 2;
       for (const id of free) {
-        // Both halves face-up (issue #64): the park below is two plain taps,
+        // Both halves face-up (issue #64): the park below is one plain tap,
         // and the clear is one tap on the partner.
         if (window.__slice.game.isFaceHidden(id)) continue;
         const partner = (byFace[b.get(id).face] ?? []).find(
@@ -714,20 +735,8 @@ for (const vp of VIEWPORTS) {
       );
       check(coveredBefore, 'the tile under it starts covered', target);
 
-      // Escape drops a selection now that a second tap on the tile parks it.
+      // Park: one tap is the whole gesture (issue #93).
       const c = await tileCenter(target.id);
-      await page.mouse.click(c.x, c.y);
-      await page.keyboard.press('Escape');
-      const escaped = await page.evaluate(() => ({
-        selection: window.__slice.selection,
-        said: document.getElementById('a11y-status').textContent,
-      }));
-      check(escaped.selection === null, 'Escape clears the selection (issue #62)', escaped);
-      check(/selection cleared/i.test(escaped.said ?? ''), 'and says so', escaped);
-
-      // Park: tap the tile, then tap it again. Two ordinary taps, no timing
-      // window — the whole gesture (issue #62 rule 1).
-      await page.mouse.click(c.x, c.y);
       await page.mouse.click(c.x, c.y);
       const parked = await page.evaluate(
         (t) => ({
@@ -773,12 +782,12 @@ for (const vp of VIEWPORTS) {
       check(parked.tilesLeft === tilesBefore, 'but still counts as a tile left', parked);
       check(!parked.stillCovered, 'parking uncovers the tile underneath', parked);
       check(/in holder slot 1/.test(parked.slotLabel ?? ''), 'the slot names its tile', parked);
-      check(/held in slot 1/.test(parked.said ?? ''), 'the hold is announced', parked.said);
+      check(/sent to holder slot 1/.test(parked.said ?? ''), 'the hold is announced', parked.said);
       check(strip.filled === 1, 'the strip draws the parked tile', strip);
       check(/1 of 4 slots used/.test(strip.groupLabel ?? ''), 'and counts it', strip);
 
-      // One tap on the partner clears the pair against the holder (issue #62
-      // rule 2) — no aiming at the strip, and no second tap.
+      // One tap on the partner clears the pair in the holder (issue #93) —
+      // no aiming at the strip, and no second tap.
       const p = await tileCenter(target.partner);
       await page.mouse.click(p.x, p.y);
       const matched = await page.evaluate(() => ({
@@ -801,7 +810,6 @@ for (const vp of VIEWPORTS) {
         window.__slice.game.board.freeTileIds().find((id) => !window.__slice.game.isFaceHidden(id)),
       );
       const sc = await tileCenter(spare);
-      await page.mouse.click(sc.x, sc.y);
       await page.mouse.click(sc.x, sc.y);
       const beforeQuit = await page.evaluate(() => ({
         holder: window.__slice.holder(),
@@ -839,9 +847,9 @@ for (const vp of VIEWPORTS) {
   //     than handing the board back.
   {
     const before = failures;
-    // Park a face the holder does not already carry, so the tap selects rather
-    // than clearing a pair (issue #62 rule 2). Returns what the strip and the
-    // selected tile say at each step.
+    // Park a face the holder does not already carry, so the tap parks rather
+    // than clearing a pair (issue #93). The tile's accessible name is read
+    // *before* the tap — that is the cue that has to arrive before the step.
     const parkOne = async () => {
       const target = await page.evaluate(() => {
         const b = window.__slice.game.board;
@@ -851,7 +859,7 @@ for (const vp of VIEWPORTS) {
             .slots.filter((id) => id !== null)
             .map((id) => b.get(id).face),
         );
-        // Face-up only (issue #64): the two taps below are select + park.
+        // Face-up only (issue #64): the tap below must park, not peek.
         return (
           b
             .freeTileIds()
@@ -861,15 +869,14 @@ for (const vp of VIEWPORTS) {
         );
       });
       if (target === null) return null;
-      const c = await tileCenter(target);
-      await page.mouse.click(c.x, c.y);
-      const selected = await page.evaluate(
+      const label = await page.evaluate(
         (id) =>
           document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.getAttribute('aria-label'),
         target,
       );
+      const c = await tileCenter(target);
       await page.mouse.click(c.x, c.y);
-      return { target, selected };
+      return { target, label };
     };
 
     let warned = null;
@@ -898,7 +905,9 @@ for (const vp of VIEWPORTS) {
       nearlyFull,
     );
     check(
-      /the last one; filling it ends the level/i.test(nearlyFull.lastLabel ?? ''),
+      /the last one; a tile with no match in the holder ends the level/i.test(
+        nearlyFull.lastLabel ?? '',
+      ),
       'and so does the slot itself',
       nearlyFull,
     );
@@ -913,17 +922,17 @@ for (const vp of VIEWPORTS) {
     const fatal = await parkOne();
     check(fatal !== null, 'a fourth tile is available to park', fatal);
     check(
-      /activate again to park it in the last holder slot, which ends the level/i.test(
-        fatal?.selected ?? '',
+      /activate to send it to the last holder slot, which ends the level/i.test(
+        fatal?.label ?? '',
       ),
-      'the selected tile says the next activation ends the level',
-      fatal?.selected,
+      'the tile named the fatal park before the tap',
+      fatal?.label,
     );
     // …and `warned` is the control: the third park offered no such warning.
     check(
-      /activate again to park it in the holder$/i.test(warned?.selected ?? ''),
+      /activate to send it to the holder$/i.test(warned?.label ?? ''),
       'while the park before it did not',
-      warned?.selected,
+      warned?.label,
     );
 
     // The dialog's focus is repaired on the next task — a tap opens it from
@@ -1073,10 +1082,10 @@ for (const vp of VIEWPORTS) {
       { hint1: hint1.pair, hint2, freePairs: hint1.freePairs },
     );
 
-    // Play the hinted pair with real taps, then Undo it: board, score and
-    // selection come back; Undo costs one charge, Hint is untouched.
-    // Hint points at face-down tiles too (issue #64, PM-intended leak), so the
-    // taps may need the extra peek.
+    // Play the hinted pair with real taps (two moves since issue #93: a hold
+    // and a match), then Undo both: board, score and holder come back; each
+    // Undo costs one charge, Hint is untouched. Hint points at face-down tiles
+    // too (issue #64, PM-intended leak), so the taps may need the extra peek.
     for (const id of hint2) await tapTile(id);
     const matched = await page.evaluate(() => ({
       tilesLeft: window.__slice.game.tilesLeft,
@@ -1087,6 +1096,7 @@ for (const vp of VIEWPORTS) {
     const undone = await page.evaluate(() => ({
       tilesLeft: window.__slice.game.tilesLeft,
       score: window.__slice.game.score,
+      holder: window.__slice.holder(),
       charges: window.__slice.boosterCharges(),
       said: document.getElementById('a11y-status').textContent,
     }));
@@ -1096,11 +1106,34 @@ for (const vp of VIEWPORTS) {
       undone,
     );
     check(
+      undone.holder.slots.some((id) => id !== null),
+      'the match undoes back into the holder (issue #93)',
+      undone.holder,
+    );
+    check(
       undone.charges.undo === 4 && undone.charges.hint === 3,
       'undo spent exactly one undo charge',
       undone.charges,
     );
     check(/4 undos left\.$/.test(undone.said.trim()), 'undo announces the balance', undone.said);
+
+    // The second undo takes back the hold itself.
+    await page.click('#btn-undo');
+    const unheld = await page.evaluate(() => ({
+      holder: window.__slice.holder(),
+      charges: window.__slice.boosterCharges(),
+      said: document.getElementById('a11y-status').textContent,
+    }));
+    check(
+      unheld.holder.slots.every((id) => id === null),
+      'a second undo takes the hold back',
+      unheld,
+    );
+    check(
+      /taken back out of the holder/.test(unheld.said),
+      'and says what came back',
+      unheld.said,
+    );
 
     // Undo with an empty stack: no charge, and it says why.
     await page.click('#btn-undo');
@@ -1108,7 +1141,7 @@ for (const vp of VIEWPORTS) {
       charges: window.__slice.boosterCharges(),
       said: document.getElementById('a11y-status').textContent,
     }));
-    check(noUndo.charges.undo === 4, 'a no-op undo costs nothing', noUndo);
+    check(noUndo.charges.undo === 3, 'a no-op undo costs nothing', noUndo);
     check(/Nothing to undo yet\./.test(noUndo.said), 'a no-op undo explains itself', noUndo.said);
 
     // Shuffle: same tiles in the same slots, still playable, one charge spent.
@@ -1163,12 +1196,12 @@ for (const vp of VIEWPORTS) {
       ),
     }));
     check(
-      resumed.charges.hint === 0 && resumed.charges.undo === 4 && resumed.charges.shuffle === 4,
+      resumed.charges.hint === 0 && resumed.charges.undo === 3 && resumed.charges.shuffle === 4,
       'charges persist across a restart',
       resumed.charges,
     );
     check(
-      resumed.badges.join('/') === '0/4/4',
+      resumed.badges.join('/') === '0/3/4',
       'the restored balances are on the buttons',
       resumed.badges,
     );
@@ -1323,7 +1356,7 @@ for (const vp of VIEWPORTS) {
     // Play the generator's witness (naive greedy play can deadlock in a few
     // moves — that is what huntDeadlock above is for), then shuffle: shuffled
     // faces are the state a move-list replay could not reproduce. Then leave a
-    // selection live mid-pair, which is state too.
+    // tile parked mid-pair (issue #93), which is state too.
     const played = await page.evaluate(() => {
       const s = window.__slice;
       const click = (id) => document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.click();
@@ -1338,8 +1371,8 @@ for (const vp of VIEWPORTS) {
       }
       document.getElementById('btn-shuffle').click();
       // A shuffled board is solver-validated solvable, so a free matching pair
-      // exists; take one of its tiles as the live selection. Face-up tiles
-      // only (issue #64): the tap below must select, not peek.
+      // exists; park one of its tiles mid-pair. Face-up tiles only (issue
+      // #64): the tap below must park, not peek.
       const seen = new Map();
       for (const id of s.game.board.freeTileIds().filter((t) => !s.game.isFaceHidden(t))) {
         const face = s.game.board.get(id).face;
@@ -1353,7 +1386,7 @@ for (const vp of VIEWPORTS) {
         hash: s.stateHash(),
         score: s.game.score,
         tilesLeft: s.game.tilesLeft,
-        selection: s.game.selection,
+        holder: s.holder().slots,
         seed: s.game.level.seed,
         undoDepth: s.game.undoDepth,
         saved: s.savedState() !== null,
@@ -1361,7 +1394,11 @@ for (const vp of VIEWPORTS) {
     });
     check(played.tilesLeft === 136, 'four witness pairs were played', played);
     check(played.saved, 'a mid-level board is saved', played);
-    check(played.selection !== null, 'the test left a live selection to restore', played);
+    check(
+      played.holder.some((id) => id !== null),
+      'the test left a tile parked mid-pair to restore',
+      played,
+    );
 
     // Change two settings through the real controls before quitting.
     await page.click('#btn-settings');
@@ -1377,7 +1414,7 @@ for (const vp of VIEWPORTS) {
         hash: s.stateHash(),
         score: s.game.score,
         tilesLeft: s.game.tilesLeft,
-        selection: s.game.selection,
+        holder: s.holder().slots,
         seed: s.game.level.seed,
         undoDepth: s.game.undoDepth,
         settings: s.settings(),
@@ -1389,10 +1426,10 @@ for (const vp of VIEWPORTS) {
       resumed.hash === played.hash &&
         resumed.score === played.score &&
         resumed.tilesLeft === played.tilesLeft &&
-        resumed.selection === played.selection &&
+        JSON.stringify(resumed.holder) === JSON.stringify(played.holder) &&
         resumed.seed === played.seed &&
         resumed.undoDepth === played.undoDepth,
-      'a force-quit mid-level resumes the identical board, score and selection',
+      'a force-quit mid-level resumes the identical board, score and holder',
       { played, resumed },
     );
     check(/Game resumed\./.test(resumed.said), 'the resume is announced', resumed.said);
@@ -1409,20 +1446,17 @@ for (const vp of VIEWPORTS) {
     const kept = await page.evaluate(() => {
       const s = window.__slice;
       const click = (id) => document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.click();
-      // Face-up only (issue #64): each click below must act, not peek. The
-      // restored selection is never face-down — a selection pins its reveal.
-      const seen = new Map();
-      for (const id of s.game.board.freeTileIds().filter((t) => !s.game.isFaceHidden(t))) {
-        const face = s.game.board.get(id).face;
-        if (seen.has(face)) {
-          // The restored selection may already be this pair's first tile —
-          // tapping it again would just deselect it.
-          const partner = seen.get(face);
-          if (s.game.selection !== partner) click(partner);
-          click(id);
-          break;
-        }
-        seen.set(face, id);
+      // The restored parked tile is mid-pair: one tap on its board partner is
+      // the whole match (issue #93). Held tiles are face-up in the strip.
+      const heldId = s.holder().slots.find((id) => id !== null);
+      const heldFace = s.game.board.get(heldId).face;
+      const partner = s.game.board
+        .freeTileIds()
+        .find((id) => s.game.board.get(id).face === heldFace);
+      if (partner !== undefined) {
+        // A resume re-conceals (issue #64), so the partner may need its peek.
+        if (s.game.isFaceHidden(partner)) click(partner);
+        click(partner);
       }
       return { tilesLeft: s.game.tilesLeft, score: s.game.score, status: s.game.status() };
     });

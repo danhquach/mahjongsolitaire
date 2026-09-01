@@ -60,7 +60,13 @@ import type { GameSnapshot } from './game.js';
 import { clearRecord, readRecord, writeRecord } from './storage.js';
 import type { KeyValueStorage } from './storage.js';
 
-export const SAVE_VERSION = 3;
+/** v4 (issue #93 / decision 0013): the gesture rework retired selection and
+ *  made held–held pairs unplayable, so a v3 record can carry live state — a
+ *  selection pinning a concealed reveal, two identical faces parked — that
+ *  the new input layer cannot operate or clear. As with the v2→v3 bump
+ *  (decision 0009), the version is the whole answer: an older record reads as
+ *  absent and the player gets a fresh deal. */
+export const SAVE_VERSION = 4;
 /** The slot key is deliberately *not* versioned with the record: the `version`
  *  field inside is what decides whether a record can be trusted, and renaming
  *  the key would only orphan the old bytes instead of overwriting them. */

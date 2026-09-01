@@ -48,11 +48,9 @@ import type { Rect } from './geometry.js';
 import { BOARD_MARGIN, fitScale } from './hud-fit.js';
 import type { BoardExtent } from './hud-fit.js';
 
-const COLOR_SELECTED = 0xf59e0b;
 const COLOR_FLASH = 0xdc2626;
 const COLOR_HINT = 0x2563eb;
-/** Highlight faces stay at full value on every layer — they are the cue. */
-const FACE_SELECTED = 0xfff0c2;
+/** The highlight face stays at full value on every layer — it is the cue. */
 const FACE_HINT = 0xdbeafe;
 /** Corner radius of the tile silhouette, shared by face, sides, and shadow. */
 const TILE_RADIUS = 6;
@@ -177,8 +175,7 @@ function drawCane(
 }
 
 export interface DrawState {
-  readonly selection: TileId | null;
-  /** Tiles to outline in red this frame (mismatch / blocked-tap feedback). */
+  /** Tiles to outline in red this frame (blocked-tap feedback). */
   readonly flash: readonly TileId[];
   /** Tiles the Hint booster is pointing at (issue #13); outlined in blue
    *  until the board changes — spec §7 wants no timing pressure. */
@@ -189,13 +186,9 @@ export interface DrawState {
 }
 
 export class BoardRenderer {
-  /** Carries the fit transform; both layers below it work in board px. */
+  /** Carries the fit transform; the board layer below it works in board px. */
   private readonly viewport = new Container();
   private readonly boardLayer = new Container();
-  /** In-flight match copies and impact particles (issue #44). A sibling of
-   *  boardLayer under the same transform, so an effect is written in board px
-   *  and always paints above every tile. */
-  private readonly effectsLayer = new Container();
   /** This frame's tile containers, by id — the shake target (issue #44). */
   private readonly tileNodes = new Map<TileId, Container>();
   /** Data-URL cache for the holder strip's tile pictures (issue #66). */
@@ -215,7 +208,7 @@ export class BoardRenderer {
     this.bounds = boardBounds(layoutSlots);
     this.topZ = Math.max(...layoutSlots.map((s) => s.z));
     this.shadowTexture = this.bakeShadow();
-    this.viewport.addChild(this.boardLayer, this.effectsLayer);
+    this.viewport.addChild(this.boardLayer);
     app.stage.addChild(this.viewport);
   }
 
@@ -333,15 +326,13 @@ export class BoardRenderer {
     this.tileNodes.clear();
     const tiles = [...game.board.presentTiles()].sort((a, b) => paintOrder(a.slot, b.slot));
     for (const tile of tiles) {
-      const selected = state.selection === tile.id;
       const flashed = state.flash.includes(tile.id);
       const hinted = state.hint.includes(tile.id);
       // A highlighted tile is free by construction, so only the plain ones can
-      // be dimmed — the dim must never fight the selection or hint cue.
-      const dimmed =
-        state.dimBlocked && !selected && !hinted && !flashed && !game.board.isFree(tile.id);
+      // be dimmed — the dim must never fight the hint cue.
+      const dimmed = state.dimBlocked && !hinted && !flashed && !game.board.isFree(tile.id);
       const hidden = game.isFaceHidden(tile.id);
-      const node = this.buildTile(tile, { selected, flashed, hinted, dimmed, hidden });
+      const node = this.buildTile(tile, { flashed, hinted, dimmed, hidden });
       this.tileNodes.set(tile.id, node);
       this.boardLayer.addChild(node);
     }
@@ -358,7 +349,6 @@ export class BoardRenderer {
   private buildTile(
     tile: Tile,
     opts: {
-      readonly selected: boolean;
       readonly flashed: boolean;
       readonly hinted: boolean;
       readonly dimmed: boolean;
@@ -366,7 +356,7 @@ export class BoardRenderer {
       readonly hidden?: boolean;
     },
   ): Container {
-    const { selected, flashed, hinted, dimmed, hidden = false } = opts;
+    const { flashed, hinted, dimmed, hidden = false } = opts;
     const node = new Container();
     const r = tileRect(tile.slot);
     const shade = tileShade(tile.slot.z, this.topZ, dimmed);
@@ -388,27 +378,12 @@ export class BoardRenderer {
     });
     // A hidden face keeps the back colour even under a hint (the outline is the
     // cue; recolouring the face would make the back read as a fourth suit).
-    // `hidden && selected` cannot happen: a selection pins its reveal (#64).
     const backFactor = 1 - LAYER_FACE_STEP * depthSteps(tile.slot.z, this.topZ, dimmed);
     g.roundRect(r.x, r.y, r.w, r.h, TILE_RADIUS)
-      .fill(
-        hidden
-          ? scaleColor(BACK_FACE, backFactor)
-          : selected
-            ? FACE_SELECTED
-            : hinted
-              ? FACE_HINT
-              : shade.face,
-      )
+      .fill(hidden ? scaleColor(BACK_FACE, backFactor) : hinted ? FACE_HINT : shade.face)
       .stroke({
-        width: selected || flashed || hinted ? BORDER_WIDTH_ACTIVE : BORDER_WIDTH,
-        color: flashed
-          ? COLOR_FLASH
-          : selected
-            ? COLOR_SELECTED
-            : hinted
-              ? COLOR_HINT
-              : shade.border,
+        width: flashed || hinted ? BORDER_WIDTH_ACTIVE : BORDER_WIDTH,
+        color: flashed ? COLOR_FLASH : hinted ? COLOR_HINT : shade.border,
       });
     node.addChild(g);
 
@@ -501,11 +476,6 @@ export class BoardRenderer {
     return node;
   }
 
-  /** Layer the match animation paints into — above every tile (issue #44). */
-  get effects(): Container {
-    return this.effectsLayer;
-  }
-
   /**
    * A parked tile's picture for the holder strip (issue #66): the exact tile
    * the renderer would paint on the board's top layer — face, border, side
@@ -525,7 +495,7 @@ export class BoardRenderer {
     const slot = { x: 0, y: 0, z: this.topZ };
     const node = this.buildTile(
       { id: -1, slot, face, removed: false },
-      { selected: false, flashed: false, hinted: false, dimmed: false },
+      { flashed: false, hinted: false, dimmed: false },
     );
     const r = tileRect(slot);
     const canvas = this.app.renderer.extract.canvas({
@@ -548,29 +518,4 @@ export class BoardRenderer {
     return this.tileNodes.get(id);
   }
 
-  /**
-   * A fresh, unparented copy of a tile, for the effects layer to fly (#44).
-   *
-   * Built from `board.get()`, which still resolves a tile the match has just
-   * removed — so main.ts can capture the copy after the tap has been applied.
-   * Painted at the top-layer shade with no highlight: it has left the stack,
-   * so the depth ladder it used to sit on no longer applies to it.
-   *
-   * The slot's z is swapped to the top layer for the same reason, which also
-   * moves the copy by the layer lift; the caller pivots it onto the tile's real
-   * centre and writes an absolute position every frame, so the build-time
-   * offset never reaches the screen.
-   */
-  detachedTile(game: Game, id: TileId): Container | undefined {
-    let tile: Tile;
-    try {
-      tile = game.board.get(id);
-    } catch {
-      return undefined; // id the board never knew
-    }
-    return this.buildTile(
-      { ...tile, slot: { ...tile.slot, z: this.topZ } },
-      { selected: false, flashed: false, hinted: false, dimmed: false },
-    );
-  }
 }

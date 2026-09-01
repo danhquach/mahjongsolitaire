@@ -43,8 +43,11 @@ test('traversal order does not mutate the input', () => {
   );
 });
 
-test('tile label names the face, its availability, and a locating row/column', () => {
-  assert.equal(tileAriaLabel(t(0, 0, 0, 0, 'bamboo-3')), 'Bamboo 3, available, row 1, column 1');
+test('tile label names the face, its availability, a locating row/column, and the action', () => {
+  assert.equal(
+    tileAriaLabel(t(0, 0, 0, 0, 'bamboo-3')),
+    'Bamboo 3, available, row 1, column 1, activate to send it to the holder',
+  );
   assert.equal(
     tileAriaLabel(t(1, 6, 4, 0, 'wind-east', false)),
     'East Wind, blocked, row 3, column 4',
@@ -63,16 +66,14 @@ test('a face-down tile announces as face-down, never by its face (issue #64)', (
   );
 });
 
-test('a selected free tile spells out the park action (issue #62)', () => {
-  // Parking is a board move now, not a rail control: a screen-reader player has
-  // to be told that activating the tile again parks it.
+test('a tile whose match is in the holder offers the clear, not the park (issue #93)', () => {
   assert.equal(
-    tileAriaLabel(t(0, 0, 0, 0, 'bamboo-3'), true),
-    'Bamboo 3, available, row 1, column 1, selected, activate again to park it in the holder',
+    tileAriaLabel({ ...t(0, 0, 0, 0, 'bamboo-3'), pairsWithHeld: true }),
+    'Bamboo 3, available, row 1, column 1, activate to clear it with its match in the holder',
   );
-  // A blocked tile cannot be selected, so it never offers the action.
+  // A blocked tile offers no action at all.
   assert.equal(
-    tileAriaLabel(t(1, 0, 0, 0, 'bamboo-3', false), true),
+    tileAriaLabel({ ...t(1, 0, 0, 0, 'bamboo-3', false), pairsWithHeld: true }),
     'Bamboo 3, blocked, row 1, column 1',
   );
 });
@@ -82,19 +83,22 @@ test('with one slot left the label warns that parking loses (issue #63)', () => 
   // that warning for someone who cannot see it, and it has to arrive *before*
   // the activation that ends the level, not after.
   assert.equal(
-    tileAriaLabel(t(0, 0, 0, 0, 'bamboo-3'), true, true),
-    'Bamboo 3, available, row 1, column 1, selected, activate again to park it in the last holder slot, which ends the level',
+    tileAriaLabel(t(0, 0, 0, 0, 'bamboo-3'), true),
+    'Bamboo 3, available, row 1, column 1, activate to send it to the last holder slot, which ends the level',
   );
-  // Not selected: no park on offer, so no warning either.
+  // A tile whose pair is waiting is safe to send: the clear, not the warning.
   assert.equal(
-    tileAriaLabel(t(0, 0, 0, 0, 'bamboo-3'), false, true),
-    'Bamboo 3, available, row 1, column 1',
+    tileAriaLabel({ ...t(0, 0, 0, 0, 'bamboo-3'), pairsWithHeld: true }, true),
+    'Bamboo 3, available, row 1, column 1, activate to clear it with its match in the holder',
   );
 });
 
 test('tile label rounds half-unit offsets to the nearest whole row/column', () => {
   // Turtle has half-offset slots (odd half-unit coordinates).
-  assert.equal(tileAriaLabel(t(2, 1, 3, 0, 'dots-5')), 'Dots 5, available, row 3, column 2');
+  assert.equal(
+    tileAriaLabel(t(2, 1, 3, 0, 'dots-5')),
+    'Dots 5, available, row 3, column 2, activate to send it to the holder',
+  );
 });
 
 test('focus rect keeps a large tile as-is', () => {

@@ -102,21 +102,27 @@ Undo still rewinds a hold, because undo rewinds *any* move; that is the move
 never having happened, not the player returning a tile.
 
 ### 3.3 Matching
-- Tap tile A (selected, highlighted), tap tile B.
-- If A ≠ B, both **matchable** (free on the board, or held — decision 0008), and `match(A.face, B.face)` → remove both, award score.
-- Otherwise deselect / reselect.
-- **Tapping the selected tile parks it in the holder** *(amended by issue #62 —
-  it used to deselect)*. Deselecting is a tap on empty board, or Escape.
-- **A tap on a board tile whose face is in the holder clears that pair at once**
-  *(issue #62)*: one tap, both tiles gone, the slot freed. An explicit selection
-  still wins — if the tapped tile completes the pair the player picked, that is
-  the pair played.
-- Both rules are board-only: a tile already in the holder cannot be parked
-  again, and two held tiles pair the ordinary two-tap way.
-- Note for §7: parking is **not** a double-tap gesture. There is no timing
-  window and no `dblclick` — it is "activate the tile you already selected", so
-  a keyboard or screen-reader player reaches it with two ordinary activations,
-  and a selected tile's accessible name says so.
+*(reworked by issue #93 / decision 0013 — pairs assemble and clear in the
+holder; selection is no longer a concept)*
+- **One tap on a revealed free tile sends it to the holder.** No select-first
+  step, no deselect, no mismatch: every tap on a playable tile is a move.
+- **If the tapped tile's face matches a tile already in the holder, the pair
+  clears there**: the tile flies to the holder, the pair is shown side by side
+  for a beat, then both clear with a score popup and a particle burst anchored
+  at the strip. Score is awarded on the tap (`match(A.face, B.face)` with both
+  tiles matchable, exactly as before); the show is decoration and never blocks
+  input. A pair-completing tile never occupies a slot, so it cannot trip the
+  full-holder loss (§3.5) in passing.
+- **Otherwise the tile parks** in the first empty slot — and the park that
+  fills the fourth slot loses the level (decision 0009, unchanged).
+- A held tile is not tappable: it leaves the holder only by its board partner
+  being tapped (or by Undo rewinding the hold).
+- **Face-down tiles (issue #64):** the first tap reveals the face in place and
+  does nothing else — the holder is never consulted for a hidden face. The
+  second tap sends the now-visible tile to the holder like any other.
+- Note for §7: nothing here is a double-tap gesture. A concealed tile's two
+  taps are two ordinary activations with no timing window, and every free
+  tile's accessible name spells out what activating it does.
 
 **Match rule** *(amended by decision 0005, PM 2026-08-30 — wildcard groups removed; face set amended by decision 0012, PM 2026-08-31)*:
 - **Identical face match for ALL tiles**, Seasons included (Dots, Bamboo, Characters 1–9 ×4, Winds ×4, Dragons ×3, Seasons ×2 per face).
@@ -127,9 +133,9 @@ Standard 144: 36 Dots, 36 Bamboo, 36 Characters, 16 Winds, 12 Dragons, 8 Seasons
 ### 3.5 Win / loss
 - **Win:** all tiles removed. Held tiles count as in play — an empty board with a tile still parked is not a win (decision 0008).
 - **Loss** *(added by decision 0009, PM 2026-08-31 — issue #63)*: **the holder is full.** It fires the moment the fourth slot fills, whatever else is on the board — a playable pair in plain sight does not save it. The level is over: **no Shuffle, no Undo, no continue.** The dialog offers Restart level and New game, and nothing else. This is the one place v1 hard-fails the player, and it is deliberate: the holder is a resource you can spend yourself out of, which is what makes spending it a decision.
-  - The player is warned before the step, not after it: the last empty slot is marked in the strip, the holder group's accessible name says one slot is left, and a selected tile's accessible name says that activating it again would park into the last slot and end the level.
+  - The player is warned before the step, not after it (reworded by issue #93): the last empty slot is marked in the strip, the holder group's accessible name says one slot is left and that a tile with no match in the holder ends the level, and every free tile whose face has no match in the holder says that activating it sends it to the last slot and ends the level. A tile whose match is already in the holder is safe — its name offers the clear instead.
   - The loss survives a force-quit. A save is written for a lost level exactly as for a deadlocked one, so reloading is not an escape hatch from a nearly-full holder.
-- **Deadlock:** no matching pair is reachable → offer Shuffle (free the first time per level, then rewarded-ad/booster). Never hard-fail the player *here* — the deadlock dialog keeps its boosters; the loss above is a different state. *Reachable* includes what the holder can open up (decision 0008): parking a free tile can free the tile under it, so a board with no pair on it is only a deadlock once no sequence of holds exposes one. Since decision 0009 that search **stops one slot short**: the park that would fill the holder ends the level, so it is not a way out of a deadlock.
+- **Deadlock:** no matching pair is reachable → offer Shuffle (free the first time per level, then rewarded-ad/booster). Never hard-fail the player *here* — the deadlock dialog keeps its boosters; the loss above is a different state. *Reachable* includes what the holder can open up (decision 0008): parking a free tile can free the tile under it, so a board with no pair on it is only a deadlock once no sequence of holds exposes one. Since decision 0009 that search **stops one slot short**: the park that would fill the holder ends the level, so it is not a way out of a deadlock. And since issue #93 every pair transits the holder, so *reachable* is gesture-aware (`takeablePairs`): a pair with both tiles on the board needs two vacancies to transit, a pair with one tile held is one tap, and a held–held pair has no gesture at all — the deadlock check and the Hint booster both use this filter, so neither ever points at a pair whose first tap would end the level.
 - No timer by default. Timed mode is an opt-in setting.
 
 ---
@@ -164,9 +170,9 @@ Naïve random dealing produces unsolvable boards. Use **reverse construction**:
 | Booster | Behavior | Constraints |
 |---|---|---|
 | **Hint** | Highlights one valid free pair; cycles through pairs on repeat taps | Costs 1 charge; no penalty to score in casual mode |
-| **Undo** | Restores the last removed pair (full move stack, unlimited depth) | 1 charge per undo; must restore selection state and score |
+| **Undo** | Takes back the last move — a match or a hold (full move stack, unlimited depth) | 1 charge per undo; must restore the board, the holder and the score exactly |
 | **Shuffle** | Re-randomizes faces of the tiles still *on the board*, preserving slot occupancy | Must re-run solvability check; regenerate if unsolvable. Held tiles keep their faces (decision 0008) |
-| **Hold** | *Retired as a rail control by issue #62* — parking is a board gesture (§3.3): activate the selected free tile again | **Not a charged booster** (decision 0008): free and always available, and one-way (decision 0009) — the park that fills the fourth slot loses the level (§3.5). Hold and holder-match are undoable moves; there is no return move |
+| **Hold** | *One tap is the whole gesture since issue #93 (§3.3)*: tapping any revealed free tile sends it to the holder; a pair completes and clears there | **Not a charged booster** (decision 0008): free and always available, and one-way (decision 0009) — the park that fills the fourth slot loses the level (§3.5). Hold and holder-match are undoable moves; there is no return move |
 
 Starting grant: 5 of each of the three charged boosters; the holder has no balance. Replenishment: daily login grant, level milestones, rewarded video, IAP bundle.
 
@@ -175,7 +181,7 @@ Starting grant: 5 of each of the three charged boosters; the holder has no balan
 ## 6. Scoring & Progression
 
 - Base: 100 pts per pair.
-- **Super Combo:** consecutive matches within a 5s window escalate a multiplier (×1.2, ×1.5, ×2.0, cap ×3.0). Broken by a mismatch or timeout. Purely additive reward — never punitive.
+- **Super Combo:** consecutive matches within a 5s window escalate a multiplier (×1.2, ×1.5, ×2.0, cap ×3.0). Broken by timeout (issue #93 removed the mismatch — a non-matching tap is a park, not a failed pair). Purely additive reward — never punitive.
 - Star rating per level (1–3) from moves used, hints used, and completion time relative to the level's baseline.
 - Persistent: level index, stars, total score, streak, trophies.
 

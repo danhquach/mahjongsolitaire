@@ -92,6 +92,29 @@ export function legalPairs(board: Board): Array<[TileId, TileId]> {
   return pairs.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
 }
 
+/**
+ * The legal pairs the player can actually take from this position, under the
+ * issue #93 gesture (decision 0013): every pair resolves in the holder, so
+ * taking one is either one tap on the board half of a board–held pair (no
+ * slot consumed), or — for a pair with both tiles on the board — a park and a
+ * clear, which transits a holder slot and is only safe with two vacancies
+ * (the park into the last slot loses, decision 0009). A held–held pair has no
+ * gesture at all: a held tile is not tappable.
+ *
+ * `legalPairs` stays the pure match rule; this is the gesture filter on top,
+ * shared by `hasPlayableMove` and the Hint booster so neither ever points the
+ * player at a pair whose first tap would end the level.
+ */
+export function takeablePairs(board: Board): Array<[TileId, TileId]> {
+  const roomToTransit = board.holderVacancies() >= 2;
+  return legalPairs(board).filter(([a, b]) => {
+    const heldCount = (board.isHeld(a) ? 1 : 0) + (board.isHeld(b) ? 1 : 0);
+    if (heldCount === 1) return true;
+    if (heldCount === 2) return false;
+    return roomToTransit;
+  });
+}
+
 /** Search-internal tile: adjacency precomputed once (indices, not ids). A held
  *  tile's four lists all stay empty — it is off the lattice, so it blocks
  *  nothing and nothing blocks it, which is exactly what `isFree` then reads. */
@@ -368,7 +391,10 @@ export const DEFAULT_MAX_HOLD_STATES = 5_000;
  * caller's board is untouched whatever happens.
  */
 export function hasPlayableMove(board: Board, options: { maxStates?: number } = {}): boolean {
-  if (legalPairs(board).length > 0) return true;
+  // Takeable, not merely legal (issue #93): a board pair with one vacancy is
+  // not a move — its first tap parks into the fatal fourth slot — and a
+  // held–held pair has no gesture. Both at the root and at every search node.
+  if (takeablePairs(board).length > 0) return true;
   const probe = new Board(board.allTiles(), {
     holder: board.holderSlots(),
     holderCapacity: board.holderCapacity,
@@ -383,7 +409,7 @@ export function hasPlayableMove(board: Board, options: { maxStates?: number } = 
       if (budget-- <= 0) return false;
       probe.hold(id);
       const key = probe.heldTileIds().join(',');
-      const live = seen.has(key) ? false : legalPairs(probe).length > 0 || search();
+      const live = seen.has(key) ? false : takeablePairs(probe).length > 0 || search();
       seen.add(key);
       probe.unhold(id);
       if (live) return true;

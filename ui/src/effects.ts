@@ -1,49 +1,18 @@
-// Ticker-driven match / mismatch effects (issue #44).
+// Ticker-driven board effects (issue #44; the match flight moved to the DOM
+// tray layer in issue #93 — see tray-fx.ts).
 //
 // The split with anim.ts is deliberate: everything that decides *what a value
 // should be* lives there and is unit-tested; this file only owns Pixi objects
 // and the frame loop. An effect is a small object with `advance(dtMs)` — it
 // returns false when it is finished and the animator disposes of it.
 //
-// Two properties the ticket asks for fall out of the structure rather than
-// being defended in code:
-//
-//   * input never blocks — nothing here is awaited, and no effect touches game
-//     state or the input path;
-//   * a tile in flight can never be re-selected — game.tap() removed it from
-//     the model before the effect existed, so the copy flying here is not a
-//     tile any more, it is a picture of one.
+// Input never blocks: nothing here is awaited, and no effect touches game
+// state or the input path.
 
-import { Container, Graphics } from 'pixi.js';
-import type { Ticker } from 'pixi.js';
+import type { Container, Ticker } from 'pixi.js';
 import type { TileId } from '@mahjongsolitaire/core';
-import {
-  FLIP_MS,
-  SHAKE_MS,
-  flipScaleX,
-  impactAt,
-  matchDuration,
-  matchFrame,
-  particleBurst,
-  particleFrame,
-  shakeOffset,
-} from './anim.js';
-import type { Particle, Point } from './anim.js';
-import { SHADOW_PAD } from './depth.js';
-import { SIDE_DEPTH, TILE_H, TILE_W } from './geometry.js';
-
-/** A tile copy to fly, with the board-px centre it starts from. */
-export interface FlyingTile {
-  readonly display: Container;
-  readonly center: Point;
-}
-
-/** Colour of the impact flash and the sparks — the palette's warm cream. */
-const SPARK_COLOR = 0xfff6d8;
-/** Corner radius of the tile silhouette the flash overlays (see render.ts). */
-const FLASH_RADIUS = 6;
-/** The flash never goes fully opaque: at 1.0 the tile stops being a tile. */
-const FLASH_MAX = 0.75;
+import { FLIP_MS, SHAKE_MS, flipScaleX, shakeOffset } from './anim.js';
+import type { Point } from './anim.js';
 
 interface Effect {
   /** Advance by `dtMs`; false means finished. */
@@ -52,96 +21,7 @@ interface Effect {
   dispose(): void;
 }
 
-/** Both tiles flying into the midpoint, the impact, and the burst after it. */
-class MatchEffect implements Effect {
-  private t = 0;
-  private impacted = false;
-  private readonly duration: number;
-  private readonly impact: number;
-  private readonly midpoint: Point;
-  private readonly sparks = new Graphics();
-  private readonly burst: readonly Particle[];
-  /** The white overlay on each flying tile, in the same order as `tiles`. */
-  private readonly flashes: Graphics[] = [];
-
-  constructor(
-    layer: Container,
-    private readonly tiles: readonly FlyingTile[],
-    private readonly reduced: boolean,
-    private readonly onImpact: () => void,
-    seed: number,
-  ) {
-    this.duration = matchDuration(reduced);
-    this.impact = impactAt(reduced);
-    this.midpoint = {
-      x: (tiles[0]!.center.x + tiles[1]!.center.x) / 2,
-      y: (tiles[0]!.center.y + tiles[1]!.center.y) / 2,
-    };
-    this.burst = particleBurst(seed);
-    for (const tile of tiles) {
-      // Pivot on the tile's own centre so the punch scales about the middle and
-      // a written position *is* the centre — the children are drawn at absolute
-      // board coordinates, so the pivot has to be in those same coordinates.
-      tile.display.pivot.set(tile.center.x, tile.center.y);
-      tile.display.position.set(tile.center.x, tile.center.y);
-      // A white overlay on the tile's own silhouette is the flash; its alpha is
-      // driven per frame. The copy's local bounds start at the shadow's padded
-      // corner, so stepping in by SHADOW_PAD lands exactly on the tile.
-      const bounds = tile.display.getLocalBounds();
-      const flash = new Graphics();
-      flash
-        .roundRect(
-          bounds.x + SHADOW_PAD,
-          bounds.y + SHADOW_PAD,
-          TILE_W + SIDE_DEPTH,
-          TILE_H + SIDE_DEPTH,
-          FLASH_RADIUS,
-        )
-        .fill(SPARK_COLOR);
-      flash.alpha = 0;
-      tile.display.addChild(flash);
-      this.flashes.push(flash);
-      layer.addChild(tile.display);
-    }
-    // Reduced motion keeps the flash but throws no sparks: a particle burst is
-    // exactly the kind of motion the preference is asking us not to make.
-    if (!reduced) layer.addChild(this.sparks);
-  }
-
-  advance(dtMs: number): boolean {
-    this.t += dtMs;
-    this.tiles.forEach((tile, i) => {
-      const f = matchFrame(tile.center, this.midpoint, this.t, this.reduced);
-      tile.display.position.set(f.cx, f.cy);
-      tile.display.scale.set(f.scale);
-      tile.display.alpha = f.alpha;
-      this.flashes[i]!.alpha = f.flash * FLASH_MAX;
-    });
-    if (!this.impacted && this.t >= this.impact) {
-      this.impacted = true;
-      this.onImpact();
-    }
-    if (!this.reduced && this.impacted) {
-      const pt = this.t - this.impact;
-      this.sparks.clear();
-      for (const p of this.burst) {
-        const f = particleFrame(p, pt);
-        if (f.alpha <= 0) continue;
-        this.sparks
-          .circle(this.midpoint.x + f.x, this.midpoint.y + f.y, p.radius)
-          .fill({ color: SPARK_COLOR, alpha: f.alpha });
-      }
-    }
-    return this.t < this.duration;
-  }
-
-  dispose(): void {
-    for (const tile of this.tiles) tile.display.destroy({ children: true });
-    this.sparks.destroy();
-  }
-}
-
-/** A mismatched tile shaken in place, on the board layer, between redraws. */
+/** A tile shaken in place (blocked tap), on the board layer, between redraws. */
 class ShakeEffect implements Effect {
   private t = 0;
 
@@ -210,18 +90,15 @@ class FlipEffect implements Effect {
 /**
  * Every live effect, advanced from one ticker callback.
  *
- * Concurrent matches are simply separate entries — nothing queues and nothing
- * waits, which is what keeps rapid consecutive matches from throttling the
- * player. `reduced` is read at the moment an effect starts, so flipping the
- * setting (or the OS preference) takes effect on the very next match.
+ * Concurrent effects are simply separate entries — nothing queues and nothing
+ * waits. `reduced` is read at the moment an effect starts, so flipping the
+ * setting (or the OS preference) takes effect on the very next tap.
  */
 export class Animator {
   private readonly effects: Effect[] = [];
-  private seed = 1;
   private readonly onTick = (ticker: Ticker): void => this.advance(ticker.deltaMS);
 
   constructor(
-    private readonly layer: Container,
     private readonly ticker: Ticker,
     private readonly opts: {
       readonly reduced: () => boolean;
@@ -229,13 +106,6 @@ export class Animator {
     },
   ) {
     ticker.add(this.onTick);
-  }
-
-  /** Fly a matched pair together. `onImpact` fires once, on contact. */
-  playMatch(a: FlyingTile, b: FlyingTile, onImpact: () => void): void {
-    this.effects.push(
-      new MatchEffect(this.layer, [a, b], this.opts.reduced(), onImpact, this.seed++),
-    );
   }
 
   /** Unfold a tile whose face just flipped — reveal or re-conceal (issue #64).
@@ -246,7 +116,7 @@ export class Animator {
     this.effects.push(new FlipEffect(id, center, this.opts.tileNode));
   }
 
-  /** Shake tiles in place (mismatch, blocked tap). Reduced motion skips it. */
+  /** Shake tiles in place (blocked tap). Reduced motion skips it. */
   shake(ids: readonly TileId[]): void {
     if (this.opts.reduced()) return;
     for (const id of ids) this.effects.push(new ShakeEffect(id, this.opts.tileNode));

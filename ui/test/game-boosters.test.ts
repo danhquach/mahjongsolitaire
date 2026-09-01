@@ -1,6 +1,8 @@
 // Booster behavior on the game controller (issue #13, spec §5): Hint cycles
-// valid pairs, Undo has unlimited depth and restores score + selection, Shuffle
-// keeps the board solvable and its occupancy intact.
+// valid pairs, Undo has unlimited depth and restores score + holder, Shuffle
+// keeps the board solvable and its occupancy intact. Since issue #93 a pair is
+// played as two taps — the first parks its tile in the holder, the second
+// clears the pair there — so every pair is two undoable moves.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -97,11 +99,11 @@ test('hint returns null when no matching free pair exists', () => {
 
 // --- Undo ------------------------------------------------------------------
 
-test('undo restores the pair, the score and the selection', () => {
+test('undo restores the pair, the score and the holder', () => {
   const game = newGame();
   const [a, b] = game.level.solution[0]!;
-  game.tap(free(a), 0);
-  game.tap(free(b), 1);
+  game.tap(free(a), 0); // a to the holder
+  game.tap(free(b), 1); // the pair clears there
   const tilesAfterMatch = game.tilesLeft;
   assert.equal(game.score, 100);
 
@@ -115,7 +117,10 @@ test('undo restores the pair, the score and the selection', () => {
   assert.equal(game.score, 0);
   assert.equal(game.board.get(a).removed, false);
   assert.equal(game.board.get(b).removed, false);
-  assert.equal(game.selection, a, 'selection is restored to just before the match');
+  assert.equal(game.board.isHeld(a), true, 'the match came out of the holder, so undo returns there');
+  // Undoing the hold too puts the whole pair back on the board.
+  assert.equal(game.undo()?.kind, 'hold');
+  assert.equal(game.board.isHeld(a), false);
 });
 
 test('undo has unlimited depth and reports an empty stack', () => {
@@ -124,8 +129,9 @@ test('undo has unlimited depth and reports an empty stack', () => {
   const pairs = game.level.solution.length;
   playMoves(game, pairs);
   assert.equal(game.status(), 'won');
-  assert.equal(game.undoDepth, pairs);
-  for (let i = pairs; i > 0; i--) assert.notEqual(game.undo(), null, `undo #${pairs - i + 1}`);
+  const depth = pairs * 2; // a hold and a match per pair (issue #93)
+  assert.equal(game.undoDepth, depth);
+  for (let i = depth; i > 0; i--) assert.notEqual(game.undo(), null, `undo #${depth - i + 1}`);
   assert.equal(game.undoDepth, 0);
   assert.equal(game.tilesLeft, game.level.tiles.length);
   assert.equal(game.score, 0);
@@ -167,17 +173,10 @@ test('shuffle keeps occupancy and the face multiset, and stays solvable', () => 
   assert.equal(solve(after).verdict, 'solvable', 'spec §5: post-shuffle board is solvable');
 });
 
-test('shuffle clears the selection and is deterministic per seed', () => {
+test('shuffle is deterministic per seed', () => {
   const gameA = newGame();
   playMoves(gameA, 2);
-  gameA.tap(free(gameA.hint()![0]), 500);
-  assert.notEqual(gameA.selection, null);
   assert.equal(gameA.shuffle(777), true);
-  assert.equal(
-    gameA.selection,
-    null,
-    'the selected tile no longer holds the face it was picked for',
-  );
 
   const gameB = newGame();
   playMoves(gameB, 2);
