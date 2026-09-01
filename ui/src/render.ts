@@ -30,7 +30,18 @@ import {
   tileShade,
 } from './depth.js';
 import { faceStyle } from './faces.js';
-import { PIP_AREA, TAG_FONT_SIZE, TAG_ORIGIN, pipCenter, pipMetrics } from './pips.js';
+import {
+  PIP_AREA,
+  SEASON_GLYPH_POS,
+  SEASON_GLYPH_SIZE,
+  SEASON_NAME_POS,
+  SEASON_NAME_SIZE,
+  SEASON_SCATTER_SIZE,
+  TAG_FONT_SIZE,
+  TAG_ORIGIN,
+  pipCenter,
+  pipMetrics,
+} from './pips.js';
 import type { Game } from './game.js';
 import { SIDE_DEPTH, TILE_H, TILE_W, boardBounds, paintOrder, tileRect } from './geometry.js';
 import type { Rect } from './geometry.js';
@@ -421,6 +432,26 @@ export class BoardRenderer {
         }
       }
       node.addChild(pipG);
+    } else if (style.name) {
+      // Composed face (issue #75, decision 0012 — the Seasons): a large
+      // pictogram in the upper half, two small scattered companions, and the
+      // season name below. Identity is the composition, never the ink alone.
+      const makeText = (text: string, fontSize: number): Text =>
+        new Text({ text, style: { fontSize, fill: ink, fontFamily: 'sans-serif', fontWeight: 'bold' } });
+      const at = (t: Text, x: number, y: number, rotation = 0): Text => {
+        t.anchor.set(0.5);
+        t.position.set(r.x + PIP_AREA.x + x * PIP_AREA.w, r.y + PIP_AREA.y + y * PIP_AREA.h);
+        t.rotation = rotation;
+        return t;
+      };
+      // Sizes and anchor points are pips.ts geometry, bounds-tested there
+      // alongside the pip art (faces.test.ts sweeps the four seasons).
+      const gp = SEASON_GLYPH_POS;
+      node.addChild(at(makeText(style.glyph, SEASON_GLYPH_SIZE), gp.x, gp.y, style.rotation ?? 0));
+      for (const g of style.scatter ?? []) {
+        node.addChild(at(makeText(g.glyph, SEASON_SCATTER_SIZE), g.x, g.y, g.rotation ?? 0));
+      }
+      node.addChild(at(makeText(style.name, SEASON_NAME_SIZE), SEASON_NAME_POS.x, SEASON_NAME_POS.y));
     } else {
       const glyph = new Text({
         text: style.glyph,

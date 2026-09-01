@@ -125,6 +125,14 @@ function applySnapshot(level: GeneratedLevel, snapshot: GameSnapshot): Tile[] {
   for (const id of removed) {
     if (!tiles.some((t) => t.id === id)) throw new RangeError(`snapshot removes unknown tile ${id}`);
   }
+  // The Shuffle booster only permutes the deal's own faces, so every snapshot
+  // face must be one the deal contains. A face it does not — a save written
+  // before the tile set changed (issue #75 dropped `flower-*`) — makes the
+  // whole save untrustworthy, and reopen() turns this throw into a fresh deal.
+  const vocabulary = new Set(tiles.map((t) => t.face));
+  for (const face of snapshot.faces) {
+    if (!vocabulary.has(face)) throw new RangeError(`snapshot face ${face} is not in this deal`);
+  }
   return tiles.map((t, i) => ({ ...t, face: snapshot.faces[i]!, removed: removed.has(t.id) }));
 }
 

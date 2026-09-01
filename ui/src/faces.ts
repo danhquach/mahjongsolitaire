@@ -24,6 +24,16 @@ export interface Pip {
   readonly accent?: number;
 }
 
+/** A small companion glyph on a composed face (decision 0012), positioned in
+ *  the same unit face coordinates the pips use. */
+export interface ScatterGlyph {
+  readonly glyph: string;
+  readonly x: number;
+  readonly y: number;
+  /** Rotation in radians — Fall's leaves fall; everything else sits upright. */
+  readonly rotation?: number;
+}
+
 export interface FaceStyle {
   /** Large glyph drawn on the tile (used when `pips` is absent). */
   readonly glyph: string;
@@ -37,6 +47,12 @@ export interface FaceStyle {
   readonly pips?: readonly Pip[];
   /** How each pip is drawn: a split ring (Dots) or a capped cane (Bamboo). */
   readonly pipShape?: 'ring' | 'cane';
+  /** Composed face (decision 0012, Seasons): name text drawn under the glyph. */
+  readonly name?: string;
+  /** Composed face: two small companions scattered around the main glyph. */
+  readonly scatter?: readonly ScatterGlyph[];
+  /** Rotation of the main glyph in radians (Fall's ❧ tips ~24°). */
+  readonly rotation?: number;
 }
 
 const WIND_GLYPHS: Record<string, string> = { east: '東', south: '南', west: '西', north: '北' };
@@ -53,9 +69,58 @@ const SUIT_COLOR = {
   char: 0xb91c1c, // red
   wind: 0x334155, // slate
   dragon: 0x7e22ce, // purple
-  flower: 0xc2410c, // orange
-  season: 0x0e7490, // teal
 } as const;
+
+/**
+ * Season faces (issue #75, decision 0012): one composed design per season —
+ * a large pictogram, two small scattered companions, the season name, and the
+ * corner tag in the traditional 1–4 order. Every ink is reused from the proven
+ * palette so the ink set stays closed (fall's orange is the ink the removed
+ * Flower suit freed); identity is carried by shape, name and tag — never the
+ * color alone (spec §7).
+ */
+const SEASON_STYLE: Record<
+  string,
+  Pick<FaceStyle, 'glyph' | 'tag' | 'color' | 'scatter' | 'rotation'>
+> = {
+  spring: {
+    glyph: '❀',
+    tag: '1',
+    color: 0x1a6b52, // pine (shared with Bamboo)
+    scatter: [
+      { glyph: '❀', x: 0.18, y: 0.12 },
+      { glyph: '❀', x: 0.84, y: 0.5 },
+    ],
+  },
+  summer: {
+    glyph: '☀',
+    tag: '2',
+    color: 0xb91c1c, // red (shared with Characters)
+    scatter: [
+      { glyph: '✦', x: 0.16, y: 0.5 },
+      { glyph: '✦', x: 0.84, y: 0.14 },
+    ],
+  },
+  fall: {
+    glyph: '❧',
+    tag: '3',
+    color: 0xc2410c, // orange (freed by the Flower removal)
+    rotation: 0.42, // ~24°: the leaf tips over
+    scatter: [
+      { glyph: '❧', x: 0.2, y: 0.14, rotation: 0.9 },
+      { glyph: '❧', x: 0.82, y: 0.52, rotation: 1.4 },
+    ],
+  },
+  winter: {
+    glyph: '❄',
+    tag: '4',
+    color: 0x0e7490, // teal (the old Season ink)
+    scatter: [
+      { glyph: '❅', x: 0.17, y: 0.13 },
+      { glyph: '❆', x: 0.83, y: 0.5 },
+    ],
+  },
+};
 
 /** The two traditional banding accents, reused from the suit palette so the
  *  ink set stays closed — no colour on a tile that is not already proven. */
@@ -64,6 +129,11 @@ const ACCENT_GREEN = SUIT_COLOR.bamboo;
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** Fallback for a face id nothing recognizes (also an unknown season). */
+function unknownFace(face: string): FaceStyle {
+  return { glyph: '?', tag: face, color: 0x000000, label: face };
 }
 
 /**
@@ -218,11 +288,12 @@ export function faceStyle(face: string): FaceStyle {
         color: SUIT_COLOR.dragon,
         label: `${capitalize(value)} Dragon`,
       };
-    case 'flower':
-      return { glyph: '✿', tag: value, color: SUIT_COLOR.flower, label: `Flower ${value}` };
-    case 'season':
-      return { glyph: '❋', tag: value, color: SUIT_COLOR.season, label: `Season ${value}` };
+    case 'season': {
+      const season = SEASON_STYLE[value];
+      if (!season) return unknownFace(face);
+      return { ...season, label: `Season ${capitalize(value)}`, name: capitalize(value) };
+    }
     default:
-      return { glyph: '?', tag: face, color: 0x000000, label: face };
+      return unknownFace(face);
   }
 }

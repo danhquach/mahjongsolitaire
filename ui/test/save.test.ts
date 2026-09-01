@@ -514,6 +514,18 @@ test('reopen refuses a save that does not belong to this deal', () => {
     snapshot: { ...save.snapshot, stack: { ...save.snapshot.stack, selection: save.snapshot.removed[0]! } },
   };
   assert.equal(reopen(TURTLE, buried), null);
+
+  // A face this deal does not contain — a save written before the tile set
+  // changed (issue #75 removed `flower-*`; decision 0012 calls this a
+  // discarded save, not a board of unknown tiles).
+  const staleFaces: SaveState = {
+    ...save,
+    snapshot: {
+      ...save.snapshot,
+      faces: ['flower-1', ...save.snapshot.faces.slice(1)],
+    },
+  };
+  assert.equal(reopen(TURTLE, staleFaces), null);
 });
 
 test('clear removes the save, so the next boot deals a fresh level', () => {

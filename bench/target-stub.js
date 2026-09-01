@@ -70,19 +70,18 @@ function buildSlots() {
 const SLOTS = buildSlots();
 
 // --- tile faces ------------------------------------------------------------
-// 34 standard faces x 4 copies (68 pairs) + 4 flowers (2 pairs) + 4 seasons
-// (2 pairs) = 144 tiles / 72 pairs. Matching is identical-face only (spec
-// §3.3 as amended by decision 0005); flower/season classes here stand in for
-// the two identical-copy faces each — pair counts and perf are unchanged.
+// 34 standard faces x 4 copies (68 pairs) + 4 seasons x 2 copies (4 pairs)
+// = 144 tiles / 72 pairs. Matching is identical-face only (spec §3.3 as
+// amended by decision 0005); the four season classes (decision 0012) carry
+// one pair each — pair counts and perf are unchanged.
 
 const FACE_STANDARD_COUNT = 34; // face classes 0..33
-const FACE_FLOWER = 34;
-const FACE_SEASON = 35;
+const FACE_SEASON_BASE = 34; // season classes 34..37, one pair each
 
 function buildPairInventory(rnd) {
   const pairs = [];
   for (let f = 0; f < FACE_STANDARD_COUNT; f++) pairs.push(f, f);
-  pairs.push(FACE_FLOWER, FACE_FLOWER, FACE_SEASON, FACE_SEASON);
+  for (let s = 0; s < 4; s++) pairs.push(FACE_SEASON_BASE + s);
   // Fisher–Yates
   for (let i = pairs.length - 1; i > 0; i--) {
     const j = Math.floor(rnd() * (i + 1));

@@ -1,7 +1,7 @@
 // Match rules (issue #6, spec §3.3–3.4, §11.1): identical-face match for ALL
-// tiles — Flowers/Seasons included (wildcards removed by PM decision 0005,
-// 2026-08-30) — self-match rejection, non-free rejection, and the standard
-// 144 tile set.
+// tiles — Seasons included (wildcards removed by PM decision 0005, 2026-08-30;
+// Flowers replaced by four Seasons per decision 0012) — self-match rejection,
+// non-free rejection, and the standard 144 tile set.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,14 +36,13 @@ test('winds and dragons require exact face', () => {
   assert.equal(facesMatch('dragon-red', 'dragon-green'), false);
 });
 
-// --- facesMatch: Flowers/Seasons are exact-match too (no wildcards) -----------
+// --- facesMatch: Seasons are exact-match too (no wildcards, decision 0012) ----
 
-test('Flowers and Seasons match only their identical face', () => {
-  assert.equal(facesMatch('flower-1', 'flower-1'), true);
-  assert.equal(facesMatch('season-2', 'season-2'), true);
-  assert.equal(facesMatch('flower-1', 'flower-2'), false);
-  assert.equal(facesMatch('season-1', 'season-2'), false);
-  assert.equal(facesMatch('flower-1', 'season-1'), false);
+test('Seasons match only their identical face', () => {
+  assert.equal(facesMatch('season-spring', 'season-spring'), true);
+  assert.equal(facesMatch('season-winter', 'season-winter'), true);
+  assert.equal(facesMatch('season-spring', 'season-summer'), false);
+  assert.equal(facesMatch('season-fall', 'season-winter'), false);
 });
 
 // --- standard 144 tile set (spec §3.4) ----------------------------------------
@@ -56,16 +55,16 @@ test('standard set has 144 faces with spec §3.4 composition', () => {
   assert.equal(count('char-'), 36);
   assert.equal(count('wind-'), 16);
   assert.equal(count('dragon-'), 12);
-  assert.equal(count('flower-'), 4);
-  assert.equal(count('season-'), 4);
+  assert.equal(count('season-'), 8);
+  assert.equal(count('flower-'), 0);
 });
 
-test('flowers and seasons come as identical duplicates (2×2 each)', () => {
+test('the four seasons come as identical duplicates (4×2, decision 0012)', () => {
   const count = (face: string) => STANDARD_144.filter((f) => f === face).length;
-  assert.equal(count('flower-1'), 2);
-  assert.equal(count('flower-2'), 2);
-  assert.equal(count('season-1'), 2);
-  assert.equal(count('season-2'), 2);
+  assert.equal(count('season-spring'), 2);
+  assert.equal(count('season-summer'), 2);
+  assert.equal(count('season-fall'), 2);
+  assert.equal(count('season-winter'), 2);
 });
 
 test('standard set has an even count per face (identical-only matching)', () => {
@@ -120,10 +119,10 @@ test('removed tile is rejected', () => {
   assert.deepEqual(canMatch(b, 0, 2), { ok: false, reason: 'not-free' });
 });
 
-test('identical Flower pair matches on the board; different Flowers do not', () => {
-  const same = fixture(['flower-1', 'bamboo-1', 'flower-1', 'char-9']);
+test('identical Season pair matches on the board; different Seasons do not', () => {
+  const same = fixture(['season-spring', 'bamboo-1', 'season-spring', 'char-9']);
   assert.deepEqual(canMatch(same, 0, 2), { ok: true });
-  const different = fixture(['flower-1', 'bamboo-1', 'flower-2', 'char-9']);
+  const different = fixture(['season-spring', 'bamboo-1', 'season-fall', 'char-9']);
   assert.deepEqual(canMatch(different, 0, 2), { ok: false, reason: 'face-mismatch' });
 });
 
