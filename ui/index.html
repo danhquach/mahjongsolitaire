@@ -520,7 +520,8 @@
          scrolls rather than overflowing a small phone in landscape. */
       #settings,
       #changelog,
-      #profile {
+      #profile,
+      #welcome {
         position: absolute;
         inset: 0;
         display: none;
@@ -530,12 +531,14 @@
       }
       #settings.visible,
       #changelog.visible,
-      #profile.visible {
+      #profile.visible,
+      #welcome.visible {
         display: flex;
       }
       #settings .card,
       #changelog .card,
-      #profile .card {
+      #profile .card,
+      #welcome .card {
         background: #f0fdf4;
         color: #14532d;
         border-radius: 12px;
@@ -548,7 +551,8 @@
       }
       #settings h2,
       #changelog h2,
-      #profile h2 {
+      #profile h2,
+      #welcome h2 {
         margin: 0 0 12px;
         font-size: 24px;
       }
@@ -609,7 +613,8 @@
       }
       #settings .card > button,
       #changelog .card > button,
-      #profile .card > button {
+      #profile .card > button,
+      #welcome .card > button {
         margin-top: 16px;
         width: 100%;
         font-size: 18px;
@@ -936,6 +941,17 @@
               <!-- Filled from the bundled CHANGELOG.md by main.ts (issue #81). -->
               <div id="changelog-body"></div>
               <button id="changelog-close" type="button">Done</button>
+            </div>
+          </div>
+          <!-- First-launch gate (issue #105): the player picks an identity —
+               named profile or guest — before playing. No close button, no
+               Escape, no backdrop dismiss: a choice is required, once. -->
+          <div id="welcome" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+            <div class="card">
+              <h2 id="welcome-title">Welcome!</h2>
+              <p>Set up a profile so the game knows who's playing, or jump straight in as a guest.</p>
+              <button id="welcome-create" type="button">Create profile</button>
+              <button id="welcome-guest" type="button">Play as guest</button>
             </div>
           </div>
           <div id="settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">

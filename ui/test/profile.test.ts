@@ -91,10 +91,12 @@ test('parseProfile: a bad field falls back, a bad record starts fresh', () => {
   assert.deepEqual(parseProfile({ name: 42, avatar: 'dragon' }), {
     name: DEFAULT_NAME,
     avatar: 'dragon',
+    choice: null,
   });
   assert.deepEqual(parseProfile({ name: 'Dan', avatar: 'not-shipped' }), {
     name: 'Dan',
     avatar: DEFAULT_AVATAR_ID,
+    choice: null,
   });
   // A hand-edited stored name goes through the same sanitizer as typed input.
   assert.equal(parseProfile({ name: `  ${'y'.repeat(99)}` }).name, 'y'.repeat(NAME_MAX_LENGTH));
@@ -133,6 +135,36 @@ test('a storage that throws still yields a working in-memory profile', () => {
   assert.equal(store.setName('Dan'), 'Dan');
   assert.equal(store.value.name, 'Dan');
   assert.equal(store.setAvatar('koi'), true);
+});
+
+// --- the welcome-gate choice (issue #105) -----------------------------------------
+
+test('parseProfile: only a real choice is kept — anything else means never asked', () => {
+  assert.equal(parseProfile({ choice: 'guest' }).choice, 'guest');
+  assert.equal(parseProfile({ choice: 'named' }).choice, 'named');
+  assert.equal(parseProfile({ choice: 'admin' }).choice, null);
+  assert.equal(parseProfile({ choice: true }).choice, null);
+  // A profile stored before issue #105 has no choice field: asked once.
+  assert.equal(parseProfile({ name: 'Dan', avatar: 'moon' }).choice, null);
+});
+
+test('setChoice persists across a reload and re-setting it writes nothing', () => {
+  const storage = fakeStorage();
+  const store = new ProfileStore(storage);
+  store.setChoice('guest');
+  assert.equal(store.value.choice, 'guest');
+  assert.equal(new ProfileStore(storage).value.choice, 'guest');
+  storage.data.clear();
+  store.setChoice('guest'); // unchanged — must not write
+  assert.equal(storage.data.has(PROFILE_STORAGE_KEY), false);
+  store.setChoice('named'); // a changed answer is stored
+  assert.equal(new ProfileStore(storage).value.choice, 'named');
+});
+
+test('setChoice keeps working when storage throws', () => {
+  const store = new ProfileStore(throwingStorage);
+  store.setChoice('guest');
+  assert.equal(store.value.choice, 'guest');
 });
 
 // --- the record --------------------------------------------------------------------

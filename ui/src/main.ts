@@ -144,6 +144,7 @@ async function start(): Promise<void> {
   const changelogPanel = el<HTMLDivElement>('changelog');
   const changelogBody = el<HTMLDivElement>('changelog-body');
   const changelogClose = el<HTMLButtonElement>('changelog-close');
+  const welcomePanel = el<HTMLDivElement>('welcome');
   const profilePanel = el<HTMLDivElement>('profile');
   const profileButton = el<HTMLButtonElement>('btn-profile');
   const profileClose = el<HTMLButtonElement>('profile-close');
@@ -282,6 +283,7 @@ async function start(): Promise<void> {
   let settingsVisible = false;
   let changelogVisible = false;
   let profileVisible = false;
+  let welcomeVisible = false;
   /** Tiles the last Hint pointed at — highlighted until the board changes. */
   let hintPair: readonly TileId[] = [];
   /** Shuffles taken on this deal; feeds the shuffle seed so a given
@@ -618,7 +620,8 @@ async function start(): Promise<void> {
   }
 
   function openSettings(): void {
-    if (settingsVisible || overlayVisible || changelogVisible || profileVisible) return;
+    if (settingsVisible || overlayVisible || changelogVisible || profileVisible || welcomeVisible)
+      return;
     syncSettingsControls();
     settingsVisible = true;
     settingsPanel.classList.add('visible');
@@ -740,6 +743,39 @@ async function start(): Promise<void> {
     profilePanel.classList.remove('visible');
     setBackgroundInert(false);
     settingsButton.focus();
+  }
+
+  // --- welcome gate (issue #105) -------------------------------------------------
+
+  /** First launch only: the player picks an identity before playing. Required
+   *  — no Escape, no backdrop dismiss — so it never re-opens once answered. */
+  function openWelcome(): void {
+    welcomeVisible = true;
+    welcomePanel.classList.add('visible');
+    setBackgroundInert(true);
+    el<HTMLButtonElement>('welcome-create').focus();
+    announcer.say('Welcome. Create a profile, or play as a guest.');
+  }
+
+  function closeWelcome(): void {
+    if (!welcomeVisible) return;
+    welcomeVisible = false;
+    welcomePanel.classList.remove('visible');
+    setBackgroundInert(false);
+  }
+
+  function wireWelcome(): void {
+    el<HTMLButtonElement>('welcome-create').addEventListener('click', () => {
+      profile.setChoice('named');
+      closeWelcome();
+      openProfile();
+    });
+    el<HTMLButtonElement>('welcome-guest').addEventListener('click', () => {
+      profile.setChoice('guest');
+      closeWelcome();
+      settingsButton.focus();
+      announcer.say('Playing as guest.');
+    });
   }
 
   function wireProfile(): void {
@@ -1221,6 +1257,7 @@ async function start(): Promise<void> {
 
   wireSettings();
   wireProfile();
+  wireWelcome();
   applyMotionPreference();
   el<HTMLElement>('version').textContent = versionLabel(
     __APP_VERSION__,
@@ -1268,6 +1305,10 @@ async function start(): Promise<void> {
   } else {
     persist(); // a fresh deal is savable from its first frame
   }
+
+  // Never asked who's playing (issue #105): ask now, over the dealt board.
+  // The stored answer — named or guest — means this shows at most once.
+  if (profile.value.choice === null) openWelcome();
 
   // Debug handle for scripted end-to-end QA (Playwright drives real pointer
   // events through it — see ui/qa/). Read-only accessors; harmless in a
