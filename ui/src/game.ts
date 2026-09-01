@@ -18,8 +18,19 @@
 // to reach what is under it. It is always available (PM decision 2026-08-31),
 // so it is not a charged booster — but it *is* a move, and every core primitive
 // here already accounts for it: a held tile is matchable, so `hint` and the
-// stuck check see holder pairs, and `useHolder` is one control whose meaning
-// follows the selection (park a board tile, or return a parked one).
+// stuck check see holder pairs.
+//
+// Issue #62 moves parking onto the board itself and retires the rail control.
+// Two rules, both living in `tapBoard`:
+//   * a second activation of the already-selected free tile parks it, and
+//   * one tap on a board tile that matches something in the holder clears that
+//     pair outright, instead of only selecting.
+// The first rule takes over the gesture that used to deselect, so deselecting
+// moves to a tap on empty board (or Escape — main.ts). Note what it is *not*:
+// there is no timing window and no `dblclick`, so this is "activate the tile you
+// already picked", which a keyboard or screen reader reaches with two ordinary
+// activations. Spec §7's "no double-tap … requirements for core play" therefore
+// still holds — see the spec amendment on §3.3.
 
 import {
   Board,
@@ -50,6 +61,12 @@ export type TapOutcome =
   | { readonly kind: 'mismatch'; readonly a: TileId; readonly b: TileId }
   | { readonly kind: 'blocked'; readonly id: TileId }
   | { readonly kind: 'selection-cleared' }
+  /** Issue #62: the selected free tile was parked by activating it again. */
+  | { readonly kind: 'held'; readonly id: TileId; readonly slot: number }
+  /** …and the same activation with every slot taken. Nothing changed: a full
+   *  holder refuses the park rather than ending the level (issue #43 rule 5),
+   *  so the tile stays selected and playable. */
+  | { readonly kind: 'holder-full'; readonly id: TileId }
   | { readonly kind: 'none' };
 
 /** A pair of tile ids the Hint booster is pointing at. */
@@ -70,17 +87,6 @@ export interface GameSnapshot {
   readonly holder: readonly (TileId | null)[];
   readonly stack: MoveStackState;
 }
-
-/** What the Hold control does on the current selection (issue #43). One button
- *  covers both directions: rule 2 parks a free tile, rule 4 takes it back. */
-export type HolderAction = 'hold' | 'return' | 'full' | 'none';
-
-export type HoldOutcome =
-  | { readonly kind: 'held'; readonly id: TileId; readonly slot: number }
-  | { readonly kind: 'returned'; readonly id: TileId }
-  /** Rule 5: a full holder refuses the move. It never ends the level. */
-  | { readonly kind: 'full' }
-  | { readonly kind: 'none' };
 
 /**
  * The deal's tiles with a snapshot's faces and removed flags applied. Faces are
@@ -221,50 +227,46 @@ export class Game {
   // --- holder (issue #43) -----------------------------------------------------
 
   /**
-   * What the Hold control would do right now. One button covers both
-   * directions, because the selection already says which one the player means:
-   * a free board tile is parked, a parked tile is returned.
+   * Park the selected free tile (issue #62 rule 1). Nothing can fail
+   * destructively: a full holder refuses and leaves the game exactly as it was,
+   * selection included, so the player can play the tile instead.
    */
-  holderAction(): HolderAction {
-    const selected = this.stack.selection;
-    if (selected === null) return 'none';
-    if (this.board.isHeld(selected)) return 'return';
-    return this.board.holderFull() ? 'full' : 'hold';
+  private park(id: TileId, nowMs: number): TapOutcome {
+    const slot = this.stack.hold(id, nowMs);
+    if (slot === null) return { kind: 'holder-full', id };
+    this.forgetHints(); // the board changed: the cycled pairs are stale
+    return { kind: 'held', id, slot };
   }
 
   /**
-   * Run the Hold control on the current selection. Nothing is charged and
-   * nothing can fail destructively: a full holder and an empty selection both
-   * report back and leave the game exactly as it was (issue #43 rule 5).
+   * The held tile a board tile would clear against (issue #62 rule 2), or null.
+   * Slot order rather than id order: with two identical faces parked, the pair
+   * that vanishes should be the one the player reads first in the strip.
    */
-  useHolder(nowMs: number): HoldOutcome {
-    const selected = this.stack.selection;
-    switch (this.holderAction()) {
-      case 'hold': {
-        const slot = this.stack.hold(selected!, nowMs);
-        if (slot === null) return { kind: 'full' };
-        this.forgetHints(); // the board changed: the cycled pairs are stale
-        return { kind: 'held', id: selected!, slot };
-      }
-      case 'return':
-        this.stack.unhold(selected!, nowMs);
-        this.forgetHints();
-        return { kind: 'returned', id: selected! };
-      case 'full':
-        return { kind: 'full' };
-      case 'none':
-        return { kind: 'none' };
+  private holderPartner(id: TileId): TileId | null {
+    const face = this.board.get(id).face;
+    for (const held of this.board.holderSlots()) {
+      if (held === null || held === id) continue;
+      if (this.board.get(held).face === face) return held;
     }
+    return null;
   }
 
   /**
-   * Tap on a tile in the holder. Same semantics as a tap on a free board tile —
-   * select, deselect, match — because a held tile is matchable; the holder just
-   * reaches it through its own control instead of the canvas hit test.
+   * Tap on a tile in the holder. Select, deselect, match — a held tile is
+   * matchable, so this is the board's own tap rule minus the two board-only
+   * moves: a parked tile cannot be parked again, and rule 2's one-tap clear is
+   * about reaching *into* the holder from the board, so two held tiles still
+   * pair the ordinary way.
    */
   tapHeld(id: TileId, nowMs: number): TapOutcome {
     if (!this.board.isHeld(id)) return { kind: 'none' };
-    return this.tapPlayable(id, nowMs);
+    const selected = this.stack.selection;
+    if (selected === id) {
+      this.stack.clearSelection();
+      return { kind: 'deselected', id };
+    }
+    return this.pairOrSelect(selected, id, nowMs);
   }
 
   /**
@@ -327,30 +329,47 @@ export class Game {
         // Keep any selection — a stray tap on a buried tile shouldn't cost it.
         return { kind: 'blocked', id: hit.id };
       case 'free':
-        return this.tapPlayable(hit.id, nowMs);
+        return this.tapBoard(hit.id, nowMs);
     }
   }
 
-  /** Select / deselect / match on a matchable tile — free on the board, or in
-   *  the holder (issue #43). Shared by both input paths. */
-  private tapPlayable(id: TileId, nowMs: number): TapOutcome {
+  /**
+   * Tap on a free board tile (issue #62). In order:
+   *
+   * 1. the tile is already selected → park it (rule 1);
+   * 2. it completes the pair the player selected → match, as always;
+   * 3. it matches something in the holder → clear that pair on this one tap
+   *    (rule 2). Deliberately *after* the player's own selection: an explicit
+   *    pick outranks a partner they may have parked several moves ago;
+   * 4. otherwise select, or mismatch against the current selection.
+   */
+  private tapBoard(id: TileId, nowMs: number): TapOutcome {
     const selected = this.stack.selection;
+    if (selected === id) return this.park(id, nowMs);
+    if (selected !== null && canMatch(this.board, selected, id).ok) {
+      return this.playPair(selected, id, nowMs);
+    }
+    const partner = this.holderPartner(id);
+    if (partner !== null) return this.playPair(partner, id, nowMs);
+    return this.pairOrSelect(selected, id, nowMs);
+  }
+
+  /** The tail both tap paths share: match the selection, else select / mismatch. */
+  private pairOrSelect(selected: TileId | null, id: TileId, nowMs: number): TapOutcome {
     if (selected === null) {
       this.stack.select(id);
       return { kind: 'selected', id };
     }
-    if (selected === id) {
-      this.stack.clearSelection();
-      return { kind: 'deselected', id };
-    }
-    if (canMatch(this.board, selected, id).ok) {
-      const score = this.stack.play(selected, id, nowMs);
-      this.forgetHints(); // the board changed: the cycled pairs are stale
-      return { kind: 'matched', a: selected, b: id, score };
-    }
+    if (canMatch(this.board, selected, id).ok) return this.playPair(selected, id, nowMs);
     // Face mismatch: combo breaks (§6), selection moves to the new tile.
     this.scores.recordMismatch();
     this.stack.select(id);
     return { kind: 'mismatch', a: selected, b: id };
+  }
+
+  private playPair(a: TileId, b: TileId, nowMs: number): TapOutcome {
+    const score = this.stack.play(a, b, nowMs);
+    this.forgetHints(); // the board changed: the cycled pairs are stale
+    return { kind: 'matched', a, b, score };
   }
 }

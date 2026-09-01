@@ -217,7 +217,9 @@ for (const vp of VIEWPORTS) {
       await page.mouse.click(s.x, s.y);
       const hit = await page.evaluate(() => window.__slice.game.selection);
       check(hit === s.id, 'pointer tap at a focus proxy centre hits that tile', { want: s.id, hit });
-      await page.mouse.click(s.x, s.y); // deselect, leave the board untouched
+      // Deselect. A second tap on the same tile parks it now (issue #62), so
+      // the way to leave the board untouched is Escape.
+      await page.keyboard.press('Escape');
     }
   }
 
@@ -260,7 +262,7 @@ for (const vp of VIEWPORTS) {
     );
     check(
       controls.map((c) => c.name).join('|') ===
-        'New game|Restart|Settings|Hint|Undo|Hold|Shuffle',
+        'New game|Restart|Settings|Hint|Undo|Shuffle',
       'board screen exposes the complete slice action set',
       controls,
     );
@@ -298,28 +300,70 @@ for (const vp of VIEWPORTS) {
     );
     check(empty.small === 0, `every holder slot is ≥ ${MIN_TOUCH_TARGET}dp`, empty);
 
-    // Park a tile through the real control and re-audit the filled slot.
-    const parked = await page.evaluate(() => {
+    // Park a tile with the keyboard alone (issue #62): focus its node, Enter to
+    // select, Enter again to park. Real key presses, not synthesised clicks —
+    // the point is that the browser's own key-to-activation step reaches the
+    // gesture, because parking has no rail control to fall back on any more.
+    const chosen = await page.evaluate(() => {
       const b = window.__slice.game.board;
-      const id = b.freeTileIds()[0];
-      document.querySelector(`#a11y-layer [data-tile-id="${id}"]`).click();
-      // Read the control's name while the tile is selected and before the
-      // press: after it, the selection is gone and so is the "Hold" reading.
-      const holdLabel = document.getElementById('btn-hold').getAttribute('aria-label');
-      document.getElementById('btn-hold').click();
-      const slot = document.querySelector(`#holder [data-tile-id="${id}"]`);
+      const free = b.freeTileIds();
+      const byFace = {};
+      for (const id of free) (byFace[b.get(id).face] ??= []).push(id);
+      for (const id of free) {
+        const partner = (byFace[b.get(id).face] ?? []).find((x) => x !== id);
+        if (partner !== undefined) return { id, partner };
+      }
+      return null;
+    });
+    check(chosen !== null, 'the deal has a free pair to park from', chosen);
+    check(
+      await page.evaluate(() => document.getElementById('btn-hold') === null),
+      'the rail carries no Hold control (issue #62)',
+      null,
+    );
+
+    const focusedTile = await page.evaluate((t) => {
+      const node = document.querySelector(`#a11y-layer [data-tile-id="${t.id}"]`);
+      node.focus();
+      return document.activeElement === node;
+    }, chosen);
+    check(focusedTile, 'a tile node takes keyboard focus', { focusedTile });
+    await page.keyboard.press('Enter');
+    const selected = await page.evaluate(
+      (t) => ({
+        label: document
+          .querySelector(`#a11y-layer [data-tile-id="${t.id}"]`)
+          ?.getAttribute('aria-label'),
+        pressed: document
+          .querySelector(`#a11y-layer [data-tile-id="${t.id}"]`)
+          ?.getAttribute('aria-pressed'),
+        selection: window.__slice.selection,
+      }),
+      chosen,
+    );
+    check(selected.selection === chosen.id, 'Enter selects the tile', selected);
+    check(selected.pressed === 'true', 'and the node reads as pressed', selected);
+    check(
+      /activate again to park it in the holder/i.test(selected.label ?? ''),
+      'and its name spells out the park action — the explicit a11y path',
+      selected,
+    );
+
+    await page.keyboard.press('Enter');
+    const parked = await page.evaluate((t) => {
+      const slot = document.querySelector(`#holder [data-tile-id="${t.id}"]`);
       const r = slot?.getBoundingClientRect();
       return {
-        id,
         group: document.getElementById('holder').getAttribute('aria-label'),
         label: slot?.getAttribute('aria-label') ?? null,
         pressed: slot?.getAttribute('aria-pressed'),
         disabled: slot?.disabled,
         big: r ? r.width >= 48 && r.height >= 48 : false,
-        holdLabel,
         said: document.getElementById('a11y-status').textContent,
+        slots: window.__slice.holder().slots,
       };
-    });
+    }, chosen);
+    check(parked.slots[0] === chosen.id, 'a second Enter parks it', parked);
     check(/1 of 4 slots used/.test(parked.group ?? ''), 'the group recounts', parked);
     check(
       parked.label !== null && /, in holder slot 1$/.test(parked.label),
@@ -330,48 +374,40 @@ for (const vp of VIEWPORTS) {
       'and is a live, unpressed target', parked);
     check(parked.big, `and is ≥ ${MIN_TOUCH_TARGET}dp`, parked);
     check(/held in slot 1/.test(parked.said ?? ''), 'the hold is announced', parked.said);
-    check(/hold, park the selected tile/i.test(parked.holdLabel ?? ''),
-      'and Hold named its job before the press', parked);
 
-    // Keyboard alone: focus the slot, activate it with a real Enter — not a
-    // synthesised click, which would skip the browser's own key-to-activation
-    // step and prove nothing about the keyboard — and the control flips to
-    // Return. The whole holder loop without a pointer.
-    const focused = await page.evaluate(() => {
-      const slot = document.querySelector('#holder .slot.filled');
-      slot.focus();
-      return document.activeElement === slot;
-    });
-    check(focused, 'a filled slot takes keyboard focus', { focused });
+    // The one-tap clear, by keyboard: Enter on the partner takes the pair.
+    const cleared = await page.evaluate((t) => {
+      const node = document.querySelector(`#a11y-layer [data-tile-id="${t.partner}"]`);
+      node.focus();
+      return document.activeElement === node;
+    }, chosen);
+    check(cleared, 'the partner takes focus', { cleared });
     await page.keyboard.press('Enter');
-    const byKeyboard = await page.evaluate(() => ({
-      action: window.__slice.holder().action,
-      holdLabel: document.getElementById('btn-hold').getAttribute('aria-label'),
-      pressed: document.querySelector('#holder .slot.filled')?.getAttribute('aria-pressed'),
+    const afterClear = await page.evaluate(() => ({
+      slots: window.__slice.holder().slots,
+      filled: [...document.querySelectorAll('#holder .slot.filled')].length,
+      said: document.getElementById('a11y-status').textContent,
     }));
-    check(
-      byKeyboard.action === 'return' && /return/i.test(byKeyboard.holdLabel ?? ''),
-      'Enter on the slot selects it and turns Hold into Return',
-      byKeyboard,
-    );
-    check(byKeyboard.pressed === 'true', 'and the slot reads as pressed', byKeyboard);
+    check(afterClear.slots[0] === null, 'one Enter clears the pair against the holder', afterClear);
+    check(afterClear.filled === 0, 'and the strip empties', afterClear);
+    check(/pair matched/i.test(afterClear.said ?? ''), 'and it is announced', afterClear);
 
-    // Returning the tile puts an id the board layer has not seen back into
-    // traversal order, which rebuilds every tile node. The board's single tab
-    // stop has to survive that — it is the player's place on a 144-tile board.
-    const afterReturn = await page.evaluate(() => {
+    // Undo puts ids the board layer has not seen back into traversal order,
+    // which rebuilds every tile node. The board's single tab stop has to
+    // survive that — it is the player's place on a 144-tile board.
+    const afterUndo = await page.evaluate(() => {
       const board = document.querySelector('#a11y-layer .tile-node[tabindex="0"]');
       board.focus();
       const before = board.dataset.tileId;
-      document.getElementById('btn-hold').click(); // return the held tile
+      document.getElementById('btn-undo').click();
       const stops = [...document.querySelectorAll('#a11y-layer .tile-node[tabindex="0"]')];
       return { before, after: stops[0]?.dataset.tileId ?? null, stopCount: stops.length };
     });
-    check(afterReturn.stopCount === 1, 'the board keeps exactly one tab stop', afterReturn);
+    check(afterUndo.stopCount === 1, 'the board keeps exactly one tab stop', afterUndo);
     check(
-      afterReturn.after === afterReturn.before,
-      'and it stays on the tile it was on across a return',
-      afterReturn,
+      afterUndo.after === afterUndo.before,
+      'and it stays on the tile it was on across an undo',
+      afterUndo,
     );
 
     // Leave the board as it was found.
@@ -465,7 +501,7 @@ for (const vp of VIEWPORTS) {
       c,
     );
     check(pressed === 'true', 'selected tile reports aria-pressed=true', pressed);
-    await page.keyboard.press('Enter'); // deselect, leave the board clean
+    await page.keyboard.press('Escape'); // deselect (issue #62), board untouched
 
     // A face mismatch is announced too — otherwise nothing tells a screen
     // reader user why the board did not change.
@@ -488,7 +524,7 @@ for (const vp of VIEWPORTS) {
       const said = await page.evaluate(() => document.getElementById('a11y-status').textContent);
       check(/ do not match\./.test(said), 'face mismatch is announced', said);
       // The mismatch leaves the second tile selected (spec §6); clear it.
-      await page.keyboard.press('Enter');
+      await page.keyboard.press('Escape');
     }
 
     // A blocked tile is announced, never silently ignored.

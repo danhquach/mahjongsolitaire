@@ -97,7 +97,18 @@ states: on the board, held, removed.
 - Tap tile A (selected, highlighted), tap tile B.
 - If A ≠ B, both **matchable** (free on the board, or held — decision 0008), and `match(A.face, B.face)` → remove both, award score.
 - Otherwise deselect / reselect.
-- Tapping the selected tile deselects it.
+- **Tapping the selected tile parks it in the holder** *(amended by issue #62 —
+  it used to deselect)*. Deselecting is a tap on empty board, or Escape.
+- **A tap on a board tile whose face is in the holder clears that pair at once**
+  *(issue #62)*: one tap, both tiles gone, the slot freed. An explicit selection
+  still wins — if the tapped tile completes the pair the player picked, that is
+  the pair played.
+- Both rules are board-only: a tile already in the holder cannot be parked
+  again, and two held tiles pair the ordinary two-tap way.
+- Note for §7: parking is **not** a double-tap gesture. There is no timing
+  window and no `dblclick` — it is "activate the tile you already selected", so
+  a keyboard or screen-reader player reaches it with two ordinary activations,
+  and a selected tile's accessible name says so.
 
 **Match rule** *(amended by decision 0005, PM 2026-08-30 — wildcard groups removed)*:
 - **Identical face match for ALL tiles**, Flowers and Seasons included (Dots, Bamboo, Characters 1–9 ×4, Winds ×4, Dragons ×3, Flowers ×2 per face, Seasons ×2 per face).
@@ -144,9 +155,9 @@ Naïve random dealing produces unsolvable boards. Use **reverse construction**:
 | **Hint** | Highlights one valid free pair; cycles through pairs on repeat taps | Costs 1 charge; no penalty to score in casual mode |
 | **Undo** | Restores the last removed pair (full move stack, unlimited depth) | 1 charge per undo; must restore selection state and score |
 | **Shuffle** | Re-randomizes faces of the tiles still *on the board*, preserving slot occupancy | Must re-run solvability check; regenerate if unsolvable. Held tiles keep their faces (decision 0008) |
-| **Hold** | Parks the selected free tile in the holder, or returns the selected held tile to the board | **Not a charged booster** (decision 0008): free and always available. Refused only when the holder is full. Hold, unhold and holder-match are undoable moves |
+| **Hold** | *Retired as a rail control by issue #62* — parking is a board gesture (§3.3): activate the selected free tile again | **Not a charged booster** (decision 0008): free and always available. Refused only when the holder is full. Hold and holder-match are undoable moves |
 
-Starting grant: 5 of each of the three charged boosters; Hold has no balance. Replenishment: daily login grant, level milestones, rewarded video, IAP bundle.
+Starting grant: 5 of each of the three charged boosters; the holder has no balance. Replenishment: daily login grant, level milestones, rewarded video, IAP bundle.
 
 ---
 

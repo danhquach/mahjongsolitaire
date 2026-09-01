@@ -51,6 +51,20 @@ test('tile label names the face, its availability, and a locating row/column', (
   );
 });
 
+test('a selected free tile spells out the park action (issue #62)', () => {
+  // Parking is a board move now, not a rail control: a screen-reader player has
+  // to be told that activating the tile again parks it.
+  assert.equal(
+    tileAriaLabel(t(0, 0, 0, 0, 'bamboo-3'), true),
+    'Bamboo 3, available, row 1, column 1, selected, activate again to park it in the holder',
+  );
+  // A blocked tile cannot be selected, so it never offers the action.
+  assert.equal(
+    tileAriaLabel(t(1, 0, 0, 0, 'bamboo-3', false), true),
+    'Bamboo 3, blocked, row 1, column 1',
+  );
+});
+
 test('tile label rounds half-unit offsets to the nearest whole row/column', () => {
   // Turtle has half-offset slots (odd half-unit coordinates).
   assert.equal(tileAriaLabel(t(2, 1, 3, 0, 'dots-5')), 'Dots 5, available, row 3, column 2');

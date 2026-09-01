@@ -18,12 +18,14 @@ function newGame(seed = 1): Game {
   return new Game(generateLevel(ROWS, seed));
 }
 
-test('select then deselect the same tile', () => {
+test('select, then deselect with a tap on empty board', () => {
+  // Issue #62 took the second tap on the tile itself: it parks now, so the tap
+  // that drops a selection is a tap on nothing (or Escape, wired in main.ts).
   const game = newGame();
   const [a] = game.level.solution[0]!;
   assert.deepEqual(game.tap(free(a), 0), { kind: 'selected', id: a });
   assert.equal(game.selection, a);
-  assert.deepEqual(game.tap(free(a), 1), { kind: 'deselected', id: a });
+  assert.deepEqual(game.tap({ kind: 'miss' }, 1), { kind: 'selection-cleared' });
   assert.equal(game.selection, null);
 });
 

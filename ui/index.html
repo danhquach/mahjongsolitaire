@@ -549,22 +549,6 @@
               </svg>
               <span class="charges" id="charges-undo">5</span>
             </button>
-            <!-- Hold is always available (PM decision 2026-08-31), so it carries
-                 no charge badge — the only thing that can stop it is a full
-                 holder, and main.ts spells that out in the accessible name. A
-                 tray with a tile dropping into it; the label flips to Return when
-                 the selected tile is already in the holder. -->
-            <button id="btn-hold" type="button" data-action="Hold" title="Hold" aria-label="Hold">
-              <!-- The holder itself: a box of slots with one of them filled. A
-                   tray with an arrow dropping into it was the first draft and
-                   read as "download" — the thing this button is about is the
-                   box, so draw the box. -->
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M2.6 5.4h18.8v13.2H2.6z" />
-                <path class="solid" d="M5.8 8.6h5v6.8h-5z" />
-                <path d="M13.4 8.6h4.8v6.8h-4.8z" />
-              </svg>
-            </button>
             <button
               id="btn-shuffle"
               type="button"

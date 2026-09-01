@@ -11,13 +11,15 @@
 // measures the board area each candidate placement would leave and keeps the
 // one that fits the board larger (hud-fit.ts).
 // Issue #43 adds the holder: a strip of four slots above the board (holder.ts)
-// and a Hold control in the rail that acts on the selection — park a free tile,
-// or take a parked one back. It is always available, so it has no charge badge;
-// a full holder disables the control instead of ending the level.
+// a free tile can be parked in. It is always available, so it has no charge.
 // Issue #44 gives the match its feedback: the pair flies together and collides
 // (effects.ts / anim.ts) while the board redraws without it, the sound answers
 // the tap and the haptic waits for the impact, and reduced motion — OS
 // preference or in-app toggle — substitutes a cross-fade.
+// Issue #62 moves parking onto the board and retires the rail's Hold control:
+// activating the selected free tile again parks it, and one tap on a board tile
+// that matches something in the holder clears that pair. Deselecting is what
+// moved out of the way — it is now a tap on empty board, or Escape.
 
 import { Application } from 'pixi.js';
 import { HOLDER_SLOTS, generateValidatedLevel, parseLayout } from '@mahjongsolitaire/core';
@@ -45,7 +47,7 @@ import { SettingsStore, TILE_SIZE_FACTOR, TILE_SIZE_LABEL, TILE_SIZES } from './
 import type { TileSize } from './settings.js';
 import { localKeyValueStorage } from './storage.js';
 import type { Hit } from './hit-test.js';
-import type { HintPair, HolderAction, TapOutcome } from './game.js';
+import type { HintPair, TapOutcome } from './game.js';
 
 /** Spec §7: mis-tap forgiveness radius, in dp (≈ CSS px on the web). */
 const FORGIVENESS_DP = 8;
@@ -97,7 +99,6 @@ async function start(): Promise<void> {
   const header = el<HTMLElement>('app-header');
   const boosterRail = el<HTMLDivElement>('booster-rail');
   const holderRoot = el<HTMLDivElement>('holder');
-  const holdButton = el<HTMLButtonElement>('btn-hold');
   const settingsPanel = el<HTMLDivElement>('settings');
   const settingsButton = el<HTMLButtonElement>('btn-settings');
   const timeStat = el<HTMLElement>('time-stat');
@@ -185,14 +186,6 @@ async function start(): Promise<void> {
   const a11y = new A11yLayer(a11yRoot, (id) => activateTile(id));
   const holder = new HolderStrip(holderRoot, HOLDER_SLOTS, (id) => activateHeld(id));
 
-  /** Accessible name and label of the Hold control, per what it would do now. */
-  const HOLD_LABEL: Record<HolderAction, { title: string; label: string }> = {
-    hold: { title: 'Hold', label: 'Hold, park the selected tile' },
-    return: { title: 'Return', label: 'Return the held tile to the board' },
-    full: { title: 'Hold', label: 'Hold, the holder is full' },
-    none: { title: 'Hold', label: 'Hold, select a tile first' },
-  };
-
   function label(id: TileId): string {
     return faceStyle(game.board.get(id).face).label;
   }
@@ -207,7 +200,6 @@ async function start(): Promise<void> {
     scoreEl.textContent = String(game.score);
     tilesLeftEl.textContent = String(game.tilesLeft);
     syncBoosterButtons();
-    syncHoldButton();
     holder.sync({
       slots: game.holderSlots(),
       faceOf: (id) => game.board.get(id).face,
@@ -240,26 +232,6 @@ async function start(): Promise<void> {
   function persist(): void {
     if (game.status() === 'won') saves.clear();
     else saves.write(captureSave(game, { shuffles: shuffleCount, elapsedMs: elapsed.ms }));
-  }
-
-  /**
-   * The Hold control (issue #43). Always available, so there is no balance to
-   * show — what changes is what it *does*: `.spent` and an aria-disabled state
-   * are the "full holder" cue (rule 5 disables Hold; it never ends the level),
-   * and the label flips to Return when the selected tile is already parked.
-   *
-   * Like the boosters, the button stays clickable at its dead end so a press
-   * can explain itself — a `disabled` control cannot, and some assistive
-   * technology skips one entirely.
-   */
-  function syncHoldButton(): void {
-    const action = game.holderAction();
-    const { title, label } = HOLD_LABEL[action];
-    holdButton.classList.toggle('spent', action === 'full');
-    holdButton.setAttribute('aria-disabled', String(action === 'full'));
-    holdButton.setAttribute('aria-label', label);
-    holdButton.title = title;
-    holdButton.dataset['action'] = title;
   }
 
   /** Charge badges + accessible names. Buttons stay enabled at zero charges so
@@ -530,6 +502,16 @@ async function start(): Promise<void> {
       case 'selection-cleared':
         announcer.say('Selection cleared.');
         break;
+      case 'held':
+        announcer.say(
+          `${label(outcome.id)} held in slot ${outcome.slot + 1}. ${
+            game.holderFull ? 'Holder full.' : `${game.tilesLeft} tiles left.`
+          }`,
+        );
+        break;
+      case 'holder-full':
+        announcer.say('The holder is full. Match a held tile to free a slot.');
+        break;
       default:
         // select / deselect are carried by the button's aria-pressed state.
         break;
@@ -640,9 +622,11 @@ async function start(): Promise<void> {
     switch (outcome.kind) {
       case 'mismatch':
       case 'blocked':
+      case 'holder-full':
         return 'mismatch';
       case 'selected':
       case 'deselected':
+      case 'held':
         return 'select';
       default:
         return null;
@@ -676,9 +660,10 @@ async function start(): Promise<void> {
 
   /** Everything a resolved tap owes the player: feedback, save, announcement. */
   function finishTap(outcome: TapOutcome, heldBefore: ReadonlySet<TileId>): void {
-    // A match changes the board, so the highlighted hint is stale. Any other
-    // tap keeps it: selecting one hinted tile must not hide its partner.
-    if (outcome.kind === 'matched') hintPair = [];
+    // A match or a park changes the board, so the highlighted hint is stale.
+    // Any other tap keeps it: selecting one hinted tile must not hide its
+    // partner.
+    if (outcome.kind === 'matched' || outcome.kind === 'held') hintPair = [];
     if (outcome.kind === 'mismatch') {
       flashTiles([outcome.a, outcome.b]);
       animator.shake([outcome.a, outcome.b]);
@@ -701,54 +686,12 @@ async function start(): Promise<void> {
     // force-quit between the two taps of a pair resumes with it intact. A tap
     // that changed nothing (a miss with no selection, a buried tile) has
     // nothing to save.
-    if (outcome.kind !== 'none' && outcome.kind !== 'blocked') persist();
+    // A refused park (issue #43 rule 5) changed nothing either.
+    if (!['none', 'blocked', 'holder-full'].includes(outcome.kind)) persist();
     // A level-ending move is announced once, by showStatus: two live-region
     // writes in the same tick coalesce and the first is never spoken.
     if (game.status() === 'playing') announce(outcome);
     showStatus();
-  }
-
-  /**
-   * One press of the Hold control (issue #43). Nothing is charged — the holder
-   * is always available — so the only outcomes are "it moved" and a spoken
-   * reason why it did not.
-   */
-  function useHold(): void {
-    if (game.status() !== 'playing') return;
-    const outcome = game.useHolder(elapsed.ms);
-    switch (outcome.kind) {
-      case 'held':
-        hintPair = [];
-        feedback.cue('select');
-        redraw();
-        persist();
-        announcer.say(
-          `${label(outcome.id)} held in slot ${outcome.slot + 1}. ${
-            game.holderFull ? 'Holder full.' : `${game.tilesLeft} tiles left.`
-          }`,
-        );
-        // Parking a tile changes what is free, which can *lift* a deadlock —
-        // that is the only reason this is here. A hold can never end the level:
-        // it removes nothing, and a held tile still counts as in play
-        // (spec §3.5 as amended by decision 0008).
-        showStatus();
-        return;
-      case 'returned':
-        hintPair = [];
-        feedback.cue('select');
-        redraw();
-        persist();
-        announcer.say(`${label(outcome.id)} returned to the board.`);
-        showStatus();
-        return;
-      case 'full':
-        feedback.cue('mismatch');
-        announcer.say('The holder is full. Match a held tile to free a slot.');
-        return;
-      case 'none':
-        announcer.say('Select a free tile first, then press Hold.');
-        return;
-    }
   }
 
   /**
@@ -781,6 +724,19 @@ async function start(): Promise<void> {
     announcer.say(`New game dealt. ${game.tilesLeft} tiles.`);
   }
 
+  // Deselect (issue #62). Activating the selected tile again now parks it, so
+  // the gesture that *drops* a selection is a tap on empty board — and Escape
+  // for a keyboard or screen-reader player, who has no empty board to aim at.
+  // Document-scoped for the same reason the settings handler is: focus may sit
+  // on a booster button or <body> rather than on the tile itself.
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    if (overlayVisible || settingsVisible) return;
+    if (game.status() !== 'playing' || game.selection === null) return;
+    ev.preventDefault();
+    applyTap({ kind: 'miss' });
+  });
+
   app.canvas.addEventListener('pointerdown', (ev) => {
     if (game.status() !== 'playing') return;
     const p = renderer.toBoardPoint(ev.offsetX, ev.offsetY);
@@ -805,7 +761,6 @@ async function start(): Promise<void> {
     if (applyHudPlacement()) app.resize();
   });
 
-  holdButton.addEventListener('click', () => useHold());
   boosterUi.hint.button.addEventListener('click', () => useBooster('hint'));
   boosterUi.undo.button.addEventListener('click', () => useBooster('undo'));
   boosterUi.shuffle.button.addEventListener('click', () => useBooster('shuffle'));
@@ -878,22 +833,21 @@ async function start(): Promise<void> {
     get hintPair() {
       return hintPair;
     },
-    /** Holder state + what the Hold control would do (issue #43 QA). */
+    /** Holder state (issue #43 / #62 QA). */
     holder(): {
       slots: readonly (TileId | null)[];
       full: boolean;
       holdsUsed: number;
-      action: HolderAction;
     } {
       return {
         slots: game.holderSlots(),
         full: game.holderFull,
         holdsUsed: game.holdsUsed,
-        action: game.holderAction(),
       };
     },
-    useHold() {
-      useHold();
+    /** The current selection (issue #62 QA: the park gesture needs it). */
+    get selection() {
+      return game.selection;
     },
     /** Settings + save-slot state (issue #14 QA assertions). */
     settings() {
