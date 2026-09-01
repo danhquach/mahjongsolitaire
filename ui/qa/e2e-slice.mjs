@@ -387,6 +387,12 @@ for (const vp of VIEWPORTS) {
     console.error(`  page error: ${e.message}`);
     failures++;
   });
+  // Issue #79: a fresh profile now boots ladder level 1 (butterfly). This
+  // harness's geometry thresholds are calibrated on the Turtle slice, so seed
+  // the ladder position to the first turtle_classic level before the app boots.
+  await ctx.addInitScript(() => {
+    localStorage.setItem('mahjong.progress.v1', JSON.stringify({ level: 47 }));
+  });
   await page.goto(url);
   await page.waitForFunction(() => window.__slice !== undefined);
 
@@ -404,6 +410,9 @@ for (const vp of VIEWPORTS) {
     const c = await tileCenter(id);
     if (await page.evaluate((i) => window.__slice.game.isFaceHidden(i), id)) {
       await page.mouse.click(c.x, c.y);
+      // Issue #77: the peek itself completes the pair when the revealed face
+      // matches the current selection — the acting tap is already spent.
+      if (await page.evaluate((i) => window.__slice.game.board.get(i).removed, id)) return;
     }
     await page.mouse.click(c.x, c.y);
   };
@@ -997,7 +1006,7 @@ for (const vp of VIEWPORTS) {
     result.tilesLeft === 0 &&
     result.status === 'won' &&
     result.overlayVisible &&
-    result.overlay === 'Level complete!';
+    /^Level \d+ complete!$/.test(result.overlay ?? '');
   if (!ok) {
     console.error(`  END-TO-END FAIL:`, result);
     failures++;
@@ -1012,7 +1021,12 @@ for (const vp of VIEWPORTS) {
   //    restarts"). Runs after the win on a restarted deal.
   {
     const before = failures;
-    await page.click('#overlay-restart');
+    // The won dialog offers "Next level", not a restart (issue #79). The next
+    // level's layout is fetched before the dialog closes, so wait it out.
+    await page.click('#overlay-new');
+    await page.waitForFunction(
+      () => !document.getElementById('overlay').classList.contains('visible'),
+    );
     const start = await page.evaluate(() => window.__slice.boosterCharges());
     check(
       start.hint === 5 && start.undo === 5 && start.shuffle === 5,
@@ -1302,6 +1316,9 @@ for (const vp of VIEWPORTS) {
     await page.reload();
     await page.waitForFunction(() => window.__slice !== undefined);
     await page.click('#btn-new');
+    // The deal is async when the ladder level's layout differs from the loaded
+    // one (issue #79); input is dropped until it lands, so wait it out.
+    await page.waitForFunction(() => !window.__slice.dealing);
 
     // Play the generator's witness (naive greedy play can deadlock in a few
     // moves — that is what huntDeadlock above is for), then shuffle: shuffled

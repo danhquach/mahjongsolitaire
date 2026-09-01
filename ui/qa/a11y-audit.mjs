@@ -719,7 +719,8 @@ for (const vp of VIEWPORTS) {
       end,
     );
     check(end.boardInert, 'board is inert while the dialog is open', end);
-    check(end.focus === 'overlay-restart', 'focus moves into the dialog', end);
+    // The won dialog hides Restart and offers Next level (issue #79).
+    check(end.focus === 'overlay-new', 'focus moves into the dialog', end);
 
     // aria-modal only silences the background for AT; Tab still walks into it
     // unless the background is inert. Shift+Tab out of the dialog must stay
@@ -733,7 +734,7 @@ for (const vp of VIEWPORTS) {
       'dialog traps focus: Tab never reaches the controls behind it',
       { back1, back2 },
     );
-    check(/Level complete\./.test(end.announced), 'win is announced', end.announced);
+    check(/Level \d+ complete\./.test(end.announced), 'win is announced', end.announced);
 
     // Dialog buttons are 1 tap and meet the 48dp minimum while visible.
     const smallInDialog = await page.evaluate((min) => {
@@ -747,8 +748,11 @@ for (const vp of VIEWPORTS) {
     }, MIN_TOUCH_TARGET);
     check(smallInDialog.length === 0, 'dialog controls ≥ 48dp', smallInDialog);
 
-    // Restarting hands the board back to assistive technology.
-    await page.click('#overlay-restart');
+    // Advancing to the next level hands the board back to assistive
+    // technology (issue #79: the won dialog's action is Next level, and the
+    // deal is async when the next level's layout differs).
+    await page.click('#overlay-new');
+    await page.waitForFunction(() => !window.__slice.dealing);
     const back = await page.evaluate(() => ({
       inert: document.getElementById('a11y-layer').hasAttribute('inert'),
       tiles: document.querySelectorAll('#a11y-layer .tile-node').length,
