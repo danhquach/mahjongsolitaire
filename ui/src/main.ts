@@ -183,9 +183,15 @@ async function start(): Promise<void> {
   }
 
   function a11yTiles(): A11yTile[] {
-    return game.board
-      .presentTiles()
-      .map((t) => ({ id: t.id, slot: t.slot, face: t.face, free: game.board.isFree(t.id) }));
+    return game.board.presentTiles().map((t) => ({
+      id: t.id,
+      slot: t.slot,
+      face: t.face,
+      free: game.board.isFree(t.id),
+      // Visibility this frame, not deal-time concealment (issue #64): a peeked
+      // or selected tile announces its face like any other.
+      concealed: game.isFaceHidden(t.id),
+    }));
   }
 
   const a11y = new A11yLayer(a11yRoot, (id) => activateTile(id));
@@ -551,6 +557,11 @@ async function start(): Promise<void> {
       case 'holder-full':
         announcer.say('The holder is full. Match a held tile to free a slot.');
         break;
+      case 'peeked':
+        // The reveal is the entire outcome (issue #64): a sighted player sees
+        // the face flip up, so the face name is exactly what is spoken.
+        announcer.say(`${label(outcome.id)} revealed.`);
+        break;
       default:
         // select / deselect are carried by the button's aria-pressed state.
         break;
@@ -664,6 +675,7 @@ async function start(): Promise<void> {
       case 'selected':
       case 'deselected':
       case 'held':
+      case 'peeked':
         return 'select';
       default:
         return null;
@@ -676,6 +688,38 @@ async function start(): Promise<void> {
     return new Set(game.holderSlots().filter((id): id is TileId => id !== null));
   }
 
+  /** Concealed tiles currently showing their face on the board (issue #64) —
+   *  the peek plus a pinned selection. Captured before a tap and diffed after
+   *  it, so every reveal and re-conceal gets its flip, whichever rule caused
+   *  it (peek, second peek, mismatch, deselect, Escape). */
+  function shownConcealed(): ReadonlySet<TileId> {
+    const shown = new Set<TileId>();
+    for (const t of game.board.presentTiles()) {
+      if (game.isConcealed(t.id) && !game.isFaceHidden(t.id)) shown.add(t.id);
+    }
+    return shown;
+  }
+
+  /** Start the reveal / re-conceal flips a tap earned; returns the flipped ids
+   *  so the mismatch shake can leave those tiles alone (both effects drive the
+   *  same node transform). A tile that left the board — matched, or parked into
+   *  the holder — departs instead of re-concealing, so it does not flip. */
+  function playFlips(shownBefore: ReadonlySet<TileId>): ReadonlySet<TileId> {
+    const after = shownConcealed();
+    const flipped = new Set<TileId>();
+    for (const id of after) {
+      if (shownBefore.has(id)) continue;
+      animator.flip(id, tileCenter(id));
+      flipped.add(id);
+    }
+    for (const id of shownBefore) {
+      if (after.has(id) || game.board.get(id).removed || game.board.isHeld(id)) continue;
+      animator.flip(id, tileCenter(id));
+      flipped.add(id);
+    }
+    return flipped;
+  }
+
   function applyTap(hit: Hit): void {
     // Elapsed *play* time, not performance.now(): a resumed page restarts
     // performance.now() at 0 while the restored combo ladder still holds the
@@ -684,7 +728,8 @@ async function start(): Promise<void> {
     // clock that stays monotonic across a force-quit (core's own contract:
     // "monotonic within a game — e.g. elapsed game time").
     const before = heldIds();
-    finishTap(game.tap(hit, elapsed.ms), before);
+    const shownBefore = shownConcealed();
+    finishTap(game.tap(hit, elapsed.ms), before, shownBefore);
   }
 
   /** Tap on a tile in the holder (issue #43): same select / match semantics as
@@ -692,18 +737,28 @@ async function start(): Promise<void> {
   function activateHeld(id: TileId): void {
     if (game.status() !== 'playing') return;
     const before = heldIds();
-    finishTap(game.tapHeld(id, elapsed.ms), before);
+    const shownBefore = shownConcealed();
+    finishTap(game.tapHeld(id, elapsed.ms), before, shownBefore);
   }
 
   /** Everything a resolved tap owes the player: feedback, save, announcement. */
-  function finishTap(outcome: TapOutcome, heldBefore: ReadonlySet<TileId>): void {
+  function finishTap(
+    outcome: TapOutcome,
+    heldBefore: ReadonlySet<TileId>,
+    shownBefore: ReadonlySet<TileId>,
+  ): void {
+    // Reveal / re-conceal flips (issue #64) — started first so the mismatch
+    // shake below can skip the tiles that are flipping.
+    const flipped = playFlips(shownBefore);
     // A match or a park changes the board, so the highlighted hint is stale.
     // Any other tap keeps it: selecting one hinted tile must not hide its
     // partner.
     if (outcome.kind === 'matched' || outcome.kind === 'held') hintPair = [];
     if (outcome.kind === 'mismatch') {
       flashTiles([outcome.a, outcome.b]);
-      animator.shake([outcome.a, outcome.b]);
+      // A re-concealing tile flips instead of shaking — the two effects would
+      // fight over the same node transform, and the flip is the information.
+      animator.shake([outcome.a, outcome.b].filter((id) => !flipped.has(id)));
     } else if (outcome.kind === 'blocked') {
       flashTiles([outcome.id]);
       animator.shake([outcome.id]);
@@ -723,8 +778,9 @@ async function start(): Promise<void> {
     // force-quit between the two taps of a pair resumes with it intact. A tap
     // that changed nothing (a miss with no selection, a buried tile) has
     // nothing to save.
-    // A refused park (issue #43 rule 5) changed nothing either.
-    if (!['none', 'blocked', 'holder-full'].includes(outcome.kind)) persist();
+    // A refused park (issue #43 rule 5) changed nothing either, and a peek is
+    // deliberately not saved (issue #64): a reload re-conceals.
+    if (!['none', 'blocked', 'holder-full', 'peeked'].includes(outcome.kind)) persist();
     // A level-ending move is announced once, by showStatus: two live-region
     // writes in the same tick coalesce and the first is never spoken.
     if (game.status() === 'playing') announce(outcome);

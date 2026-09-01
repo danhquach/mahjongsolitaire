@@ -31,6 +31,10 @@ export interface A11yTile {
   readonly slot: Slot;
   readonly face: string;
   readonly free: boolean;
+  /** Face hidden this frame (issue #64): announce as face-down, never by face.
+   *  Computed visibility, not deal-time concealment — a peeked or selected
+   *  tile shows its face, so it announces it too. */
+  readonly concealed?: boolean;
 }
 
 /**
@@ -60,9 +64,17 @@ export function traversalOrder(tiles: readonly A11yTile[]): A11yTile[] {
  * this sentence is that cue, for someone who cannot.
  */
 export function tileAriaLabel(tile: A11yTile, selected = false, parkEndsLevel = false): string {
-  const { label } = faceStyle(tile.face);
   const state = tile.free ? 'available' : 'blocked';
   const { row, col } = slotPosition(tile.slot);
+  // A face-down tile must announce as face-down, not by its face (issue #64) —
+  // reading the glyph out would hand a screen-reader player what a sighted one
+  // cannot see. It is never `selected` here: a selection pins its reveal, so a
+  // selected tile always reaches the face-up branch below.
+  if (tile.concealed) {
+    const peek = tile.free ? ', activate to peek at it' : '';
+    return `Face-down tile, ${state}, row ${row}, column ${col}${peek}`;
+  }
+  const { label } = faceStyle(tile.face);
   const park =
     selected && tile.free
       ? parkEndsLevel

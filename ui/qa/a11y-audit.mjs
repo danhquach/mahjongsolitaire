@@ -39,7 +39,8 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
 const MIN_TOUCH_TARGET = 48;
 /** Spec §7: "every action reachable within 2 taps from the board". */
 const MAX_TAPS_TO_ACTION = 2;
-const TILE_LABEL = /^.+, (available|blocked), row \d+, column \d+$/;
+// A face-down tile (issue #64) appends its peek affordance after the position.
+const TILE_LABEL = /^.+, (available|blocked), row \d+, column \d+(, activate to peek at it)?$/;
 /** Controls behind the modal dialog: the header and the booster rail. */
 const BACKGROUND_CONTROLS = ['btn-new', 'btn-restart', 'btn-hint', 'btn-undo', 'btn-shuffle'];
 
@@ -204,7 +205,8 @@ for (const vp of VIEWPORTS) {
       const canvas = document.querySelector('#board canvas').getBoundingClientRect();
       return g.board
         .presentTiles()
-        .filter((t) => g.board.isFree(t.id))
+        // Face-up only (issue #64): the tap below must select, not peek.
+        .filter((t) => g.board.isFree(t.id) && !g.isFaceHidden(t.id))
         .slice(0, 5)
         .map((t) => {
           const box = document
@@ -306,7 +308,9 @@ for (const vp of VIEWPORTS) {
     // gesture, because parking has no rail control to fall back on any more.
     const chosen = await page.evaluate(() => {
       const b = window.__slice.game.board;
-      const free = b.freeTileIds();
+      // Face-up tiles only (issue #64): Enter on a face-down tile peeks, and
+      // this flow is about the two-Enter park gesture.
+      const free = b.freeTileIds().filter((id) => !window.__slice.game.isFaceHidden(id));
       const byFace = {};
       for (const id of free) (byFace[b.get(id).face] ??= []).push(id);
       for (const id of free) {
@@ -433,7 +437,10 @@ for (const vp of VIEWPORTS) {
             .slots.filter((id) => id !== null)
             .map((id) => b.get(id).face),
         );
-        const id = b.freeTileIds().find((x) => !parked.has(b.get(x).face));
+        // Face-up only (issue #64): the two Enters below are select + park.
+        const id = b
+          .freeTileIds()
+          .find((x) => !parked.has(b.get(x).face) && !window.__slice.game.isFaceHidden(x));
         if (id === undefined) return null;
         document.querySelector(`#a11y-layer [data-tile-id="${id}"]`).focus();
         return id;
@@ -594,6 +601,10 @@ for (const vp of VIEWPORTS) {
       }, id);
       const pressedFocus = await page.evaluate(() => document.activeElement.dataset.tileId);
       check(Number(pressedFocus) === id, 'focus lands on the intended tile', { id, pressedFocus });
+      // A face-down tile takes an extra Enter — the peek (issue #64).
+      if (await page.evaluate((i) => window.__slice.game.isFaceHidden(i), id)) {
+        await page.keyboard.press('Enter');
+      }
       await page.keyboard.press('Enter');
     }
     const after = await page.evaluate(() => ({
@@ -615,6 +626,10 @@ for (const vp of VIEWPORTS) {
     await page.evaluate((tileId) => {
       document.querySelector(`#a11y-layer [data-tile-id="${tileId}"]`).focus();
     }, c);
+    // Extra Enter to peek first if the tile is face-down (issue #64).
+    if (await page.evaluate((i) => window.__slice.game.isFaceHidden(i), c)) {
+      await page.keyboard.press('Enter');
+    }
     await page.keyboard.press('Enter');
     const pressed = await page.evaluate(
       (tileId) =>
@@ -630,7 +645,10 @@ for (const vp of VIEWPORTS) {
     // reader user why the board did not change.
     const pair = await page.evaluate(() => {
       const g = window.__slice.game;
-      const free = g.board.presentTiles().filter((t) => g.board.isFree(t.id));
+      // Face-up only (issue #64): the Enters below must select, not peek.
+      const free = g.board
+        .presentTiles()
+        .filter((t) => g.board.isFree(t.id) && !g.isFaceHidden(t.id));
       for (const a of free) {
         const b = free.find((x) => x.id !== a.id && x.face !== a.face);
         if (b) return [a.id, b.id];
@@ -672,11 +690,16 @@ for (const vp of VIEWPORTS) {
       const { game } = window.__slice;
       const click = (id) =>
         document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.click();
+      // Issue #64: the first activation of a face-down tile only peeks.
+      const act = (id) => {
+        if (game.isFaceHidden(id)) click(id);
+        click(id);
+      };
       // Replay the remaining witness pairs; already-removed pairs are no-ops.
       for (const [a, b] of game.level.solution) {
         if (game.board.get(a).removed || game.board.get(b).removed) continue;
-        click(a);
-        click(b);
+        act(a);
+        act(b);
       }
     });
     const end = await page.evaluate(() => ({

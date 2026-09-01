@@ -18,7 +18,9 @@ import { Container, Graphics } from 'pixi.js';
 import type { Ticker } from 'pixi.js';
 import type { TileId } from '@mahjongsolitaire/core';
 import {
+  FLIP_MS,
   SHAKE_MS,
+  flipScaleX,
   impactAt,
   matchDuration,
   matchFrame,
@@ -166,6 +168,46 @@ class ShakeEffect implements Effect {
 }
 
 /**
+ * A tile unfolding about its own vertical centreline — the reveal / re-conceal
+ * flip (issue #64). Like ShakeEffect it drives the live board node between
+ * redraws: the redraw at tap time already swapped the art (face or back), so
+ * what animates here is only the unfold, and the effect works unchanged in
+ * both directions. The node is re-resolved every frame, and a tile that has
+ * left the board simply ends the effect.
+ */
+class FlipEffect implements Effect {
+  private t = 0;
+
+  constructor(
+    private readonly id: TileId,
+    /** The tile's own centre in board px — the unfold's fixed line. */
+    private readonly center: Point,
+    private readonly tileNode: (id: TileId) => Container | undefined,
+  ) {}
+
+  advance(dtMs: number): boolean {
+    this.t += dtMs;
+    const node = this.tileNode(this.id);
+    if (!node) return false;
+    // The children are drawn at absolute board coordinates (see MatchEffect),
+    // so scaling about the centre means pivoting there and standing back on it.
+    node.pivot.set(this.center.x, this.center.y);
+    node.position.set(this.center.x, this.center.y);
+    node.scale.set(flipScaleX(this.t), 1);
+    return this.t < FLIP_MS;
+  }
+
+  dispose(): void {
+    // Whatever frame we stopped on, leave the tile full-width on its slot.
+    const node = this.tileNode(this.id);
+    if (!node) return;
+    node.scale.set(1, 1);
+    node.pivot.set(0, 0);
+    node.position.set(0, 0);
+  }
+}
+
+/**
  * Every live effect, advanced from one ticker callback.
  *
  * Concurrent matches are simply separate entries — nothing queues and nothing
@@ -194,6 +236,14 @@ export class Animator {
     this.effects.push(
       new MatchEffect(this.layer, [a, b], this.opts.reduced(), onImpact, this.seed++),
     );
+  }
+
+  /** Unfold a tile whose face just flipped — reveal or re-conceal (issue #64).
+   *  Reduced motion skips it: the redraw already swapped the art, so skipping
+   *  degrades to an instant flip, never a missing one. */
+  flip(id: TileId, center: Point): void {
+    if (this.opts.reduced()) return;
+    this.effects.push(new FlipEffect(id, center, this.opts.tileNode));
   }
 
   /** Shake tiles in place (mismatch, blocked tap). Reduced motion skips it. */

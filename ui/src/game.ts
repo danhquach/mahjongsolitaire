@@ -36,12 +36,22 @@
 // already picked", which a keyboard or screen reader reaches with two ordinary
 // activations. Spec §7's "no double-tap … requirements for core play" therefore
 // still holds — see the spec amendment on §3.3.
+//
+// Issue #64 adds face-down tiles (decision 0010). Concealment changes what the
+// player *knows*, never what is legally matchable: the set of concealed ids is
+// fixed at deal time (core's concealedTileIds — deterministic, so a resume
+// re-derives it and nothing new is saved), and everything the solver, hint and
+// deadlock check read is untouched. The controller owns the reveal state: one
+// unselected peek at a time, a selection pins its reveal, a mismatch
+// re-conceals, and any board change drops the peek.
 
 import {
   Board,
   MoveStack,
   ScoreKeeper,
+  assessDifficulty,
   canMatch,
+  concealedTileIds,
   findHint,
   hasPlayableMove,
   legalPairs,
@@ -75,6 +85,9 @@ export type TapOutcome =
    *  holder refuses the park rather than ending the level (issue #43 rule 5),
    *  so the tile stays selected and playable. */
   | { readonly kind: 'holder-full'; readonly id: TileId }
+  /** Issue #64: a tap on a face-down free tile peeks at it — reveals the face,
+   *  selects nothing, costs nothing. Only ever one unselected peek at a time. */
+  | { readonly kind: 'peeked'; readonly id: TileId }
   | { readonly kind: 'none' };
 
 /** A pair of tile ids the Hint booster is pointing at. */
@@ -122,16 +135,30 @@ export class Game {
   /** Hint state, both invalidated by anything that changes the board. */
   private hintPairs: HintPair[] | null = null;
   private hintCursor = 0;
+  /** Tiles dealt face-down (issue #64). Fixed for the whole level: matching a
+   *  concealed tile removes it, but nothing ever leaves this set — an undone
+   *  match brings the tile back concealed, which is what "survives undo" means. */
+  private readonly concealed: ReadonlySet<TileId>;
+  /** The one unselected peek (issue #64, decision 0010). Everything else about
+   *  face visibility is computed — see isFaceHidden — so re-concealing on
+   *  deselect, mismatch and undo mostly falls out for free. */
+  private peekedId: TileId | null = null;
 
   /**
    * A fresh deal, or — with `resume` — a saved game reopened on the same deal.
    * Throws (leaving nothing half-built) if the snapshot does not fit this deal:
    * save.ts validates untrusted records before they get here, and main.ts falls
    * back to a fresh deal on anything that still slips through.
+   *
+   * `concealed` (issue #64, tests mostly) overrides which tiles are dealt
+   * face-down; by default they are derived from the deal and its difficulty
+   * bucket. Derived, not saved: a resumed game re-derives the same set, so a
+   * reload is never a free reveal-all — it re-conceals, the safe direction.
    */
   constructor(
     readonly level: GeneratedLevel,
     resume?: GameSnapshot,
+    concealed?: readonly TileId[],
   ) {
     this.board = resume
       ? new Board(applySnapshot(level, resume), { holder: resume.holder })
@@ -139,6 +166,7 @@ export class Game {
     this.scores = new ScoreKeeper();
     this.stack = new MoveStack(this.board, this.scores);
     if (resume) this.stack.restoreState(resume.stack);
+    this.concealed = new Set(concealed ?? concealedTileIds(level, assessDifficulty(level).bucket));
   }
 
   /** Everything about this game the deal does not imply (issue #14). */
@@ -186,6 +214,41 @@ export class Game {
    *  star rating may want it (issue #43, PM decision 2026-08-31). */
   get holdsUsed(): number {
     return this.stack.holdsUsed;
+  }
+
+  // --- face-down tiles (issue #64) ---------------------------------------------
+
+  /** Was this tile dealt face-down? Fixed for the level — visibility right now
+   *  is `isFaceHidden`. */
+  isConcealed(id: TileId): boolean {
+    return this.concealed.has(id);
+  }
+
+  /** The one unselected peek, or null. */
+  get peeked(): TileId | null {
+    return this.peekedId;
+  }
+
+  /**
+   * Is this tile's face hidden this frame? Computed, not stored: a concealed
+   * tile shows its face while it is the peek or the selection (selection *pins*
+   * a reveal — decision 0010 — which is what makes a concealed–concealed pair
+   * matchable), and once parked it stays face-up (the holder strip is the
+   * player's own shelf; re-hiding what they knowingly parked would be a memory
+   * test the ticket's cap exists to prevent).
+   */
+  isFaceHidden(id: TileId): boolean {
+    if (!this.concealed.has(id)) return false;
+    const tile = this.board.get(id);
+    if (tile.removed || this.board.isHeld(id)) return false;
+    return id !== this.peekedId && id !== this.stack.selection;
+  }
+
+  /** The board changed under the peek — re-conceal it (undo, shuffle, match,
+   *  park). Cheap and safe: a peek is free and unlimited, so dropping one never
+   *  costs the player anything but a tap. */
+  private forgetPeek(): void {
+    this.peekedId = null;
   }
 
   status(): GameStatus {
@@ -246,6 +309,9 @@ export class Game {
     const record = this.stack.undo();
     if (record === null) return null;
     this.forgetHints();
+    // An undone concealed tile comes back face-down (the set is fixed), and the
+    // peek does not outlive the board it was taken on.
+    this.forgetPeek();
     return record;
   }
 
@@ -267,6 +333,7 @@ export class Game {
     const slot = this.stack.hold(id, nowMs);
     if (slot === null) return { kind: 'holder-full', id };
     this.forgetHints(); // the board changed: the cycled pairs are stale
+    this.forgetPeek();
     return { kind: 'held', id, slot };
   }
 
@@ -322,6 +389,7 @@ export class Game {
     }
     this.stack.clearSelection();
     this.forgetHints();
+    this.forgetPeek(); // the face under the peek just changed
     return true;
   }
 
@@ -369,15 +437,26 @@ export class Game {
    * Tap on a free board tile (issue #62). In order:
    *
    * 1. the tile is already selected → park it (rule 1);
-   * 2. it completes the pair the player selected → match, as always;
-   * 3. it matches something in the holder → clear that pair on this one tap
+   * 2. its face is hidden → peek at it (issue #64). Everything below acts on a
+   *    face the player can see, so a hidden tile answers nothing else — not
+   *    even the holder auto-clear, which would otherwise leak the face on the
+   *    tap *before* the reveal. A second tap on the now-peeked tile falls
+   *    through to the ordinary rules;
+   * 3. it completes the pair the player selected → match, as always;
+   * 4. it matches something in the holder → clear that pair on this one tap
    *    (rule 2). Deliberately *after* the player's own selection: an explicit
    *    pick outranks a partner they may have parked several moves ago;
-   * 4. otherwise select, or mismatch against the current selection.
+   * 5. otherwise select, or mismatch against the current selection.
    */
   private tapBoard(id: TileId, nowMs: number): TapOutcome {
     const selected = this.stack.selection;
     if (selected === id) return this.park(id, nowMs);
+    if (this.isFaceHidden(id)) {
+      // One unselected peek at a time: this assignment is what re-conceals the
+      // previous one (issue #64 answer 3).
+      this.peekedId = id;
+      return { kind: 'peeked', id };
+    }
     if (selected !== null && canMatch(this.board, selected, id).ok) {
       return this.playPair(selected, id, nowMs);
     }
@@ -395,6 +474,20 @@ export class Game {
     if (canMatch(this.board, selected, id).ok) return this.playPair(selected, id, nowMs);
     // Face mismatch: combo breaks (§6), selection moves to the new tile.
     this.scores.recordMismatch();
+    // …unless a face-down tile was involved (issue #64 answer 3): a mismatch
+    // re-conceals, and both the selection pin and the peek are how a concealed
+    // face stays up — so both are dropped rather than moved. Selecting the new
+    // tile here would pin it face-up through the very mismatch that is supposed
+    // to hide it again. A *parked* concealed tile is exempt: the holder shows
+    // its face permanently, so there is nothing to re-conceal and the ordinary
+    // rule applies.
+    const reconceals = (tileId: TileId) =>
+      this.concealed.has(tileId) && !this.board.isHeld(tileId);
+    if (reconceals(selected) || reconceals(id)) {
+      this.stack.clearSelection();
+      this.forgetPeek();
+      return { kind: 'mismatch', a: selected, b: id };
+    }
     this.stack.select(id);
     return { kind: 'mismatch', a: selected, b: id };
   }
@@ -402,6 +495,7 @@ export class Game {
   private playPair(a: TileId, b: TileId, nowMs: number): TapOutcome {
     const score = this.stack.play(a, b, nowMs);
     this.forgetHints(); // the board changed: the cycled pairs are stale
+    this.forgetPeek();
     return { kind: 'matched', a, b, score };
   }
 }

@@ -51,6 +51,18 @@ test('tile label names the face, its availability, and a locating row/column', (
   );
 });
 
+test('a face-down tile announces as face-down, never by its face (issue #64)', () => {
+  assert.equal(
+    tileAriaLabel({ ...t(0, 0, 0, 0, 'bamboo-3'), concealed: true }),
+    'Face-down tile, available, row 1, column 1, activate to peek at it',
+  );
+  // A blocked one cannot be peeked, so it offers no action.
+  assert.equal(
+    tileAriaLabel({ ...t(1, 6, 4, 0, 'wind-east', false), concealed: true }),
+    'Face-down tile, blocked, row 3, column 4',
+  );
+});
+
 test('a selected free tile spells out the park action (issue #62)', () => {
   // Parking is a board move now, not a rail control: a screen-reader player has
   // to be told that activating the tile again parks it.
