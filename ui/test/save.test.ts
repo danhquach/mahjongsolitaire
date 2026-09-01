@@ -78,7 +78,9 @@ function tapAnywhere(game: Game, id: TileId, nowMs: number): void {
     game.tapHeld(id, nowMs);
     return;
   }
-  reveal(game, id, nowMs);
+  // The reveal itself can complete the pair (issue #77 auto-match) — the
+  // follow-up tap would then land on a removed tile.
+  if (game.isFaceHidden(id) && game.tap(free(id), nowMs).kind === 'matched') return;
   game.tap(free(id), nowMs);
 }
 
@@ -102,10 +104,8 @@ test('spec §11.2: save/restore at every move index of the Turtle sample level',
 
     const move = solution[index];
     if (!move) break;
-    reveal(game, move[0], index * 2);
-    game.tap(free(move[0]), index * 2);
-    reveal(game, move[1], index * 2 + 1);
-    game.tap(free(move[1]), index * 2 + 1);
+    tapAnywhere(game, move[0], index * 2);
+    tapAnywhere(game, move[1], index * 2 + 1);
   }
   assert.equal(game.tilesLeft, 0, 'the sample level was played to completion');
 });
