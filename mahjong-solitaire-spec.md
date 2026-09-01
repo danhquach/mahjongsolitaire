@@ -45,7 +45,7 @@ Free, ad-supported (interstitial + rewarded video), with IAP for ad removal and 
 ## 2. Product Scope
 
 ### 2.1 MVP (v1.0)
-- Classic level ladder (500 hand-curated + generated levels at launch)
+- Classic level ladder (150 hand-curated + generated levels at launch; plateau ladder per decision 0011)
 - Guaranteed-solvable board generation
 - Boosters: Hint, Undo, Shuffle
 - Daily Challenge
@@ -152,8 +152,8 @@ Naïve random dealing produces unsolvable boards. Use **reverse construction**:
   - `mean_branching_factor` across a solution path
   - `layer_count`, `tile_count`
   - `forced_move_ratio` (turns with exactly one legal pair)
-- Bucket into Easy / Medium / Hard / Expert; ladder interleaves buckets on a rising curve with a "relief" easy level every ~5.
-- Difficulty is scored on a **no-holder** position, which is a lower bound on how easily a level plays now that the holder is always available (decision 0008) — the ladder has to be bucketed against holder-aware play.
+- Bucket into Easy / Medium / Hard / Expert. The v1 ladder is a **plateau ladder** (decision 0011): 150 levels in three flat bands — 1–20 Easy, 21–60 Medium, 61–150 Medium+ (upper half of the Medium score range) — with every 10th level spiking one band up (Medium in the Easy band, Hard elsewhere). No rising curve and no separate relief levels: the nine base levels of each decade are the relief. Expert does not ship in v1.
+- The scorer's v1 obligation is **ordering, not bucket accuracy**: no misordered pair among the bands in use (a spike never scores below its decade's base levels; no Medium+ level below the Medium median). Full holder-aware calibration (decisions 0008/0009) and concealment re-balance (decision 0010) are deferred to a follow-up ticket, required only if the ladder grows past the plateaus.
 
 **Layouts:** Turtle, Pyramid, Fortress, Spider, Butterfly, Cat, Bridge, plus original layouts. Layouts are data files (JSON), not code.
 
@@ -317,7 +317,7 @@ Key metrics: D1/D7/D30 retention, levels/session, abandon rate by level (difficu
 
 1. **M1 — Core (2 wks):** lattice, free-tile rule, matching, generator + solver, headless test suite.
 2. **M2 — Playable (3 wks):** rendering, input, one layout, undo/hint/shuffle, persistence.
-3. **M3 — Content (2 wks):** 10 layouts, 500-level ladder, difficulty bucketing, Daily Challenge.
+3. **M3 — Content (2 wks):** 10 layouts, 150-level plateau ladder (decision 0011), difficulty band ordering, Daily Challenge.
 4. **M4 — Services (2 wks):** ads, IAP, analytics, remote config.
 5. **M5 — Polish & Accessibility (2 wks):** device matrix, a11y audit, performance pass.
 6. **M6 — Soft launch:** limited geo, tune ad frequency and difficulty curve on real retention data.
