@@ -22,6 +22,10 @@
 // effects in tray-fx.ts, because the strip lives outside the canvas), and
 // selection stops existing as an input concept — no select, deselect or
 // mismatch, and no Escape handling.
+// Issue #69 gives the game a player: a local profile (display name + avatar,
+// profile.ts) editable from Settings, and a profile screen showing the
+// player's own record — current level, levels cleared, best score, and the
+// streak/trophy counters that start moving when the Daily Challenge lands.
 // Issue #63 makes the holder one-way and a full one final (decision 0009), so
 // the HUD gains the two things a hard-fail owes the player: a warning before
 // the fatal park (the last empty slot is marked, and — since issue #93 — every
@@ -71,6 +75,7 @@ import { BoardRenderer } from './render.js';
 import { parseChangelog, versionLabel } from './changelog.js';
 import changelogMd from '../../CHANGELOG.md?raw';
 import { ProgressStore } from './progress.js';
+import { AVATARS, ProfileStore, RecordStore, avatarGlyph } from './profile.js';
 import { SaveStore, captureSave, reopen } from './save.js';
 import { SettingsStore, TILE_SIZE_FACTOR, TILE_SIZE_LABEL, TILE_SIZES } from './settings.js';
 import type { TileSize } from './settings.js';
@@ -140,6 +145,13 @@ async function start(): Promise<void> {
   const changelogPanel = el<HTMLDivElement>('changelog');
   const changelogBody = el<HTMLDivElement>('changelog-body');
   const changelogClose = el<HTMLButtonElement>('changelog-close');
+  const profilePanel = el<HTMLDivElement>('profile');
+  const profileButton = el<HTMLButtonElement>('btn-profile');
+  const profileClose = el<HTMLButtonElement>('profile-close');
+  const profileNameInput = el<HTMLInputElement>('profile-name');
+  const avatarGrid = el<HTMLDivElement>('avatar-grid');
+  const profileRowGlyph = el<HTMLElement>('profile-row-glyph');
+  const profileRowName = el<HTMLElement>('profile-row-name');
   const timeStat = el<HTMLElement>('time-stat');
   const elapsedEl = el<HTMLElement>('elapsed');
 
@@ -239,6 +251,11 @@ async function start(): Promise<void> {
   const settings = new SettingsStore(storage);
   const feedback = new Feedback(() => settings.value, webAudioPlayer(), navigatorVibrate());
 
+  // The player (issue #69): identity and record, both local-first — the game
+  // never needs a network or an account for either.
+  const profile = new ProfileStore(storage);
+  const record = new RecordStore(storage);
+
   // Match / mismatch animation (issue #44). Reduced motion is the OS preference
   // OR the in-app toggle, read per effect so either can be changed mid-session;
   // the animator itself never touches game state or the input path.
@@ -265,6 +282,7 @@ async function start(): Promise<void> {
   let dealing = false;
   let settingsVisible = false;
   let changelogVisible = false;
+  let profileVisible = false;
   /** Tiles the last Hint pointed at — highlighted until the board changes. */
   let hintPair: readonly TileId[] = [];
   /** Shuffles taken on this deal; feeds the shuffle seed so a given
@@ -414,9 +432,11 @@ async function start(): Promise<void> {
     overlayNew.textContent = 'New game';
     if (status === 'won') {
       // Advance the ladder exactly once per win: this branch is inside the
-      // once-per-level transition (the overlayVisible guard above).
+      // once-per-level transition (the overlayVisible guard above). The
+      // player's record counts the same moment (issue #69).
       const cleared = progress.level;
       const atEnd = progress.advance() === cleared;
+      record.recordWin(game.score);
       overlayTitle.textContent = `Level ${cleared} complete!`;
       overlayText.textContent = `Final score: ${game.score}`;
       overlayNew.textContent = atEnd ? 'Play again' : 'Next level';
@@ -529,6 +549,13 @@ async function start(): Promise<void> {
     const current = settings.value;
     for (const { input, key } of settingsToggles) input.checked = current[key];
     for (const { input, size } of sizeInputs) input.checked = current.tileSize === size;
+    syncProfileRow();
+  }
+
+  /** The Settings row that opens the profile shows who the player is. */
+  function syncProfileRow(): void {
+    profileRowGlyph.textContent = avatarGlyph(profile.value.avatar);
+    profileRowName.textContent = profile.value.name;
   }
 
   /** Mirror the in-app Reduced motion toggle onto the DOM (issue #95): the
@@ -574,7 +601,7 @@ async function start(): Promise<void> {
   }
 
   function openSettings(): void {
-    if (settingsVisible || overlayVisible || changelogVisible) return;
+    if (settingsVisible || overlayVisible || changelogVisible || profileVisible) return;
     syncSettingsControls();
     settingsVisible = true;
     settingsPanel.classList.add('visible');
@@ -635,6 +662,86 @@ async function start(): Promise<void> {
     settingsButton.focus();
   }
 
+  // --- player profile (issue #69) ----------------------------------------------
+
+  /** One radio per shipped avatar, so profile.ts is the single source of the
+   *  list. Built once; syncProfileControls checks the stored pick. */
+  function buildAvatarGrid(): void {
+    for (const avatar of AVATARS) {
+      const label = document.createElement('label');
+      const glyph = document.createElement('span');
+      glyph.className = 'avatar-glyph';
+      glyph.textContent = avatar.glyph;
+      glyph.setAttribute('aria-hidden', 'true');
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = 'avatar';
+      input.value = avatar.id;
+      input.setAttribute('aria-label', avatar.label);
+      input.addEventListener('change', () => {
+        if (!input.checked) return;
+        profile.setAvatar(avatar.id);
+        syncProfileRow();
+        announcer.say(`Avatar ${avatar.label}.`);
+      });
+      label.append(glyph, input);
+      avatarGrid.append(label);
+    }
+  }
+
+  /** Push the stored profile and record into the screen (on open). */
+  function syncProfileControls(): void {
+    profileNameInput.value = profile.value.name;
+    for (const input of avatarGrid.querySelectorAll('input')) {
+      input.checked = input.value === profile.value.avatar;
+    }
+    el<HTMLElement>('record-level').textContent = String(progress.level);
+    el<HTMLElement>('record-cleared').textContent = String(record.value.levelsCleared);
+    el<HTMLElement>('record-best').textContent = String(record.value.bestScore);
+    el<HTMLElement>('record-streak').textContent = String(record.value.dailyStreak);
+    el<HTMLElement>('record-trophies').textContent = String(record.value.trophies);
+  }
+
+  function openProfile(): void {
+    if (profileVisible) return;
+    // Opened from inside Settings: that panel steps aside rather than stacking.
+    closeSettings();
+    syncProfileControls();
+    profileVisible = true;
+    profilePanel.classList.add('visible');
+    setBackgroundInert(true);
+    profileClose.focus();
+    announcer.say('Profile.');
+  }
+
+  function closeProfile(): void {
+    if (!profileVisible) return;
+    // A name still sitting in the field commits on the way out: change events
+    // fire on blur, but Escape closes the screen without one.
+    profileNameInput.value = profile.setName(profileNameInput.value);
+    profileVisible = false;
+    profilePanel.classList.remove('visible');
+    setBackgroundInert(false);
+    settingsButton.focus();
+  }
+
+  function wireProfile(): void {
+    buildAvatarGrid();
+    profileButton.addEventListener('click', () => openProfile());
+    profileClose.addEventListener('click', () => closeProfile());
+    profileNameInput.addEventListener('change', () => {
+      const name = profile.setName(profileNameInput.value);
+      // The field shows the name as stored — trimmed, clamped, never empty.
+      profileNameInput.value = name;
+      syncProfileRow();
+      announcer.say(`Name set to ${name}.`);
+    });
+    // Enter is "done typing" on a one-field form; commit and drop the keyboard.
+    profileNameInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') profileNameInput.blur();
+    });
+  }
+
   function wireSettings(): void {
     for (const { input, key, name } of settingsToggles) {
       input.addEventListener('change', () => {
@@ -668,6 +775,7 @@ async function start(): Promise<void> {
     document.addEventListener('keydown', (ev) => {
       if (settingsVisible && ev.key === 'Escape') closeSettings();
       if (changelogVisible && ev.key === 'Escape') closeChangelog();
+      if (profileVisible && ev.key === 'Escape') closeProfile();
     });
   }
 
@@ -1089,6 +1197,7 @@ async function start(): Promise<void> {
   overlayRestart.addEventListener('click', () => void startLevel('replay'));
 
   wireSettings();
+  wireProfile();
   applyMotionPreference();
   el<HTMLElement>('version').textContent = versionLabel(
     __APP_VERSION__,
@@ -1192,6 +1301,13 @@ async function start(): Promise<void> {
     /** Settings + save-slot state (issue #14 QA assertions). */
     settings() {
       return settings.value;
+    },
+    /** Player identity + record (issue #69 QA assertions). */
+    profile() {
+      return profile.value;
+    },
+    playerRecord() {
+      return record.value;
     },
     /** The save as it would be reopened — null once the level has ended. */
     savedState() {

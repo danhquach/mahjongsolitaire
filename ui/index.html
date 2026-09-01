@@ -438,7 +438,8 @@
          the touch target is the text as well as the control, and the card
          scrolls rather than overflowing a small phone in landscape. */
       #settings,
-      #changelog {
+      #changelog,
+      #profile {
         position: absolute;
         inset: 0;
         display: none;
@@ -447,11 +448,13 @@
         background: rgba(0, 0, 0, 0.55);
       }
       #settings.visible,
-      #changelog.visible {
+      #changelog.visible,
+      #profile.visible {
         display: flex;
       }
       #settings .card,
-      #changelog .card {
+      #changelog .card,
+      #profile .card {
         background: #f0fdf4;
         color: #14532d;
         border-radius: 12px;
@@ -463,7 +466,8 @@
         font-size: 18px; /* spec §7: ≥ 18sp body */
       }
       #settings h2,
-      #changelog h2 {
+      #changelog h2,
+      #profile h2 {
         margin: 0 0 12px;
         font-size: 24px;
       }
@@ -483,17 +487,20 @@
         font-size: 15px;
         color: #3f6212;
       }
-      #settings fieldset {
+      #settings fieldset,
+      #profile fieldset {
         margin: 12px 0 0;
         padding: 8px 12px 12px;
         border: 1px solid #bbf7d0;
         border-radius: 8px;
       }
-      #settings legend {
+      #settings legend,
+      #profile legend {
         padding: 0 6px;
         font-weight: bold;
       }
-      #settings .row {
+      #settings .row,
+      #profile .row {
         display: flex;
         align-items: center;
         gap: 12px;
@@ -520,7 +527,8 @@
         color: #3f6212;
       }
       #settings .card > button,
-      #changelog .card > button {
+      #changelog .card > button,
+      #profile .card > button {
         margin-top: 16px;
         width: 100%;
         font-size: 18px;
@@ -532,8 +540,10 @@
         color: #f0fdf4;
       }
       /* The version row reads as a settings row, not a primary action
-         (issue #81); only the Done button keeps the filled style. */
-      #settings .card > button.version-row {
+         (issue #81); only the Done button keeps the filled style. The profile
+         row (issue #69) is the same idiom: a row that opens another screen. */
+      #settings .card > button.version-row,
+      #settings .card > button.profile-row {
         margin-top: 12px;
         text-align: left;
         border: none;
@@ -542,6 +552,64 @@
         padding: 6px 0;
         border-radius: 0;
         border-top: 1px solid #d1fae5;
+      }
+      #settings .card > button.profile-row {
+        margin-top: 0;
+        border-top: none;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      /* --- Profile screen (issue #69) ---------------------------------------
+         The avatar is drawn as a glyph, sized like a tile face; the picker is
+         a radio grid so it works exactly like the tile-size choice. */
+      .avatar-glyph {
+        font-size: 32px;
+        line-height: 1;
+      }
+      #profile input[type='text'] {
+        flex: 1;
+        min-width: 0;
+        min-height: 48px; /* spec §7: 48dp touch targets */
+        font-size: 18px;
+        padding: 6px 10px;
+        border: 1px solid #bbf7d0;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #14532d;
+      }
+      #profile .avatar-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 4px;
+      }
+      #profile .avatar-grid label {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        min-height: 48px; /* spec §7 */
+        padding: 6px 0;
+        cursor: pointer;
+      }
+      #profile .avatar-grid input[type='radio'] {
+        width: 22px;
+        height: 22px;
+        accent-color: #166534;
+      }
+      #profile .record-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 6px 0;
+      }
+      #profile .record-row + .record-row {
+        border-top: 1px solid #d1fae5;
+      }
+      #profile .record-hint {
+        margin: 6px 0 0;
+        font-size: 15px;
+        color: #3f6212;
       }
 
       /* --- Accessibility layer (issue #12) ---------------------------------
@@ -704,6 +772,43 @@
               <button id="overlay-new" type="button">New game</button>
             </div>
           </div>
+          <!-- Profile (issue #69): a local identity — no account, no sign-in —
+               and the player's own record. Opened from Settings; every edit
+               writes through immediately, like the settings themselves. -->
+          <div id="profile" role="dialog" aria-modal="true" aria-labelledby="profile-title">
+            <div class="card">
+              <h2 id="profile-title">Profile</h2>
+              <label class="row" for="profile-name">
+                <span>Name</span>
+                <input
+                  type="text"
+                  id="profile-name"
+                  maxlength="20"
+                  autocomplete="off"
+                  autocapitalize="words"
+                  enterkeyhint="done"
+                />
+              </label>
+              <fieldset>
+                <legend>Avatar</legend>
+                <!-- One radio per avatar, built from profile.ts by main.ts so
+                     the shipped list has a single source of truth. -->
+                <div class="avatar-grid" id="avatar-grid"></div>
+              </fieldset>
+              <fieldset>
+                <legend>Your record</legend>
+                <div class="record-row"><span>Current level</span><strong id="record-level">1</strong></div>
+                <div class="record-row"><span>Levels cleared</span><strong id="record-cleared">0</strong></div>
+                <div class="record-row"><span>Best score</span><strong id="record-best">0</strong></div>
+                <div class="record-row"><span>Daily Challenge streak</span><strong id="record-streak">0</strong></div>
+                <div class="record-row"><span>Trophies</span><strong id="record-trophies">0</strong></div>
+                <p class="record-hint">
+                  Streaks and trophies start counting when the Daily Challenge arrives.
+                </p>
+              </fieldset>
+              <button id="profile-close" type="button">Done</button>
+            </div>
+          </div>
           <div id="changelog" role="dialog" aria-modal="true" aria-labelledby="changelog-title">
             <div class="card">
               <h2 id="changelog-title">What’s new</h2>
@@ -715,6 +820,15 @@
           <div id="settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
             <div class="card">
               <h2 id="settings-title">Settings</h2>
+              <!-- The player (issue #69): who these settings belong to. Tapping
+                   the row opens the profile screen — name, avatar, record. -->
+              <button id="btn-profile" type="button" class="row profile-row">
+                <span class="avatar-glyph" id="profile-row-glyph" aria-hidden="true">🏮</span>
+                <span>
+                  <strong id="profile-row-name">Player</strong>
+                  <span class="hint">Tap to see your record, or change your name and avatar.</span>
+                </span>
+              </button>
               <!-- Audio and haptics are separate checkboxes on purpose: spec §7
                    wants them independently toggleable, both ON by default. -->
               <label class="row" for="set-audio">

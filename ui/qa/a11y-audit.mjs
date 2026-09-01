@@ -819,10 +819,10 @@ for (const vp of VIEWPORTS) {
       settingsControls.filter((c) => c.small),
     );
 
-    // Twelve controls: six toggles (issue #45 added Highlight free tiles,
-    // issue #44 added Reduced motion), four tile sizes, the version row
-    // (issue #81), and Done.
-    check(settingsControls.length === 12, 'settings screen exposes all twelve controls', {
+    // Thirteen controls: the profile row (issue #69), six toggles (issue #45
+    // added Highlight free tiles, issue #44 added Reduced motion), four tile
+    // sizes, the version row (issue #81), and Done.
+    check(settingsControls.length === 13, 'settings screen exposes all thirteen controls', {
       count: settingsControls.length,
     });
 
