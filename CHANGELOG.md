@@ -6,6 +6,9 @@ commit and build time of the running bundle.
 
 ## 2026-09-01
 
+- Stacks read as physical piles: deeper cast shadows, thicker beveled
+  sides and a larger per-layer offset carry depth, and tile faces stay
+  bright on every layer (#86).
 - The game now plays the 150-level ladder: each level has its own layout,
   deal and difficulty, clearing a level advances, and progress survives
   restarts (#79).

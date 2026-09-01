@@ -54,24 +54,30 @@ export const BORDER_WIDTH = 2;
 /** Outline width for the selected / hinted / mismatch-flash highlight. */
 export const BORDER_WIDTH_ACTIVE = 4;
 
-/** Per-layer darkening of the top face, per layer below the top one. */
-export const LAYER_FACE_STEP = 0.04;
+/**
+ * Per-layer darkening of the top face, per layer below the top one.
+ * Issue #86 softened it from 0.04: occlusion cues (cast shadow, thick beveled
+ * side, larger lift) carry depth now, so faces stay bright on every layer and
+ * the ink palette keeps its contrast headroom. Non-zero on purpose — a whisper
+ * of a ladder still helps a greyscale read of deep wells.
+ */
+export const LAYER_FACE_STEP = 0.015;
 /**
  * Per-layer darkening of the suit ink. Deliberately twice LAYER_FACE_STEP:
- * darkening the face alone would eat into the 4.5:1 figure/ground budget (the
- * tightest suit is bamboo at 4.65:1 on an undimmed top face), while moving the
- * ink faster than the face *widens* it as layers recede.
+ * darkening the face alone would eat into the 4.5:1 figure/ground budget,
+ * while moving the ink faster than the face *widens* it as layers recede.
  */
-export const LAYER_INK_STEP = 0.08;
+export const LAYER_INK_STEP = 0.03;
 
 /**
  * Extra depth steps a blocked tile takes when "Highlight free tiles" is on
- * (issue #45 item 5, default off): a blocked tile is shaded as if it sat one
- * layer further back, so free tiles are the bright ones. One step, through the
- * same arithmetic as the layer ladder, so its contrast is covered by the same
- * proof.
+ * (issue #45 item 5, default off): a blocked tile is shaded as if it sat
+ * several layers further back, so free tiles are the bright ones. Three steps
+ * since issue #86 softened the per-step size — the aid keeps the visibility one
+ * old-scale step used to give it — through the same arithmetic as the layer
+ * ladder, so its contrast is covered by the same proof.
  */
-export const DIMMED_STEPS = 1;
+export const DIMMED_STEPS = 3;
 
 /**
  * Side-face bands as multipliers on BASE_SIDE, **base first**: near-dark where
@@ -80,25 +86,29 @@ export const DIMMED_STEPS = 1;
  * laid down first and each lighter band overpaints its inner part, so what
  * survives is a ramp from the face down to the base (render.ts).
  */
-export const SIDE_BAND_FACTORS: readonly number[] = [0.62, 0.92, 1.16];
+export const SIDE_BAND_FACTORS: readonly number[] = [0.52, 0.95, 1.22];
 
 /**
  * Soft drop shadow, baked once into a texture and blitted per tile.
  *
  * Each entry grows the tile silhouette by `grow` board px and paints it black
- * at `alpha`; drawn largest-first they accumulate to ~0.35 alpha at the
- * contact edge, fading to 0.06 at the outer reach — a ramp, not a hard edge.
+ * at `alpha`; drawn largest-first they accumulate to ~0.42 alpha at the
+ * contact edge, fading to 0.065 at the outer reach — a ramp, not a hard edge.
+ * Issue #86 deepened and widened the stack: with the face ladder softened, the
+ * cast shadow is the cue that detaches a raised tile from the layer below,
+ * and its reach has to clear the larger LAYER_LIFT visibly.
  */
 // Same alpha on every ring is deliberate, not a copy-paste: the ramp comes from
 // how many rings overlap at a given distance, not from the per-ring value.
 export const SHADOW_RINGS: readonly { readonly grow: number; readonly alpha: number }[] = [
-  { grow: 11, alpha: 0.06 },
-  { grow: 8.5, alpha: 0.06 },
-  { grow: 6.5, alpha: 0.06 },
-  { grow: 5, alpha: 0.06 },
-  { grow: 3.5, alpha: 0.06 },
-  { grow: 2, alpha: 0.06 },
-  { grow: 0.8, alpha: 0.06 },
+  { grow: 16, alpha: 0.065 },
+  { grow: 13, alpha: 0.065 },
+  { grow: 10.5, alpha: 0.065 },
+  { grow: 8, alpha: 0.065 },
+  { grow: 6, alpha: 0.065 },
+  { grow: 4, alpha: 0.065 },
+  { grow: 2.5, alpha: 0.065 },
+  { grow: 1, alpha: 0.065 },
 ];
 
 /** Shadow offset in board px. The lift is up-left, so the light is too. */

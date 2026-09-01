@@ -11,8 +11,11 @@ export const HALF_UNIT_X = 32;
 export const HALF_UNIT_Y = 42;
 export const TILE_W = 2 * HALF_UNIT_X;
 export const TILE_H = 2 * HALF_UNIT_Y;
-/** Per-layer up-left shift of the top face — the 3D "lift" of stacked tiles. */
-export const LAYER_LIFT = 7;
+/** Per-layer up-left shift of the top face — the 3D "lift" of stacked tiles.
+ *  Issue #86 raised it from 7: lower layers peek out clearly instead of as a
+ *  sliver, and the thicker side face (SIDE_DEPTH tracks this) reads as a
+ *  block, so stack height shows in side thickness. */
+export const LAYER_LIFT = 11;
 /**
  * Thickness of a tile's visible side face, in board px. One tile's own depth,
  * identical on every layer: extruding by the whole stack height instead makes

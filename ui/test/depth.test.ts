@@ -154,18 +154,22 @@ test('the outline clears the 3:1 non-text bar against its own face on every laye
 
 // --- greyscale survival -------------------------------------------------------
 
-test('the layer shift is a pure luminance ladder, so depth survives greyscale', () => {
+test('issue #86: the face ladder is a whisper — monotone, but faces stay bright', () => {
+  // Depth's greyscale survival moved to the occlusion cues (cast shadow, side
+  // bevel, layer lift — all achromatic); the face ladder is no longer asked to
+  // carry it. It must still recede monotonically (never invert), and it must
+  // never darken a face enough to eat the ink palette's contrast headroom —
+  // which is the whole point of softening it.
   for (let topZ = 1; topZ <= MAX_TOP_Z; topZ++) {
     for (let z = 1; z <= topZ; z++) {
       const upper = relativeLuminance(tileShade(z, topZ).face);
       const lower = relativeLuminance(tileShade(z - 1, topZ).face);
       assert.ok(upper > lower, `z=${z} must be lighter than z=${z - 1} (topZ=${topZ})`);
-      assert.ok(
-        upper - lower >= 0.04,
-        `z=${z}→${z - 1} luminance step ${(upper - lower).toFixed(3)} is too small to see`,
-      );
     }
   }
+  const deepest = relativeLuminance(tileShade(0, MAX_TOP_Z).face);
+  const top = relativeLuminance(tileShade(MAX_TOP_Z, MAX_TOP_Z).face);
+  assert.ok(deepest / top >= 0.85, `deepest face luminance ${(deepest / top).toFixed(2)}× the top's — no longer bright`);
 });
 
 test('the side face ramps from light at the top face to near-dark at its base', () => {
