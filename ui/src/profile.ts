@@ -62,14 +62,27 @@ export function sanitizeName(raw: string): string {
   return name === '' ? DEFAULT_NAME : name;
 }
 
+/** How the player answered the first-launch prompt (issue #105): set up a
+ *  named profile, or play as a guest. */
+export type PlayerChoice = 'named' | 'guest';
+
+function isPlayerChoice(value: unknown): value is PlayerChoice {
+  return value === 'named' || value === 'guest';
+}
+
 export interface Profile {
   readonly name: string;
   readonly avatar: string;
+  /** `null` means the player has never been asked — the welcome gate shows.
+   *  A profile stored before issue #105 parses to `null` too, so an existing
+   *  player is asked once and never again. */
+  readonly choice: PlayerChoice | null;
 }
 
 export const DEFAULT_PROFILE: Profile = {
   name: DEFAULT_NAME,
   avatar: DEFAULT_AVATAR_ID,
+  choice: null,
 };
 
 export const PROFILE_STORAGE_KEY = 'mahjong.profile.v1';
@@ -83,6 +96,7 @@ export function parseProfile(record: unknown): Profile {
   return {
     name: typeof raw['name'] === 'string' ? sanitizeName(raw['name']) : DEFAULT_NAME,
     avatar: isAvatarId(raw['avatar']) ? raw['avatar'] : DEFAULT_AVATAR_ID,
+    choice: isPlayerChoice(raw['choice']) ? raw['choice'] : null,
   };
 }
 
@@ -110,6 +124,13 @@ export class ProfileStore {
       writeRecord(this.storage, this.key, this.current);
     }
     return name;
+  }
+
+  /** Record the welcome-gate answer (issue #105) so it is never asked again. */
+  setChoice(choice: PlayerChoice): void {
+    if (choice === this.current.choice) return;
+    this.current = { ...this.current, choice };
+    writeRecord(this.storage, this.key, this.current);
   }
 
   /** Pick an avatar. An unknown id is ignored rather than stored. */
