@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { HOLDER_SLOTS, generateValidatedLevel, parseLayout } from '@mahjongsolitaire/core';
+import { HOLDER_SLOTS, concealedTileIds, generateValidatedLevel, parseLayout } from '@mahjongsolitaire/core';
 import type { Layout, TileId } from '@mahjongsolitaire/core';
 import { Game } from '../src/game.js';
 import { SAVE_STORAGE_KEY, SAVE_VERSION, SaveStore, captureSave, parseSave, reopen } from '../src/save.js';
@@ -187,6 +187,24 @@ test('a resumed game keeps playing identically to one that never quit', () => {
     }
   }
   assert.deepEqual(fingerprint(resumed), fingerprint(live));
+});
+
+test('reopen with a conceal bucket re-derives that band’s concealment (issue #79)', () => {
+  const level = generateValidatedLevel(TURTLE, SAMPLE_SEED);
+  const live = new Game(level, undefined, concealedTileIds(level, 'medium'));
+  const save = captureSave(live, { shuffles: 0, elapsedMs: 0 });
+  const resumed = reopen(TURTLE, save, 'medium');
+  assert.notEqual(resumed, null);
+  const hidden = (g: Game) =>
+    g.board
+      .allTiles()
+      .filter((t) => g.isFaceHidden(t.id))
+      .map((t) => t.id);
+  assert.deepEqual(hidden(resumed!), hidden(live));
+  assert.ok(hidden(live).length > 0, 'the medium band conceals at least one tile');
+  // Without the bucket the default (difficulty-derived) set applies, as before.
+  const plain = reopen(TURTLE, save);
+  assert.notEqual(plain, null);
 });
 
 test('resume restores a live selection, and the undo stack behind it', () => {

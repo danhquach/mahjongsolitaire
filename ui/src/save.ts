@@ -47,8 +47,14 @@
 // record from an older build, a hand-edited one, or a layout that has since
 // changed all land there.
 
-import { HOLDER_SLOTS, generateValidatedLevel } from '@mahjongsolitaire/core';
-import type { Layout, MoveRecord, ScoreSnapshot, TileId } from '@mahjongsolitaire/core';
+import { HOLDER_SLOTS, concealedTileIds, generateValidatedLevel } from '@mahjongsolitaire/core';
+import type {
+  DifficultyBucket,
+  Layout,
+  MoveRecord,
+  ScoreSnapshot,
+  TileId,
+} from '@mahjongsolitaire/core';
 import { Game } from './game.js';
 import type { GameSnapshot } from './game.js';
 import { clearRecord, readRecord, writeRecord } from './storage.js';
@@ -309,14 +315,23 @@ export function parseSave(record: unknown): SaveState | null {
  * reproduces it exactly (spec §9 key invariant), and the validating generator
  * confirms the seed still validates on this build.
  */
-export function reopen(layout: Layout, save: SaveState): Game | null {
+export function reopen(
+  layout: Layout,
+  save: SaveState,
+  concealBucket?: DifficultyBucket,
+): Game | null {
   if (layout.id !== save.layoutId) return null;
   try {
     const level = generateValidatedLevel(layout, save.seed);
     // A reseeded deal is a different deal: the save's tile ids and faces belong
     // to the seed that validated when it was written.
     if (level.seed !== save.seed) return null;
-    return new Game(level, save.snapshot);
+    // A ladder deal conceals by its ladder band (issue #79), which the save
+    // does not record — the caller re-derives it from (layoutId, seed), the
+    // same way the deal itself is re-derived.
+    const concealed =
+      concealBucket === undefined ? undefined : concealedTileIds(level, concealBucket);
+    return new Game(level, save.snapshot, concealed);
   } catch {
     return null;
   }

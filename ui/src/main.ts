@@ -27,8 +27,23 @@
 // that offers only a restart, because there is nothing else left to offer.
 
 import { Application } from 'pixi.js';
-import { HOLDER_SLOTS, generateValidatedLevel, parseLayout } from '@mahjongsolitaire/core';
-import type { MoveRecord, Slot, TileId } from '@mahjongsolitaire/core';
+import {
+  HOLDER_SLOTS,
+  bandForLevel,
+  concealBucketForBand,
+  concealedTileIds,
+  generateValidatedLevel,
+  parseLadder,
+  parseLayout,
+} from '@mahjongsolitaire/core';
+import type {
+  DifficultyBucket,
+  LadderEntry,
+  Layout,
+  MoveRecord,
+  Slot,
+  TileId,
+} from '@mahjongsolitaire/core';
 import { A11yLayer, Announcer, slotPosition } from './a11y.js';
 import type { A11yTile } from './a11y.js';
 import { BoosterCharges } from './boosters.js';
@@ -47,6 +62,7 @@ import { hitTest } from './hit-test.js';
 import { HUD_PLACEMENTS, chooseHudPlacement } from './hud-fit.js';
 import type { HudCandidate, HudPlacement } from './hud-fit.js';
 import { BoardRenderer } from './render.js';
+import { ProgressStore } from './progress.js';
 import { SaveStore, captureSave, reopen } from './save.js';
 import { SettingsStore, TILE_SIZE_FACTOR, TILE_SIZE_LABEL, TILE_SIZES } from './settings.js';
 import type { TileSize } from './settings.js';
@@ -78,8 +94,13 @@ function el<T extends HTMLElement>(id: string): T {
   return node as T;
 }
 
-function randomSeed(): number {
-  return (Math.random() * 0x100000000) >>> 0;
+/** Fetch and parse a shipped layout file (issue #79: any of the ten). */
+async function fetchLayout(id: string): Promise<Layout> {
+  // The id can come from a stored save record; never let it shape a path.
+  if (!/^[a-z0-9_]+$/.test(id)) throw new Error(`unsafe layout id: ${id}`);
+  const res = await fetch(`layouts/${id}.json`);
+  if (!res.ok) throw new Error(`layout fetch failed: ${res.status}`);
+  return parseLayout(await res.json());
 }
 
 /** OS-level motion preference (issue #44). Absent `matchMedia` (old browsers,
@@ -98,6 +119,8 @@ async function start(): Promise<void> {
   const overlayTitle = el<HTMLElement>('overlay-title');
   const overlayText = el<HTMLElement>('overlay-text');
   const overlayRestart = el<HTMLButtonElement>('overlay-restart');
+  const overlayNew = el<HTMLButtonElement>('overlay-new');
+  const levelEl = el<HTMLElement>('level');
   const overlayShuffle = el<HTMLButtonElement>('overlay-shuffle');
   const overlayUndo = el<HTMLButtonElement>('overlay-undo');
   const a11yRoot = el<HTMLDivElement>('a11y-layer');
@@ -109,9 +132,44 @@ async function start(): Promise<void> {
   const timeStat = el<HTMLElement>('time-stat');
   const elapsedEl = el<HTMLElement>('elapsed');
 
-  const layoutRes = await fetch('layouts/turtle_classic.json');
-  if (!layoutRes.ok) throw new Error(`layout fetch failed: ${layoutRes.status}`);
-  const layout = parseLayout(await layoutRes.json());
+  // One storage handle for every persisted concern (charges, settings, save,
+  // ladder progress). Created before the layout is chosen: the save and the
+  // ladder position are what decide which layout to boot into (issue #79).
+  const storage = localKeyValueStorage();
+  const progress = new ProgressStore(storage);
+  const saves = new SaveStore(storage);
+
+  // The ladder is the level sequence (decision 0011): 150 entries, each naming
+  // a layout and the seed that deals it.
+  const ladderRes = await fetch('ladder.json');
+  if (!ladderRes.ok) throw new Error(`ladder fetch failed: ${ladderRes.status}`);
+  const ladder = parseLadder(await ladderRes.json());
+
+  /** The ladder entry a (layoutId, seed) pair belongs to — how a save record,
+   *  which stores neither level number nor band, is placed back on the ladder. */
+  function ladderEntryFor(layoutId: string, seed: number): LadderEntry | undefined {
+    return ladder.find((e) => e.layoutId === layoutId && e.seed === seed);
+  }
+
+  /** The concealment bucket a ladder level deals at (decision 0011). */
+  function concealBucketFor(level: number): DifficultyBucket {
+    return concealBucketForBand(bandForLevel(level).band);
+  }
+
+  // Boot into the saved game's layout when there is a save, else the current
+  // ladder level's. A save whose layout cannot be fetched (renamed id, older
+  // build) reads as absent, like every other untrusted record.
+  const saved = saves.load();
+  let entry = ladder[progress.level - 1]!;
+  let bootLayout: Layout | null = null;
+  if (saved !== null) {
+    try {
+      bootLayout = await fetchLayout(saved.layoutId);
+    } catch {
+      bootLayout = null;
+    }
+  }
+  let layout: Layout = bootLayout ?? (await fetchLayout(entry.layoutId));
 
   const app = new Application();
   await app.init({
@@ -127,13 +185,37 @@ async function start(): Promise<void> {
   // Below the a11y layer in paint order, so tile focus rings stay visible.
   boardDiv.insertBefore(app.canvas, a11yRoot);
 
+  /** Deal the current ladder level on `layout` (which must already be its
+   *  layout). Concealment follows the ladder band (decision 0011). */
+  function dealCurrentLevel(): Game {
+    const level = generateValidatedLevel(layout, entry.seed);
+    return new Game(level, undefined, concealedTileIds(level, concealBucketFor(progress.level)));
+  }
+
+  // Spec §7: resume mid-level after a force-quit. A save that cannot be
+  // trusted (older build, changed layout, hand-edited record) reads as absent
+  // and the player gets a fresh deal instead of an error. A ladder save's
+  // concealment band is re-derived from its (layoutId, seed); a save from
+  // outside the ladder (an older build's random deal) falls back to the
+  // difficulty-derived default, as before.
+  const savedEntry = saved === null ? undefined : ladderEntryFor(saved.layoutId, saved.seed);
+  const resumed =
+    saved === null
+      ? null
+      : reopen(
+          layout,
+          saved,
+          savedEntry === undefined ? undefined : concealBucketFor(savedEntry.level),
+        );
+  // A failed resume can leave the save's layout loaded; the fresh deal is the
+  // current ladder level's, so re-point at its layout first.
+  if (resumed === null && layout.id !== entry.layoutId) layout = await fetchLayout(entry.layoutId);
+  let game = resumed ?? dealCurrentLevel();
+
   const renderer = new BoardRenderer(app, layout.slots);
   const announcer = new Announcer(el<HTMLElement>('a11y-status'));
 
-  // One storage handle for every persisted concern (charges, settings, save).
-  const storage = localKeyValueStorage();
   const settings = new SettingsStore(storage);
-  const saves = new SaveStore(storage);
   const feedback = new Feedback(() => settings.value, webAudioPlayer(), navigatorVibrate());
 
   // Match / mismatch animation (issue #44). Reduced motion is the OS preference
@@ -154,15 +236,12 @@ async function start(): Promise<void> {
     },
   };
 
-  // Spec §7: resume mid-level after a force-quit. A save that cannot be
-  // trusted (older build, changed layout, hand-edited record) reads as absent
-  // and the player gets a fresh deal instead of an error.
-  const saved = saves.load();
-  const resumed = saved === null ? null : reopen(layout, saved);
-  let game = resumed ?? new Game(generateValidatedLevel(layout, randomSeed()));
   let flash: readonly number[] = [];
   let flashToken = 0;
   let overlayVisible = false;
+  /** A cross-layout level transition is in flight (issue #79): input on the
+   *  outgoing board is dropped until the new deal is in. */
+  let dealing = false;
   let settingsVisible = false;
   /** Tiles the last Hint pointed at — highlighted until the board changes. */
   let hintPair: readonly TileId[] = [];
@@ -208,6 +287,7 @@ async function start(): Promise<void> {
       hint: hintPair,
       dimBlocked: settings.value.highlightFree,
     });
+    levelEl.textContent = String(progress.level);
     scoreEl.textContent = String(game.score);
     tilesLeftEl.textContent = String(game.tilesLeft);
     syncBoosterButtons();
@@ -296,10 +376,19 @@ async function start(): Promise<void> {
     const canUndo = status === 'stuck' && charges.has('undo') && game.undoDepth > 0;
     overlayShuffle.hidden = !canShuffle;
     overlayUndo.hidden = !canUndo;
+    // Won overlays retitle these; every other dialog gets the defaults back.
+    overlayRestart.hidden = false;
+    overlayNew.textContent = 'New game';
     if (status === 'won') {
-      overlayTitle.textContent = 'Level complete!';
+      // Advance the ladder exactly once per win: this branch is inside the
+      // once-per-level transition (the overlayVisible guard above).
+      const cleared = progress.level;
+      const atEnd = progress.advance() === cleared;
+      overlayTitle.textContent = `Level ${cleared} complete!`;
       overlayText.textContent = `Final score: ${game.score}`;
-      announcer.say(`Level complete. Final score ${game.score}.`);
+      overlayNew.textContent = atEnd ? 'Play again' : 'Next level';
+      overlayRestart.hidden = true;
+      announcer.say(`Level ${cleared} complete. Final score ${game.score}.`);
     } else if (status === 'lost') {
       overlayTitle.textContent = 'Holder full';
       overlayText.textContent =
@@ -329,7 +418,13 @@ async function start(): Promise<void> {
     // Focus the way out, not the way back: Shuffle if it can help, else Undo,
     // and only then the restart the player loses progress to.
     //
-    const wayOut = canShuffle ? overlayShuffle : canUndo ? overlayUndo : overlayRestart;
+    const wayOut = canShuffle
+      ? overlayShuffle
+      : canUndo
+        ? overlayUndo
+        : overlayRestart.hidden
+          ? overlayNew
+          : overlayRestart;
     wayOut.focus();
     // …and again on the next task, which issue #63 is what surfaced. A dialog
     // opened from a tap on the board is opened inside the canvas `pointerdown`
@@ -637,6 +732,7 @@ async function start(): Promise<void> {
   /** One booster press: run it, charge only a successful use, then speak the
    *  outcome and the remaining balance. */
   function useBooster(kind: BoosterKind): void {
+    if (dealing) return;
     // Only the rail can reach this branch: the dialog hides a booster it has no
     // charge for, and the rail is inert while the dialog is open.
     if (!charges.has(kind)) {
@@ -731,6 +827,7 @@ async function start(): Promise<void> {
   }
 
   function applyTap(hit: Hit): void {
+    if (dealing) return;
     // Elapsed *play* time, not performance.now(): a resumed page restarts
     // performance.now() at 0 while the restored combo ladder still holds the
     // previous session's timestamps, and the ScoreKeeper rejects a clock that
@@ -745,7 +842,7 @@ async function start(): Promise<void> {
   /** Tap on a tile in the holder (issue #43): same select / match semantics as
    *  a free board tile, reached through the strip's own button. */
   function activateHeld(id: TileId): void {
-    if (game.status() !== 'playing') return;
+    if (dealing || game.status() !== 'playing') return;
     const before = heldIds();
     const shownBefore = shownConcealed();
     finishTap(game.tapHeld(id, elapsed.ms), before, shownBefore);
@@ -808,8 +905,35 @@ async function start(): Promise<void> {
     );
   }
 
-  function newGame(nextSeed: number): void {
-    game = new Game(generateValidatedLevel(layout, nextSeed));
+  /**
+   * Deal the current ladder level (issue #79). Restart and New game are the
+   * same deal now: the ladder fixes each level's layout and seed, so variety
+   * comes from advancing, not re-rolling. When the level's layout differs
+   * from the loaded one (a win advanced the ladder), it is fetched and the
+   * renderer re-pointed first.
+   */
+  async function startLevel(): Promise<void> {
+    if (dealing) return;
+    const next = ladder[progress.level - 1]!;
+    if (next.layoutId !== layout.id) {
+      // The fetch yields the event loop: block input until the new deal is in,
+      // or a tap lands on the outgoing board and mutates a game about to be
+      // discarded (its save clobbered by the new deal's).
+      dealing = true;
+      try {
+        layout = await fetchLayout(next.layoutId);
+      } catch {
+        // Offline mid-session: keep the loaded board rather than a blank one.
+        announcer.say('Could not load the next level. Check your connection and try again.');
+        return;
+      } finally {
+        dealing = false;
+      }
+      renderer.setLayout(layout.slots);
+      if (applyHudPlacement()) app.resize();
+    }
+    entry = next;
+    game = dealCurrentLevel();
     flash = [];
     flashToken++;
     animator.clear();
@@ -824,7 +948,7 @@ async function start(): Promise<void> {
     // Hiding the dialog drops focus to <body>; put it back on the board. Only
     // when the dialog was the source — a header tap should keep its own focus.
     if (fromDialog) a11y.focusActive();
-    announcer.say(`New game dealt. ${game.tilesLeft} tiles.`);
+    announcer.say(`New game dealt. Level ${progress.level}. ${game.tilesLeft} tiles.`);
   }
 
   // Deselect (issue #62). Activating the selected tile again now parks it, so
@@ -869,10 +993,10 @@ async function start(): Promise<void> {
   boosterUi.shuffle.button.addEventListener('click', () => useBooster('shuffle'));
   overlayShuffle.addEventListener('click', () => useBooster('shuffle'));
   overlayUndo.addEventListener('click', () => useBooster('undo'));
-  el<HTMLButtonElement>('btn-new').addEventListener('click', () => newGame(randomSeed()));
-  el<HTMLButtonElement>('btn-restart').addEventListener('click', () => newGame(game.level.seed));
-  el<HTMLButtonElement>('overlay-new').addEventListener('click', () => newGame(randomSeed()));
-  overlayRestart.addEventListener('click', () => newGame(game.level.seed));
+  el<HTMLButtonElement>('btn-new').addEventListener('click', () => void startLevel());
+  el<HTMLButtonElement>('btn-restart').addEventListener('click', () => void startLevel());
+  overlayNew.addEventListener('click', () => void startLevel());
+  overlayRestart.addEventListener('click', () => void startLevel());
 
   wireSettings();
   syncSettingsControls();
@@ -935,6 +1059,16 @@ async function start(): Promise<void> {
     },
     get hintPair() {
       return hintPair;
+    },
+    /** Ladder position + loaded layout (issue #79 QA). */
+    get ladderLevel() {
+      return progress.level;
+    },
+    get dealing() {
+      return dealing;
+    },
+    get layoutId() {
+      return layout.id;
     },
     /** Holder state (issues #43 / #62 / #63 QA). */
     holder(): {

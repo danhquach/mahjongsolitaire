@@ -193,9 +193,9 @@ export class BoardRenderer {
   private readonly tileNodes = new Map<TileId, Container>();
   /** Data-URL cache for the holder strip's tile pictures (issue #66). */
   private readonly tileImages = new Map<string, string>();
-  private readonly bounds: Rect;
+  private bounds: Rect;
   /** Topmost layer of the loaded layout — the depth ladder's bright end. */
-  private readonly topZ: number;
+  private topZ: number;
   private readonly shadowTexture: Texture;
   private viewScale = 1;
   /** Tile Size setting (issue #14): a fraction of the fit-to-viewport scale. */
@@ -210,6 +210,16 @@ export class BoardRenderer {
     this.shadowTexture = this.bakeShadow();
     this.viewport.addChild(this.boardLayer, this.effectsLayer);
     app.stage.addChild(this.viewport);
+  }
+
+  /** Point this renderer at a different layout (issue #79: the ladder changes
+   *  layouts between levels). The holder's tile-picture cache is dropped too:
+   *  those bakes shade by `topZ`, which just changed. */
+  setLayout(layoutSlots: readonly { x: number; y: number; z: number }[]): void {
+    this.bounds = boardBounds(layoutSlots);
+    this.topZ = Math.max(...layoutSlots.map((s) => s.z));
+    this.tileImages.clear();
+    this.layoutToViewport();
   }
 
   get scale(): number {
