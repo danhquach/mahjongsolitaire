@@ -1,29 +1,30 @@
-// Move stack: selection, match moves, unlimited-depth undo (spec §5, issue #10).
+// Move stack: selection, match moves, and the Undo return (spec §5, issue #10).
 //
 // Wraps a Board + ScoreKeeper and tracks the player's selection. Every played
-// move records the pre-move selection and score state, so undo restores both
-// exactly (spec §5: "must restore selection state and score"). Deterministic:
-// timestamps are inputs, and stateHash() is a pure function of the tracked
-// state — the §11.1 acceptance property `apply(moves) → undo(n) → apply(same n)`
-// yields an identical hash.
+// move is recorded — the record is the level's history (spec §9 replay order,
+// holdsUsed) and the save format's undo chain. Deterministic: timestamps are
+// inputs, and stateHash() is a pure function of the tracked state.
 //
 // Issue #14 adds `state` / `restoreState`: the stack's own contribution to the
 // spec §9 save state. Board occupancy travels separately (Board's constructor
 // already round-trips `allTiles()` plus `holderSlots()`), so the two together
-// restore a game hash-identically — including its remaining undo depth.
+// restore a game hash-identically — including which tiles are parked, in what
+// order, so Undo keeps returning them newest-first after a resume.
 //
-// Issue #43 makes the holder part of the same contract. A move is no longer
-// always a pair: a hold is a recorded move too, so undo walks back through
-// holds in the order they happened and the holder's contents come back exactly.
-// A match records which holder slot each of its tiles came out of (null for one
-// taken off the board), because that is the only thing `restore` cannot
-// re-derive — the tile has to go back where the player put it.
+// Issue #43 makes the holder part of the same contract: a hold is a recorded
+// move too. A match records which holder slot each of its tiles came out of
+// (null for one taken off the board).
 //
-// Issue #63 removes the other direction. The holder is one-way (decision 0009):
-// a parked tile can only leave by being matched, so `unhold` is no longer a
-// move and `MoveRecord` is a pair or a hold. `Board.unhold` survives as the
-// mechanism this file rewinds a hold with — undoing a hold is not the player
-// taking a tile back, it is the move never having happened.
+// Issue #63 made the holder one-way (decision 0009): a parked tile can only
+// leave by being matched, so `unhold` is no longer a move and `MoveRecord` is
+// a pair or a hold.
+//
+// Issue #100 reworks Undo to the Vita Mahjong behavior: `undo()` no longer
+// rewinds arbitrary moves. It returns the most recently parked tile still in
+// the holder to its own layout slot — matched pairs are permanent, and no
+// amount of Undo brings a matched tile back. Score and later matches are
+// untouched; the undone hold's record is removed, so history reads as if that
+// park never happened (holdsUsed rolls back with it).
 
 import type { Board, TileId } from './board.js';
 import { canMatch, matchPair } from './match.js';
@@ -31,7 +32,10 @@ import { hashString } from './rng.js';
 import { ScoreKeeper } from './scoring.js';
 import type { MatchScore, ScoreSnapshot } from './scoring.js';
 
-/** What every move records so undo can rewind the state around it. */
+/** What every move records. `prevSelection` / `prevScores` are no longer
+ *  replayed by `undo` (issue #100: matches are permanent, and a return leaves
+ *  the score alone) but stay in the record: the save format's undo-chain
+ *  validation reads them, and the history is the audit trail either way. */
 export interface MoveBase {
   readonly atMs: number;
   readonly prevSelection: TileId | null;
@@ -162,34 +166,41 @@ export class MoveStack {
     return index === -1 ? null : index;
   }
 
+  /** Parked tiles the Undo booster can still return (issue #100): tiles in
+   *  the holder right now. Every held tile has exactly one live hold record —
+   *  holds are the only way in, and `undo` removes the record on the way out —
+   *  so this is also how many times Undo can fire. */
+  get undoDepth(): number {
+    return this.stack.reduce(
+      (n, m) => n + (m.kind === 'hold' && this.board.isHeld(m.tile) ? 1 : 0),
+      0,
+    );
+  }
+
   /**
-   * Undo the last move — a match or a hold — restoring the board, the holder,
-   * the score state and the selection as of just before it. Returns the undone
-   * record, or null on an empty stack.
+   * Undo (issue #100, Vita Mahjong behavior): return the most recently parked
+   * tile still in the holder to its own layout slot, re-covering whatever it
+   * had freed. Matched pairs are permanent — a hold whose tile was later
+   * matched out of the holder is skipped like any other matched tile. Score,
+   * combo ladder and later matches are untouched. Returns the undone hold
+   * record, or null when the holder holds nothing to return (no charge).
+   *
+   * The record is removed from the stack: history reads as if that park never
+   * happened, which keeps the save's undo chain walking back to a pristine
+   * deal and rolls holdsUsed back with it.
    */
-  undo(): MoveRecord | null {
-    const record = this.stack.pop();
-    if (!record) return null;
-    switch (record.kind) {
-      case 'match':
-        this.board.restore(record.a);
-        this.board.restore(record.b);
-        // A tile matched out of the holder goes back to the slot it was in.
-        // `restore` is the only way back onto the lattice, so it lands on the
-        // board for an instant first — its own slot, which nothing else can
-        // ever occupy, so the round trip is safe (see Board.unhold).
-        if (record.heldA !== null) this.board.holdAt(record.a, record.heldA);
-        if (record.heldB !== null) this.board.holdAt(record.b, record.heldB);
-        break;
-      case 'hold':
-        // Not the player taking a tile back (decision 0009 forbids that) — the
-        // hold never happened, so the tile is where it was before it.
-        this.board.unhold(record.tile);
-        break;
+  undo(): HoldMove | null {
+    for (let i = this.stack.length - 1; i >= 0; i--) {
+      const record = this.stack[i]!;
+      if (record.kind !== 'hold' || !this.board.isHeld(record.tile)) continue;
+      this.stack.splice(i, 1);
+      this.board.unhold(record.tile);
+      // The returned tile re-covers what parking it freed — possibly the
+      // selected tile — so the selection does not survive the return.
+      this.selected = null;
+      return record;
     }
-    this.scores.restore(record.prevScores);
-    this.selected = record.prevSelection;
-    return record;
+    return null;
   }
 
   /** Pairs played so far, oldest first (spec §9 replay order). Holds are moves

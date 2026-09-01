@@ -1,6 +1,8 @@
-// Move stack + undo (issue #10, spec §5, §11.1): unlimited-depth undo that
-// restores selection state and score, and the acceptance property
-// `apply(moves) → undo(n) → apply(same n)` yields an identical state hash.
+// Move stack + undo (issue #10, spec §5, §11.1; reworked by issue #100):
+// matches are permanent, and undo returns the most recently parked tile from
+// the holder to its own slot — score, combo ladder and later matches
+// untouched. The §11.1 acceptance property: `park(k) → undo(k)` restores the
+// pre-park state hash exactly.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -62,41 +64,84 @@ test('select requires a matchable tile', () => {
   assert.equal(stack.selection, 1);
 });
 
-// --- undo ---------------------------------------------------------------------
+// --- undo (issue #100: return the newest parked tile; matches are permanent) --
 
-test('undo restores the pair, the score, and the selection', () => {
+test('undo returns the newest parked tile to its own slot', () => {
   const board = rowBoard();
-  const scores = new ScoreKeeper();
-  const stack = new MoveStack(board, scores);
-  stack.select(2);
-  const before = stack.stateHash();
-  stack.play(2, 3, 1000);
-  assert.equal(stack.undo()?.kind, 'match');
-  assert.equal(board.get(2).removed, false);
-  assert.equal(board.get(3).removed, false);
-  assert.equal(scores.total, 0);
-  assert.equal(stack.selection, 2);
-  assert.equal(stack.stateHash(), before);
+  const stack = new MoveStack(board);
+  stack.hold(0, 1000);
+  stack.hold(2, 2000);
+  const undone = stack.undo();
+  assert.equal(undone?.kind, 'hold');
+  assert.equal(undone?.tile, 2, 'newest parked tile comes back first');
+  assert.equal(board.isHeld(2), false);
+  assert.equal(board.isFree(2), true, 'back on its own layout slot');
+  assert.equal(board.isHeld(0), true, 'older parked tile stays parked');
+  assert.equal(stack.undoDepth, 1);
 });
 
-test('undo on an empty stack returns null', () => {
-  assert.equal(new MoveStack(rowBoard()).undo(), null);
-});
-
-test('undo restores the combo ladder, not just the total', () => {
+test('undo with an empty holder returns null — matches are not undoable', () => {
   const stack = new MoveStack(rowBoard());
+  assert.equal(stack.undo(), null, 'fresh deal: nothing parked');
   stack.play(0, 1, 1000);
-  stack.play(2, 3, 2000); // in-window: ×1.2 → 120
-  assert.equal(stack.score, 220);
+  assert.equal(stack.undo(), null, 'a played match is permanent');
+  assert.equal(stack.depth, 1, 'the match record stays');
+  assert.equal(stack.score, 100, 'and so does its score');
+});
+
+test('undo leaves later matches, their score, and the combo ladder untouched', () => {
+  const board = rowBoard();
+  const stack = new MoveStack(board);
+  stack.hold(0, 1000);
+  stack.play(2, 3, 2000); // played after the park
+  const scoreAfterMatch = stack.score;
+  const undone = stack.undo();
+  assert.equal(undone?.tile, 0, 'the parked tile returns');
+  assert.equal(board.get(2).removed, true, 'the later match stays played');
+  assert.equal(board.get(3).removed, true);
+  assert.equal(stack.score, scoreAfterMatch, 'score does not rewind');
+  // The ladder is untouched too: the return did not reset the streak, so an
+  // in-window follow-up match still multiplies.
+  const replay = stack.play(0, 1, 2500);
+  assert.equal(replay.multiplier, 1.2, 'combo ladder kept its streak');
+});
+
+test('a parked tile later matched out of the holder is not a candidate', () => {
+  const board = rowBoard();
+  const stack = new MoveStack(board);
+  stack.hold(0, 1000); // dots-1 parked
+  stack.play(0, 1, 2000); // matched out of the holder — gone for good
+  assert.equal(stack.undo(), null, 'nothing left to return');
+  assert.equal(board.get(0).removed, true);
+});
+
+test('undo removes the hold record: holdsUsed rolls back, history reads clean', () => {
+  const stack = new MoveStack(rowBoard());
+  stack.hold(0, 1000);
+  assert.equal(stack.holdsUsed, 1);
   stack.undo();
-  const replay = stack.play(2, 3, 2000);
-  assert.equal(replay.multiplier, 1.2);
-  assert.equal(stack.score, 220);
+  assert.equal(stack.holdsUsed, 0);
+  assert.equal(stack.depth, 0, 'the park never happened');
+});
+
+test('undo clears the selection — the return can re-cover the selected tile', () => {
+  const board = new Board([
+    { id: 0, slot: slot(0, 0, 1), face: 'dots-1' }, // covers tile 1
+    { id: 1, slot: slot(0, 0, 0), face: 'dots-1' },
+    { id: 2, slot: slot(4, 0), face: 'bamboo-2' },
+    { id: 3, slot: slot(8, 0), face: 'bamboo-2' },
+  ]);
+  const stack = new MoveStack(board);
+  stack.hold(0, 1000); // frees tile 1
+  stack.select(1);
+  stack.undo(); // tile 0 returns and covers tile 1 again
+  assert.equal(stack.selection, null);
+  assert.equal(board.isFree(1), false, 'the returned tile re-covers it');
 });
 
 // --- §11.1 acceptance property --------------------------------------------------
 
-test('property: apply(moves) → undo(n) → apply(same n) yields identical state hash', () => {
+test('property: park(k) → undo(k) restores the pre-park state hash exactly', () => {
   const rng = mulberry32(0xdecafbad);
   for (const layout of SEED_LAYOUTS) {
     for (const seed of [1, 42, 90210]) {
@@ -106,42 +151,39 @@ test('property: apply(moves) → undo(n) → apply(same n) yields identical stat
 
       // Play a random-length prefix of random legal moves.
       const total = 1 + Math.floor(rng() * (level.solution.length - 1));
-      const played: Array<readonly [TileId, TileId]> = [];
       for (let i = 0; i < total; i++) {
         const pairs = legalPairs(board);
         if (pairs.length === 0) break;
         const move = pairs[Math.floor(rng() * pairs.length)]!;
         stack.play(move[0], move[1], (i + 1) * 1000);
-        played.push(move);
       }
 
-      const hashAfterApply = stack.stateHash();
-      const n = 1 + Math.floor(rng() * played.length);
+      const hashBeforeParks = stack.stateHash();
+      // Park up to 3 free tiles (the 4th would lose the level).
+      const free = board.freeTileIds();
+      const k = Math.min(3, free.length, 1 + Math.floor(rng() * 3));
+      for (let i = 0; i < k; i++) stack.hold(free[i]!, (total + i + 1) * 1000);
+      assert.equal(stack.undoDepth, k, `${layout.id} seed ${seed}: undoDepth counts the parks`);
 
-      // undo(n), then re-apply the same n moves with the same timestamps.
-      const undone = played.slice(played.length - n);
-      const baseMs = (played.length - n) * 1000;
-      for (let i = 0; i < n; i++) assert.notEqual(stack.undo(), null);
-      assert.notEqual(stack.stateHash(), hashAfterApply);
-      undone.forEach((move, i) => stack.play(move[0], move[1], baseMs + (i + 1) * 1000));
-
-      assert.equal(stack.stateHash(), hashAfterApply, `${layout.id} seed ${seed}`);
+      // Undo returns them newest-first, back to exactly the pre-park state.
+      for (let i = k - 1; i >= 0; i--) {
+        const undone = stack.undo();
+        assert.equal(undone?.tile, free[i], `${layout.id} seed ${seed}: newest-first`);
+      }
+      assert.equal(stack.undo(), null);
+      assert.equal(stack.stateHash(), hashBeforeParks, `${layout.id} seed ${seed}`);
     }
   }
 });
 
-test('unlimited depth: a full game can be undone back to the initial state', () => {
+test('a fully played game has nothing to undo — matched means gone', () => {
   const level = generateLevel(SEED_LAYOUTS[0]!, 7);
   const board = new Board(level.tiles);
   const stack = new MoveStack(board);
-  const initial = stack.stateHash();
   level.solution.forEach((move, i) => stack.play(move[0], move[1], (i + 1) * 1000));
   assert.equal(board.presentTiles().length, 0);
-  while (stack.undo());
-  assert.equal(stack.depth, 0);
-  assert.equal(stack.score, 0);
-  assert.equal(board.presentTiles().length, level.tiles.length);
-  assert.equal(stack.stateHash(), initial);
+  assert.equal(stack.undo(), null);
+  assert.equal(stack.depth, level.solution.length, 'the full history stays');
 });
 
 // --- state / restoreState (issue #14) -----------------------------------------
@@ -170,19 +212,24 @@ test('state + allTiles round-trip a mid-game stack hash-identically', () => {
   assert.deepEqual(reopened.stack.moves(), stack.moves());
 });
 
-test('a restored stack keeps its full undo depth, back to the initial state', () => {
+test('a restored stack keeps its parked tiles returnable, newest-first', () => {
   const level = generateLevel(SEED_LAYOUTS[0]!, 99);
   const board = new Board(level.tiles);
   const stack = new MoveStack(board);
-  const initial = stack.stateHash();
-  level.solution.slice(0, 12).forEach((move, i) => stack.play(move[0], move[1], (i + 1) * 1000));
+  level.solution.slice(0, 6).forEach((move, i) => stack.play(move[0], move[1], (i + 1) * 1000));
+  const [first, second] = board.freeTileIds();
+  stack.hold(first!, 7000);
+  stack.hold(second!, 8000);
 
-  const reopened = reopen(board.allTiles(), stack.state);
-  while (reopened.stack.undo());
-  assert.equal(reopened.stack.depth, 0);
-  assert.equal(reopened.stack.score, 0);
-  assert.equal(reopened.board.presentTiles().length, level.tiles.length);
-  assert.equal(reopened.stack.stateHash(), initial);
+  // The holder travels with the board occupancy (issue #14 / #43).
+  const reopenedBoard = new Board(board.allTiles(), { holder: board.holderSlots() });
+  const reopened = { board: reopenedBoard, stack: new MoveStack(reopenedBoard, new ScoreKeeper()) };
+  reopened.stack.restoreState(stack.state);
+  assert.equal(reopened.stack.undoDepth, 2, 'both parks survive the round-trip');
+  assert.equal(reopened.stack.undo()?.tile, second, 'newest-first after a resume');
+  assert.equal(reopened.stack.undo()?.tile, first);
+  assert.equal(reopened.stack.undo(), null, 'matches stay permanent');
+  assert.equal(reopened.stack.score, stack.score, 'returns never touch the score');
 });
 
 test('the combo ladder survives a round-trip: the next match keeps multiplying', () => {

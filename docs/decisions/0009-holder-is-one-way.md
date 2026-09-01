@@ -116,3 +116,21 @@ has to bucket against holder-aware play with the loss in the model.
   Rejected. `Board.unhold` is still there because undo needs it; a *move* nothing
   can produce is a save-format branch nothing can test, and this codebase's save
   reader only vouches for shapes it can actually see.
+
+## Follow-up (issue #100, 2026-09-01)
+
+This decision framed undoing a hold as "the move never having happened" —
+undo rewound *any* move, matches included, and the return-as-a-move was
+rejected. Issue #100 reworks the Undo booster to the Vita Mahjong behavior,
+which lands closer to a real return move than to a rewind: Undo now returns
+the most recently parked tile from the holder to its layout slot (one charge),
+and **matched pairs are permanent** — score, combo ladder and later matches
+are untouched, and no amount of Undo brings a matched tile back.
+
+What survives of this decision unchanged: the *tap* gesture is still one-way
+(no free un-park), `unhold` is still not a recorded move (`MoveRecord` remains
+a pair or a hold; the undone hold's record is removed, as if the park never
+happened), and a full holder still loses the level the moment the fourth slot
+fills — the loss dialog offers no Undo. What changes: the deadlock dialog
+offers Undo only when the holder has a tile to give back, because Undo can no
+longer rescue a deadlock caused purely by matching.

@@ -162,17 +162,18 @@ test('the loss outranks everything a playable board would say', () => {
   assert.notEqual(legalPairs(game.board).length, 0, 'even with a pair in plain sight');
 });
 
-test('undo is what takes a hold back — there is no return move', () => {
+test('undo returns the last park even off a loss the dialog never offers it for', () => {
   const game = new Game(FILL_TO_LOSE);
   for (let i = 0; i < HOLDER_SLOTS - 1; i++) park(game, i, i * 4);
   const survivable = game.stateHash();
   park(game, HOLDER_SLOTS - 1, 100);
   assert.equal(game.status(), 'lost');
 
-  // Undo still rewinds the hold — the dialog just does not offer it (main.ts
-  // inerts the rail behind the loss overlay), which is what makes it final in
-  // play while the move stack stays honest. What comes back is the position
-  // as it was: one vacancy, no takeable pair — a deadlock, not a live board.
+  // Undo can still return the losing park mechanically — the dialog just does
+  // not offer it (main.ts inerts the rail behind the loss overlay), which is
+  // what makes the loss final in play while the move stack stays honest. What
+  // comes back is the position as it was: one vacancy, no takeable pair — a
+  // deadlock, not a live board.
   assert.equal(game.undo()?.kind, 'hold');
   assert.equal(game.status(), 'stuck');
   assert.equal(game.stateHash(), survivable);
@@ -307,7 +308,7 @@ test('hint sees a holder pair rather than reporting no moves', () => {
 
 // --- undo ---------------------------------------------------------------------
 
-test('undo takes back a park and a holder match', () => {
+test('undo takes back a park; a holder match is permanent (issue #100)', () => {
   const game = new Game(COVERED);
   const fresh = game.stateHash();
 
@@ -317,13 +318,11 @@ test('undo takes back a park and a holder match', () => {
   assert.equal(game.stateHash(), fresh);
 
   game.tap(free(1), 2);
-  const parked = game.stateHash();
   game.tap(free(3), 3); // the pair clears in the holder
   assert.equal(game.tilesLeft, 2);
-  assert.equal(game.undo()?.kind, 'match');
-  assert.deepEqual(game.holderSlots(), [1, null, null, null], 'back into its own slot');
-  assert.equal(game.tilesLeft, 4);
-  assert.equal(game.stateHash(), parked);
+  assert.equal(game.undo(), null, 'matched out of the holder means gone');
+  assert.equal(game.tilesLeft, 2);
+  assert.deepEqual(game.holderSlots(), [null, null, null, null]);
 });
 
 test('the shuffle booster leaves the holder alone', () => {

@@ -1,8 +1,8 @@
 // Booster behavior on the game controller (issue #13, spec §5): Hint cycles
-// valid pairs, Undo has unlimited depth and restores score + holder, Shuffle
-// keeps the board solvable and its occupancy intact. Since issue #93 a pair is
-// played as two taps — the first parks its tile in the holder, the second
-// clears the pair there — so every pair is two undoable moves.
+// valid pairs, Undo returns the newest parked tile from the holder (issue
+// #100 — matches are permanent), Shuffle keeps the board solvable and its
+// occupancy intact. Since issue #93 a pair is played as two taps — the first
+// parks its tile in the holder, the second clears the pair there.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -97,58 +97,56 @@ test('hint returns null when no matching free pair exists', () => {
   assert.equal(new Game(STUCK).hint(), null);
 });
 
-// --- Undo ------------------------------------------------------------------
+// --- Undo (issue #100: return the newest parked tile) -----------------------
 
-test('undo restores the pair, the score and the holder', () => {
+test('undo returns the parked tile; a cleared pair is gone for good', () => {
   const game = newGame();
   const [a, b] = game.level.solution[0]!;
   game.tap(free(a), 0); // a to the holder
-  game.tap(free(b), 1); // the pair clears there
-  const tilesAfterMatch = game.tilesLeft;
-  assert.equal(game.score, 100);
+  assert.equal(game.undoDepth, 1);
 
-  const restored = game.undo();
-  assert.equal(restored?.kind, 'match');
-  assert.deepEqual(
-    restored?.kind === 'match' ? [restored.a, restored.b].sort() : null,
-    [a, b].sort(),
-  );
-  assert.equal(game.tilesLeft, tilesAfterMatch + 2);
-  assert.equal(game.score, 0);
-  assert.equal(game.board.get(a).removed, false);
-  assert.equal(game.board.get(b).removed, false);
-  assert.equal(game.board.isHeld(a), true, 'the match came out of the holder, so undo returns there');
-  // Undoing the hold too puts the whole pair back on the board.
-  assert.equal(game.undo()?.kind, 'hold');
-  assert.equal(game.board.isHeld(a), false);
+  const returned = game.undo();
+  assert.equal(returned?.kind, 'hold');
+  assert.equal(returned?.tile, a);
+  assert.equal(game.board.isHeld(a), false, 'back on the board');
+  assert.equal(game.undoDepth, 0);
+
+  // Play the pair through the holder; matched means gone.
+  game.tap(free(a), 1);
+  game.tap(free(b), 2);
+  assert.equal(game.score, 100);
+  assert.equal(game.undo(), null, 'nothing parked, nothing to undo');
+  assert.equal(game.score, 100, 'and no charge-worthy state change');
+  assert.equal(game.board.get(a).removed, true);
+  assert.equal(game.board.get(b).removed, true);
 });
 
-test('undo has unlimited depth and reports an empty stack', () => {
+test('undo never rewinds matches: a won game has nothing to undo', () => {
   const game = newGame();
   assert.equal(game.undo(), null, 'nothing to undo on a fresh deal');
-  const pairs = game.level.solution.length;
-  playMoves(game, pairs);
+  playMoves(game, game.level.solution.length);
   assert.equal(game.status(), 'won');
-  const depth = pairs * 2; // a hold and a match per pair (issue #93)
-  assert.equal(game.undoDepth, depth);
-  for (let i = depth; i > 0; i--) assert.notEqual(game.undo(), null, `undo #${depth - i + 1}`);
-  assert.equal(game.undoDepth, 0);
-  assert.equal(game.tilesLeft, game.level.tiles.length);
-  assert.equal(game.score, 0);
+  assert.equal(game.undoDepth, 0, 'every park was matched out — none are candidates');
   assert.equal(game.undo(), null);
+  assert.equal(game.tilesLeft, 0, 'no tile came back');
 });
 
-// Why Undo is offered as a way out of a deadlock: the pair it puts back was
-// legal when it was played, and undo rewinds to exactly that state.
-test('undo always leaves a playable pair on the board', () => {
+test('undo leaves later matches and their score alone', () => {
   const game = newGame();
-  playMoves(game, 3);
-  game.undo();
-  assert.equal(game.status(), 'playing');
-  assert.ok(legalPairs(game.board).length > 0);
-});
+  const [a1, b1] = game.level.solution[0]!;
+  const [a2] = game.level.solution[1]!;
+  game.tap(free(a2), 0); // park a tile from the second pair
+  game.tap(free(a1), 1); // then clear the first pair through the holder
+  game.tap(free(b1), 2);
+  const scoreAfter = game.score;
+  assert.ok(scoreAfter > 0);
 
-// --- Shuffle ---------------------------------------------------------------
+  const returned = game.undo();
+  assert.equal(returned?.tile, a2, 'the parked tile, not the match, comes back');
+  assert.equal(game.score, scoreAfter, 'score does not rewind');
+  assert.equal(game.board.get(a1).removed, true, 'the later match stays played');
+  assert.equal(game.board.get(b1).removed, true);
+});
 
 test('shuffle keeps occupancy and the face multiset, and stays solvable', () => {
   const game = newGame();
@@ -194,13 +192,14 @@ test('shuffle refuses a cleared board instead of charging for nothing', () => {
   assert.equal(game.shuffle(1), false);
 });
 
-test('undo across a shuffle still restores a matching pair', () => {
+test('undo across a shuffle still returns the parked tile', () => {
   const game = newGame();
   playMoves(game, 2);
+  const parked = game.board.freeTileIds()[0]!;
+  game.tap(free(parked), 1000);
   game.shuffle(4242);
-  const restored = game.undo();
-  assert.equal(restored?.kind, 'match');
-  const { a, b } = restored as { a: number; b: number };
-  assert.equal(game.board.get(a).face, game.board.get(b).face);
-  assert.equal(canMatch(game.board, a, b).ok, true);
+  const returned = game.undo();
+  assert.equal(returned?.tile, parked);
+  assert.equal(game.board.isHeld(parked), false);
+  assert.equal(game.board.get(parked).removed, false);
 });

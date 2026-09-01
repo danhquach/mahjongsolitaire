@@ -5,8 +5,9 @@
 // timeout (§6).
 //
 // Issue #13 adds the three boosters on top of the same core primitives:
-// `hint()` (solver-backed, cycling), `undo()` (the move stack's unlimited
-// depth), and `shuffle()` (face permutation re-validated for solvability).
+// `hint()` (solver-backed, cycling), `undo()` (since issue #100: returns the
+// newest parked tile from the holder — matches are permanent), and `shuffle()`
+// (face permutation re-validated for solvability).
 // Each reports whether it actually did anything; charge accounting lives in
 // boosters.ts and only spends on a successful use.
 //
@@ -61,7 +62,7 @@ import {
 import type {
   GeneratedLevel,
   MatchScore,
-  MoveRecord,
+  HoldMove,
   MoveStackState,
   Tile,
   TileId,
@@ -143,8 +144,9 @@ export class Game {
   private hintPairs: HintPair[] | null = null;
   private hintCursor = 0;
   /** Tiles dealt face-down (issue #64). Fixed for the whole level: matching a
-   *  concealed tile removes it, but nothing ever leaves this set — an undone
-   *  match brings the tile back concealed, which is what "survives undo" means. */
+   *  concealed tile removes it, but nothing ever leaves this set — a parked
+   *  tile Undo returns comes back concealed, which is what "survives undo"
+   *  means (matches themselves are permanent since issue #100). */
   private readonly concealed: ReadonlySet<TileId>;
   /** The one peek (issue #64, decision 0010). Everything else about face
    *  visibility is computed — see isFaceHidden — so re-concealing on undo,
@@ -284,9 +286,10 @@ export class Game {
     return this.stack.stateHash();
   }
 
-  /** Moves available to the Undo booster (spec §5: unlimited depth). */
+  /** Tiles the Undo booster can return (issue #100): parked tiles still in
+   *  the holder, newest first. Zero means a press has nothing to charge for. */
   get undoDepth(): number {
-    return this.stack.depth;
+    return this.stack.undoDepth;
   }
 
   /**
@@ -304,22 +307,20 @@ export class Game {
   }
 
   /**
-   * Undo booster (spec §5): take back the last move — a match or a hold, the
-   * only two kinds left once decision 0009 removed the return — with the board,
-   * holder, score and selection exactly as they were before it. Returns the
-   * undone record, or null on an empty move stack (nothing happened, nothing to
-   * charge for).
-   *
-   * Undoing a hold is not the player taking a parked tile back: the holder is
-   * one-way, and this is the move never having happened. The loss dialog offers
-   * no Undo and inerts the rail behind it, so a full holder stays final.
+   * Undo booster (issue #100, Vita Mahjong behavior): return the most recently
+   * parked tile from the holder to its own layout slot. Matched pairs are
+   * permanent — no amount of Undo brings a matched tile back — and the score,
+   * combo ladder and later matches are untouched. Returns the undone hold
+   * record, or null on an empty holder (nothing to return, nothing to charge
+   * for). The loss dialog still offers no Undo: the level ended the moment the
+   * fourth slot filled, so a full holder stays final (decision 0009).
    */
-  undo(): MoveRecord | null {
+  undo(): HoldMove | null {
     const record = this.stack.undo();
     if (record === null) return null;
     this.forgetHints();
-    // An undone concealed tile comes back face-down (the set is fixed), and the
-    // peek does not outlive the board it was taken on.
+    // A returned concealed tile comes back face-down (the set is fixed), and
+    // the peek does not outlive the board it was taken on.
     this.forgetPeek();
     return record;
   }
@@ -374,9 +375,10 @@ export class Game {
    * primitive. False — board untouched — when no solvable assignment exists
    * (or the board is already clear), so an impossible shuffle costs nothing.
    *
-   * Not an undoable move: the move stack keeps pointing at the pairs actually
-   * played, and undoing across a shuffle still restores a matching pair
-   * (removed tiles keep their faces; only present tiles are permuted).
+   * Not an undoable move: the move stack keeps pointing at the moves actually
+   * played, and Undo across a shuffle still returns the parked tile to its
+   * own slot (issue #100 — held and removed tiles keep their faces; only
+   * present tiles are permuted).
    */
   shuffle(seed: number): boolean {
     // Board tiles, not `tilesLeft`: shuffle permutes the faces of what is on

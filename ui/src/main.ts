@@ -41,9 +41,9 @@ import {
 } from '@mahjongsolitaire/core';
 import type {
   DifficultyBucket,
+  HoldMove,
   LadderEntry,
   Layout,
-  MoveRecord,
   Slot,
   TileId,
 } from '@mahjongsolitaire/core';
@@ -431,7 +431,7 @@ async function start(): Promise<void> {
     } else {
       const ways = [
         canShuffle ? 'Shuffle re-randomizes the tiles still on the board' : null,
-        canUndo ? 'Undo takes back your last move' : null,
+        canUndo ? 'Undo returns the last parked tile to the board' : null,
       ].filter((w) => w !== null);
       overlayTitle.textContent = 'No moves left';
       // "…or in the holder" is not padding: the stuck check looks through every
@@ -751,15 +751,10 @@ async function start(): Promise<void> {
     return `two ${label(pair[0])} tiles, ${at(pair[0])} and ${at(pair[1])}`;
   }
 
-  /** What an undone move gives back — a pair or a parked tile (issue #43 makes
-   *  both undoable; decision 0009 leaves no third kind). */
-  function describeUndo(move: MoveRecord): string {
-    switch (move.kind) {
-      case 'match':
-        return `${label(move.a)} pair restored. ${game.tilesLeft} tiles left. Score ${game.score}.`;
-      case 'hold':
-        return `${label(move.tile)} taken back out of the holder.`;
-    }
+  /** What Undo gives back — always a parked tile since issue #100: matches
+   *  are permanent, so "pair restored" is gone from the vocabulary. */
+  function describeUndo(move: HoldMove): string {
+    return `${label(move.tile)} taken back out of the holder.`;
   }
 
   /**
@@ -777,7 +772,7 @@ async function start(): Promise<void> {
       }
       case 'undo': {
         const move = game.undo();
-        if (move === null) return { ok: false, message: 'Nothing to undo yet.' };
+        if (move === null) return { ok: false, message: 'Nothing to undo — the holder is empty.' };
         hintPair = [];
         return { ok: true, message: `Undo: ${describeUndo(move)}` };
       }
@@ -808,8 +803,9 @@ async function start(): Promise<void> {
     const fromDialog = overlayVisible;
     const result = runBooster(kind);
     if (result.ok) charges.spend(kind);
-    // Undo puts a matched tile back and Shuffle repaints every face: a copy
-    // still flying from the old board would paint over the new one (issue #44).
+    // Undo puts a parked tile back on the board and Shuffle repaints every
+    // face: a copy still flying from the old board would paint over the new
+    // one (issue #44).
     if (result.ok && (kind === 'undo' || kind === 'shuffle')) {
       animator.clear();
       trayFx.clear();
@@ -825,6 +821,15 @@ async function start(): Promise<void> {
     if (!result.ok && kind === 'shuffle' && overlayVisible) {
       overlayShuffle.hidden = true;
       (overlayUndo.hidden ? overlayRestart : overlayUndo).focus();
+    }
+    // An Undo that returned a tile without lifting the deadlock leaves the
+    // dialog up (issue #100: the return may not open a pair). Withdraw the
+    // button once the holder has nothing more to give back.
+    if (result.ok && kind === 'undo' && overlayVisible) {
+      overlayUndo.hidden = !(charges.has('undo') && game.undoDepth > 0);
+      if (overlayUndo.hidden) {
+        (overlayShuffle.hidden ? overlayRestart : overlayShuffle).focus();
+      }
     }
     const left = charges.remaining(kind);
     announcer.say(

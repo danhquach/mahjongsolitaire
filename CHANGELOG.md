@@ -6,6 +6,11 @@ commit and build time of the running bundle.
 
 ## 2026-09-01
 
+- Undo now returns the most recently parked tile from the holder to its
+  spot on the board — matched pairs are permanent, and score and combo
+  are untouched. With nothing parked, Undo costs nothing and says so;
+  the deadlock dialog offers it only when the holder has a tile to give
+  back (#100).
 - Buttons press: every control outside the board darkens and sinks while
   held — touch, mouse or Space — and releases back; instant swap under
   reduced motion (#95).
