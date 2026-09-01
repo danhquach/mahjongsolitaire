@@ -115,6 +115,33 @@
         flex-direction: column;
         gap: 8px;
       }
+      /* Portrait (top HUD): the issue #99 boards fill the full height, so a
+         vertical right rail would sit on the bottom-right tiles — occluding
+         them and stealing their taps. Lay the rail flat along the bottom and
+         reserve that band under #board so the fit never puts a tile there. */
+      #app[data-hud='top'] #booster-rail {
+        flex-direction: row;
+        right: 50%;
+        transform: translateX(50%);
+        /* The rail is a child of #board: anchor it into the reserved band
+           below the board's box, not onto its bottom tiles. */
+        top: calc(100% + 12px);
+        bottom: auto;
+      }
+      #app[data-hud='top'] #board {
+        margin-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+      }
+      /* Side HUD: same reservation, on the right — the vertical rail gets its
+         own band beside the board instead of floating over its corner. The
+         chooser (issue #37) measures #board per candidate, so both placements
+         are priced honestly, reservation included. */
+      #app[data-hud='side'] #board {
+        margin-right: calc(80px + env(safe-area-inset-right, 0px));
+      }
+      #app[data-hud='side'] #booster-rail {
+        left: calc(100% + 12px);
+        right: auto;
+      }
       #booster-rail button {
         position: relative;
         display: grid;

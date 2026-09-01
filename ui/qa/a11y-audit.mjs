@@ -204,11 +204,26 @@ for (const vp of VIEWPORTS) {
     // *inverse* transform and hitTest, and must land on the tile it names.
     const sample = await page.evaluate(() => {
       const g = window.__slice.game;
-      const canvas = document.querySelector('#board canvas').getBoundingClientRect();
+      const slice = window.__slice;
+      // A centre a player could actually aim at: the #99 stacks are 4–5 deep,
+      // and a taller neighbour projects over a lower tile's centre — a tap
+      // there hits the neighbour by design. This probe is about the inverse
+      // transform, so it samples tiles whose centres are truly visible.
+      const centreClear = (id) => {
+        const r = slice.tileCssRect(id);
+        const cx = r.x + r.w / 2;
+        const cy = r.y + r.h / 2;
+        const z = g.board.get(id).slot.z;
+        return !g.board.presentTiles().some((t) => {
+          if (t.slot.z <= z) return false;
+          const h = slice.tileCssRect(t.id);
+          return cx >= h.x && cx < h.x + h.w && cy >= h.y && cy < h.y + h.h;
+        });
+      };
       return g.board
         .presentTiles()
         // Face-up only (issue #64): the tap below must select, not peek.
-        .filter((t) => g.board.isFree(t.id) && !g.isFaceHidden(t.id))
+        .filter((t) => g.board.isFree(t.id) && !g.isFaceHidden(t.id) && centreClear(t.id))
         // Three, not five: each tap parks now (issue #93), and the fourth
         // park would end the level under decision 0009.
         .slice(0, 3)
@@ -414,6 +429,9 @@ for (const vp of VIEWPORTS) {
 
     // Leave the board as it was found.
     await page.evaluate(() => document.getElementById('btn-new').click());
+    // Issue #99: New game rotates the layout, so the deal is async while the
+    // file fetches; input is dropped until it lands, so wait it out.
+    await page.waitForFunction(() => !window.__slice.dealing);
   }
 
   // --- 3c. The one-way holder's warning and its loss (issue #63). ----------
@@ -549,6 +567,9 @@ for (const vp of VIEWPORTS) {
     // Leave the board as it was found.
     await page.click('#overlay-restart');
     await page.evaluate(() => document.getElementById('btn-new').click());
+    // Issue #99: New game rotates the layout, so the deal is async while the
+    // file fetches; input is dropped until it lands, so wait it out.
+    await page.waitForFunction(() => !window.__slice.dealing);
   }
 
   // --- 4. Keyboard-only play: traverse, match, hear the outcome. -----------

@@ -65,8 +65,15 @@ import type { KeyValueStorage } from './storage.js';
  *  selection pinning a concealed reveal, two identical faces parked — that
  *  the new input layer cannot operate or clear. As with the v2→v3 bump
  *  (decision 0009), the version is the whole answer: an older record reads as
- *  absent and the player gets a fresh deal. */
-export const SAVE_VERSION = 4;
+ *  absent and the player gets a fresh deal.
+ *
+ *  v5 (issue #99): every layout's geometry was reworked in place under the
+ *  same ids, so a v4 record's (layoutId, seed) regenerates a *different* deal
+ *  than the one it captured — same tile count, same-looking ids, silently
+ *  incoherent state. The version bump is the migration the ticket calls for:
+ *  the in-flight deal is invalidated, level progress (stored separately)
+ *  keeps. */
+export const SAVE_VERSION = 5;
 /** The slot key is deliberately *not* versioned with the record: the `version`
  *  field inside is what decides whether a record can be trusted, and renaming
  *  the key would only orphan the old bytes instead of overwriting them. */

@@ -10,7 +10,9 @@ export {
   bandForLevel,
   concealBucketForBand,
   LADDER_LENGTH,
+  LADDER_POOLS,
   LADDER_WINDOWS,
+  nextPoolLayout,
   parseLadder,
 } from './ladder.js';
 export type { LadderBand, LadderEntry, LadderPosition } from './ladder.js';

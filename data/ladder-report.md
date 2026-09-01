@@ -6,153 +6,153 @@ target per issue #18 acceptance criteria.
 
 | Level | Band | Layout | Seed | Score |
 |---|---|---|---|---|
-| 1 | easy | butterfly | 100000 | 0.5292 |
-| 2 | easy | cat | 200000 | 0.5514 |
-| 3 | easy | moon_gate | 300000 | 0.5542 |
-| 4 | easy | moon_gate | 400001 | 0.5528 |
-| 5 | easy | windmill | 500000 | 0.5542 |
-| 6 | easy | windmill | 600001 | 0.5528 |
-| 7 | easy | windmill | 700001 | 0.5514 |
-| 8 | easy | windmill | 800000 | 0.5514 |
-| 9 | easy | windmill | 900000 | 0.5528 |
-| 10 | medium **(spike)** | bridge | 1000000 | 0.5889 |
-| 11 | easy | butterfly | 1100000 | 0.5333 |
-| 12 | easy | cat | 1200000 | 0.5514 |
-| 13 | easy | moon_gate | 1300000 | 0.5528 |
-| 14 | easy | moon_gate | 1400000 | 0.5514 |
-| 15 | easy | windmill | 1500001 | 0.5514 |
-| 16 | easy | windmill | 1600004 | 0.5514 |
-| 17 | easy | windmill | 1700000 | 0.5519 |
-| 18 | easy | windmill | 1800000 | 0.5514 |
-| 19 | easy | windmill | 1900000 | 0.5523 |
-| 20 | medium **(spike)** | bridge | 2000000 | 0.5931 |
-| 21 | medium | cat | 2100001 | 0.5634 |
-| 22 | medium | cat | 2200001 | 0.5656 |
-| 23 | medium | fortress | 2300003 | 0.6000 |
-| 24 | medium | moon_gate | 2400004 | 0.5556 |
-| 25 | medium | pyramid | 2500015 | 0.5983 |
-| 26 | medium | spider | 2600000 | 0.6014 |
-| 27 | medium | windmill | 2700002 | 0.5611 |
-| 28 | medium | windmill | 2800005 | 0.5552 |
-| 29 | medium | windmill | 2900000 | 0.5823 |
-| 30 | hard **(spike)** | fortress | 3000198 | 0.6516 |
-| 31 | medium | cat | 3100000 | 0.5556 |
-| 32 | medium | cat | 3200006 | 0.5599 |
-| 33 | medium | fortress | 3300004 | 0.6019 |
-| 34 | medium | moon_gate | 3400000 | 0.5597 |
-| 35 | medium | pyramid | 3500007 | 0.6019 |
-| 36 | medium | spider | 3600002 | 0.6014 |
-| 37 | medium | windmill | 3700002 | 0.5556 |
-| 38 | medium | windmill | 3800001 | 0.5601 |
-| 39 | medium | windmill | 3900002 | 0.5615 |
-| 40 | hard **(spike)** | pyramid | 4000001 | 0.6755 |
-| 41 | medium | cat | 4100006 | 0.5613 |
-| 42 | medium | cat | 4200001 | 0.5556 |
-| 43 | medium | fortress | 4300000 | 0.6017 |
-| 44 | medium | moon_gate | 4400000 | 0.5556 |
-| 45 | medium | pyramid | 4500019 | 0.6014 |
-| 46 | medium | spider | 4600001 | 0.6014 |
-| 47 | medium | turtle_classic | 4700039 | 0.6014 |
-| 48 | medium | windmill | 4800002 | 0.5557 |
-| 49 | medium | windmill | 4900000 | 0.5580 |
-| 50 | hard **(spike)** | pyramid | 5000001 | 0.6788 |
-| 51 | medium | cat | 5100004 | 0.5556 |
-| 52 | medium | cat | 5200009 | 0.5573 |
-| 53 | medium | fortress | 5300005 | 0.5917 |
-| 54 | medium | moon_gate | 5400003 | 0.5556 |
-| 55 | medium | pyramid | 5500000 | 0.6000 |
-| 56 | medium | spider | 5600002 | 0.6014 |
-| 57 | medium | windmill | 5700002 | 0.5639 |
-| 58 | medium | windmill | 5800008 | 0.5556 |
-| 59 | medium | windmill | 5900003 | 0.5578 |
-| 60 | hard **(spike)** | pyramid | 6000016 | 0.6726 |
-| 61 | medium-plus | fortress | 6100000 | 0.6269 |
-| 62 | medium-plus | fortress | 6200000 | 0.6312 |
-| 63 | medium-plus | fortress | 6300000 | 0.6363 |
-| 64 | medium-plus | pyramid | 6400000 | 0.6335 |
-| 65 | medium-plus | pyramid | 6500000 | 0.6280 |
-| 66 | medium-plus | spider | 6600000 | 0.6042 |
-| 67 | medium-plus | terrace | 6700062 | 0.6500 |
-| 68 | medium-plus | turtle_classic | 6800000 | 0.6271 |
-| 69 | medium-plus | bridge | 6900001 | 0.6068 |
-| 70 | hard **(spike)** | pyramid | 7000004 | 0.6995 |
-| 71 | medium-plus | fortress | 7100000 | 0.6040 |
-| 72 | medium-plus | fortress | 7200000 | 0.6161 |
-| 73 | medium-plus | fortress | 7300001 | 0.6276 |
-| 74 | medium-plus | pyramid | 7400001 | 0.6422 |
-| 75 | medium-plus | pyramid | 7500000 | 0.6304 |
-| 76 | medium-plus | spider | 7600001 | 0.6066 |
-| 77 | medium-plus | terrace | 7700001 | 0.6396 |
-| 78 | medium-plus | turtle_classic | 7800000 | 0.6196 |
-| 79 | medium-plus | bridge | 7900004 | 0.6168 |
-| 80 | hard **(spike)** | pyramid | 8000000 | 0.6764 |
-| 81 | medium-plus | fortress | 8100000 | 0.6224 |
-| 82 | medium-plus | fortress | 8200000 | 0.6082 |
-| 83 | medium-plus | fortress | 8300000 | 0.6069 |
-| 84 | medium-plus | pyramid | 8400000 | 0.6286 |
-| 85 | medium-plus | pyramid | 8500000 | 0.6356 |
-| 86 | medium-plus | spider | 8600000 | 0.6042 |
-| 87 | medium-plus | terrace | 8700018 | 0.6432 |
-| 88 | medium-plus | turtle_classic | 8800003 | 0.6028 |
-| 89 | medium-plus | bridge | 8900002 | 0.6092 |
-| 90 | hard **(spike)** | fortress | 9000198 | 0.6528 |
-| 91 | medium-plus | fortress | 9100000 | 0.6127 |
-| 92 | medium-plus | fortress | 9200000 | 0.6260 |
-| 93 | medium-plus | fortress | 9300000 | 0.6309 |
-| 94 | medium-plus | pyramid | 9400001 | 0.6092 |
-| 95 | medium-plus | pyramid | 9500000 | 0.6340 |
-| 96 | medium-plus | spider | 9600001 | 0.6177 |
-| 97 | medium-plus | terrace | 9700018 | 0.6384 |
-| 98 | medium-plus | turtle_classic | 9800000 | 0.6448 |
-| 99 | medium-plus | bridge | 9900005 | 0.6049 |
-| 100 | hard **(spike)** | fortress | 10000174 | 0.6517 |
-| 101 | medium-plus | fortress | 10100000 | 0.6111 |
-| 102 | medium-plus | fortress | 10200000 | 0.6134 |
-| 103 | medium-plus | fortress | 10300000 | 0.6186 |
-| 104 | medium-plus | pyramid | 10400001 | 0.6240 |
-| 105 | medium-plus | pyramid | 10500000 | 0.6387 |
-| 106 | medium-plus | spider | 10600000 | 0.6028 |
-| 107 | medium-plus | terrace | 10700041 | 0.6406 |
-| 108 | medium-plus | turtle_classic | 10800000 | 0.6437 |
-| 109 | medium-plus | bridge | 10900014 | 0.6123 |
-| 110 | hard **(spike)** | pyramid | 11000006 | 0.6694 |
-| 111 | medium-plus | fortress | 11100000 | 0.6226 |
-| 112 | medium-plus | fortress | 11200000 | 0.6175 |
-| 113 | medium-plus | fortress | 11300000 | 0.6354 |
-| 114 | medium-plus | pyramid | 11400000 | 0.6174 |
-| 115 | medium-plus | pyramid | 11500000 | 0.6196 |
-| 116 | medium-plus | spider | 11600000 | 0.6056 |
-| 117 | medium-plus | terrace | 11700040 | 0.6497 |
-| 118 | medium-plus | turtle_classic | 11800000 | 0.6285 |
-| 119 | medium-plus | bridge | 11900007 | 0.6111 |
-| 120 | hard **(spike)** | pyramid | 12000007 | 0.6799 |
-| 121 | medium-plus | fortress | 12100000 | 0.6168 |
-| 122 | medium-plus | fortress | 12200000 | 0.6031 |
-| 123 | medium-plus | fortress | 12300000 | 0.6153 |
-| 124 | medium-plus | pyramid | 12400000 | 0.6455 |
-| 125 | medium-plus | pyramid | 12500002 | 0.6448 |
-| 126 | medium-plus | spider | 12600000 | 0.6122 |
-| 127 | medium-plus | terrace | 12700032 | 0.6477 |
-| 128 | medium-plus | turtle_classic | 12800002 | 0.6453 |
-| 129 | medium-plus | bridge | 12900013 | 0.6040 |
-| 130 | hard **(spike)** | pyramid | 13000002 | 0.6774 |
-| 131 | medium-plus | fortress | 13100000 | 0.6125 |
-| 132 | medium-plus | fortress | 13200000 | 0.6026 |
-| 133 | medium-plus | fortress | 13300000 | 0.6245 |
-| 134 | medium-plus | pyramid | 13400000 | 0.6252 |
-| 135 | medium-plus | pyramid | 13500000 | 0.6269 |
-| 136 | medium-plus | spider | 13600000 | 0.6097 |
-| 137 | medium-plus | terrace | 13700064 | 0.6436 |
-| 138 | medium-plus | turtle_classic | 13800000 | 0.6260 |
-| 139 | medium-plus | bridge | 13900006 | 0.6059 |
-| 140 | hard **(spike)** | pyramid | 14000001 | 0.6635 |
-| 141 | medium-plus | fortress | 14100003 | 0.6226 |
-| 142 | medium-plus | fortress | 14200000 | 0.6089 |
-| 143 | medium-plus | fortress | 14300001 | 0.6227 |
-| 144 | medium-plus | pyramid | 14400000 | 0.6109 |
-| 145 | medium-plus | pyramid | 14500000 | 0.6214 |
-| 146 | medium-plus | spider | 14600000 | 0.6042 |
-| 147 | medium-plus | terrace | 14700002 | 0.6491 |
-| 148 | medium-plus | turtle_classic | 14800000 | 0.6342 |
-| 149 | medium-plus | bridge | 14900001 | 0.6064 |
-| 150 | hard **(spike)** | fortress | 15000171 | 0.6519 |
+| 1 | easy | windmill | 100000 | 0.5764 |
+| 2 | easy | butterfly | 200000 | 0.5819 |
+| 3 | easy | windmill | 300000 | 0.5764 |
+| 4 | easy | butterfly | 400000 | 0.5778 |
+| 5 | easy | windmill | 500000 | 0.5764 |
+| 6 | easy | butterfly | 600000 | 0.5764 |
+| 7 | easy | windmill | 700000 | 0.5778 |
+| 8 | easy | butterfly | 800000 | 0.5764 |
+| 9 | easy | windmill | 900000 | 0.5806 |
+| 10 | medium **(spike)** | spider | 1000000 | 0.6028 |
+| 11 | easy | windmill | 1100000 | 0.5778 |
+| 12 | easy | butterfly | 1200000 | 0.5764 |
+| 13 | easy | windmill | 1300000 | 0.5792 |
+| 14 | easy | butterfly | 1400000 | 0.5764 |
+| 15 | easy | windmill | 1500000 | 0.5764 |
+| 16 | easy | butterfly | 1600000 | 0.5792 |
+| 17 | easy | windmill | 1700000 | 0.5764 |
+| 18 | easy | butterfly | 1800000 | 0.5792 |
+| 19 | easy | windmill | 1900000 | 0.5764 |
+| 20 | medium **(spike)** | turtle_classic | 2000000 | 0.6158 |
+| 21 | medium | cat | 2100000 | 0.6014 |
+| 22 | medium | spider | 2200000 | 0.6028 |
+| 23 | medium | turtle_classic | 2300000 | 0.6135 |
+| 24 | medium | cat | 2400000 | 0.6069 |
+| 25 | medium | spider | 2500000 | 0.6028 |
+| 26 | medium | turtle_classic | 2600000 | 0.6116 |
+| 27 | medium | cat | 2700000 | 0.6042 |
+| 28 | medium | spider | 2800000 | 0.6042 |
+| 29 | medium | turtle_classic | 2900000 | 0.6017 |
+| 30 | hard **(spike)** | bridge | 3000000 | 0.6595 |
+| 31 | medium | spider | 3100000 | 0.6069 |
+| 32 | medium | turtle_classic | 3200000 | 0.6014 |
+| 33 | medium | cat | 3300000 | 0.6083 |
+| 34 | medium | spider | 3400000 | 0.6014 |
+| 35 | medium | turtle_classic | 3500000 | 0.6200 |
+| 36 | medium | cat | 3600000 | 0.6042 |
+| 37 | medium | spider | 3700000 | 0.6042 |
+| 38 | medium | turtle_classic | 3800000 | 0.6082 |
+| 39 | medium | cat | 3900000 | 0.6056 |
+| 40 | hard **(spike)** | fortress | 4000000 | 0.7054 |
+| 41 | medium | turtle_classic | 4100000 | 0.6184 |
+| 42 | medium | cat | 4200000 | 0.6042 |
+| 43 | medium | spider | 4300000 | 0.6014 |
+| 44 | medium | turtle_classic | 4400001 | 0.6014 |
+| 45 | medium | cat | 4500000 | 0.6028 |
+| 46 | medium | spider | 4600000 | 0.6028 |
+| 47 | medium | turtle_classic | 4700000 | 0.6207 |
+| 48 | medium | cat | 4800000 | 0.6042 |
+| 49 | medium | spider | 4900000 | 0.6028 |
+| 50 | hard **(spike)** | moon_gate | 5000000 | 0.6710 |
+| 51 | medium | cat | 5100000 | 0.6014 |
+| 52 | medium | spider | 5200000 | 0.6042 |
+| 53 | medium | turtle_classic | 5300000 | 0.6014 |
+| 54 | medium | cat | 5400000 | 0.6042 |
+| 55 | medium | spider | 5500000 | 0.6042 |
+| 56 | medium | turtle_classic | 5600000 | 0.6024 |
+| 57 | medium | cat | 5700000 | 0.6028 |
+| 58 | medium | spider | 5800000 | 0.6028 |
+| 59 | medium | turtle_classic | 5900000 | 0.6113 |
+| 60 | hard **(spike)** | bridge | 6000000 | 0.7042 |
+| 61 | medium-plus | terrace | 6100003 | 0.6326 |
+| 62 | medium-plus | pyramid | 6200001 | 0.6273 |
+| 63 | medium-plus | terrace | 6300000 | 0.6250 |
+| 64 | medium-plus | pyramid | 6400000 | 0.6351 |
+| 65 | medium-plus | terrace | 6500001 | 0.6413 |
+| 66 | medium-plus | pyramid | 6600000 | 0.6271 |
+| 67 | medium-plus | terrace | 6700002 | 0.6332 |
+| 68 | medium-plus | pyramid | 6800004 | 0.6273 |
+| 69 | medium-plus | terrace | 6900000 | 0.6269 |
+| 70 | hard **(spike)** | fortress | 7000000 | 0.6597 |
+| 71 | medium-plus | terrace | 7100003 | 0.6479 |
+| 72 | medium-plus | pyramid | 7200000 | 0.6366 |
+| 73 | medium-plus | terrace | 7300001 | 0.6248 |
+| 74 | medium-plus | pyramid | 7400007 | 0.6250 |
+| 75 | medium-plus | terrace | 7500001 | 0.6292 |
+| 76 | medium-plus | pyramid | 7600003 | 0.6269 |
+| 77 | medium-plus | terrace | 7700002 | 0.6321 |
+| 78 | medium-plus | pyramid | 7800000 | 0.6260 |
+| 79 | medium-plus | terrace | 7900001 | 0.6384 |
+| 80 | hard **(spike)** | moon_gate | 8000000 | 0.6665 |
+| 81 | medium-plus | terrace | 8100002 | 0.6434 |
+| 82 | medium-plus | pyramid | 8200002 | 0.6392 |
+| 83 | medium-plus | terrace | 8300001 | 0.6347 |
+| 84 | medium-plus | pyramid | 8400000 | 0.6252 |
+| 85 | medium-plus | terrace | 8500000 | 0.6300 |
+| 86 | medium-plus | pyramid | 8600000 | 0.6292 |
+| 87 | medium-plus | terrace | 8700005 | 0.6247 |
+| 88 | medium-plus | pyramid | 8800002 | 0.6358 |
+| 89 | medium-plus | terrace | 8900002 | 0.6332 |
+| 90 | hard **(spike)** | bridge | 9000000 | 0.7292 |
+| 91 | medium-plus | terrace | 9100002 | 0.6288 |
+| 92 | medium-plus | pyramid | 9200000 | 0.6431 |
+| 93 | medium-plus | terrace | 9300000 | 0.6484 |
+| 94 | medium-plus | pyramid | 9400001 | 0.6250 |
+| 95 | medium-plus | terrace | 9500003 | 0.6281 |
+| 96 | medium-plus | pyramid | 9600000 | 0.6429 |
+| 97 | medium-plus | terrace | 9700001 | 0.6321 |
+| 98 | medium-plus | pyramid | 9800001 | 0.6300 |
+| 99 | medium-plus | terrace | 9900000 | 0.6335 |
+| 100 | hard **(spike)** | fortress | 10000000 | 0.6892 |
+| 101 | medium-plus | terrace | 10100001 | 0.6384 |
+| 102 | medium-plus | pyramid | 10200004 | 0.6441 |
+| 103 | medium-plus | terrace | 10300002 | 0.6252 |
+| 104 | medium-plus | pyramid | 10400004 | 0.6288 |
+| 105 | medium-plus | terrace | 10500003 | 0.6339 |
+| 106 | medium-plus | pyramid | 10600001 | 0.6307 |
+| 107 | medium-plus | terrace | 10700001 | 0.6335 |
+| 108 | medium-plus | pyramid | 10800000 | 0.6262 |
+| 109 | medium-plus | terrace | 10900000 | 0.6446 |
+| 110 | hard **(spike)** | moon_gate | 11000000 | 0.6646 |
+| 111 | medium-plus | terrace | 11100000 | 0.6429 |
+| 112 | medium-plus | pyramid | 11200001 | 0.6330 |
+| 113 | medium-plus | terrace | 11300000 | 0.6373 |
+| 114 | medium-plus | pyramid | 11400000 | 0.6399 |
+| 115 | medium-plus | terrace | 11500001 | 0.6307 |
+| 116 | medium-plus | pyramid | 11600001 | 0.6380 |
+| 117 | medium-plus | terrace | 11700001 | 0.6493 |
+| 118 | medium-plus | pyramid | 11800000 | 0.6491 |
+| 119 | medium-plus | terrace | 11900000 | 0.6267 |
+| 120 | hard **(spike)** | bridge | 12000000 | 0.7392 |
+| 121 | medium-plus | terrace | 12100000 | 0.6413 |
+| 122 | medium-plus | pyramid | 12200001 | 0.6340 |
+| 123 | medium-plus | terrace | 12300000 | 0.6366 |
+| 124 | medium-plus | pyramid | 12400002 | 0.6429 |
+| 125 | medium-plus | terrace | 12500000 | 0.6469 |
+| 126 | medium-plus | pyramid | 12600000 | 0.6245 |
+| 127 | medium-plus | terrace | 12700001 | 0.6255 |
+| 128 | medium-plus | pyramid | 12800001 | 0.6304 |
+| 129 | medium-plus | terrace | 12900007 | 0.6297 |
+| 130 | hard **(spike)** | fortress | 13000000 | 0.7104 |
+| 131 | medium-plus | terrace | 13100001 | 0.6370 |
+| 132 | medium-plus | pyramid | 13200003 | 0.6325 |
+| 133 | medium-plus | terrace | 13300000 | 0.6495 |
+| 134 | medium-plus | pyramid | 13400000 | 0.6247 |
+| 135 | medium-plus | terrace | 13500000 | 0.6297 |
+| 136 | medium-plus | pyramid | 13600000 | 0.6370 |
+| 137 | medium-plus | terrace | 13700000 | 0.6302 |
+| 138 | medium-plus | pyramid | 13800000 | 0.6260 |
+| 139 | medium-plus | terrace | 13900001 | 0.6484 |
+| 140 | hard **(spike)** | moon_gate | 14000000 | 0.6507 |
+| 141 | medium-plus | terrace | 14100000 | 0.6457 |
+| 142 | medium-plus | pyramid | 14200000 | 0.6450 |
+| 143 | medium-plus | terrace | 14300001 | 0.6333 |
+| 144 | medium-plus | pyramid | 14400001 | 0.6408 |
+| 145 | medium-plus | terrace | 14500000 | 0.6345 |
+| 146 | medium-plus | pyramid | 14600002 | 0.6495 |
+| 147 | medium-plus | terrace | 14700001 | 0.6351 |
+| 148 | medium-plus | pyramid | 14800002 | 0.6264 |
+| 149 | medium-plus | terrace | 14900000 | 0.6253 |
+| 150 | hard **(spike)** | bridge | 15000000 | 0.7170 |

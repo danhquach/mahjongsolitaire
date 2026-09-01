@@ -21,7 +21,10 @@ import type { KeyValueStorage } from '../src/storage.js';
 
 const TURTLE_URL = new URL('../../../data/layouts/turtle_classic.json', import.meta.url);
 const TURTLE: Layout = parseLayout(JSON.parse(readFileSync(TURTLE_URL, 'utf8')));
-const SAMPLE_SEED = 20260831;
+// Re-picked for the issue #99 compact turtle: the tap-gesture replay in
+// sampleSave needs the first dozen witness pairs to carry distinct faces
+// (a face collision would clear across pairs via the holder).
+const SAMPLE_SEED = 20260832;
 
 const free = (id: TileId): Hit => ({ kind: 'free', id, forgiven: false });
 
@@ -454,9 +457,11 @@ test('a short holder array is padded, not honoured as a smaller holder', () => {
         .filter((id): id is TileId => id !== null)
         .map((id) => resumed.board.get(id).face),
     );
+    // Face-up only: the first tap on a concealed tile peeks (issue #64), and
+    // the deeper #99 geometry can derive a concealed set for this deal.
     const target = resumed.board
       .freeTileIds()
-      .find((id) => !parkedFaces.has(resumed.board.get(id).face))!;
+      .find((id) => !parkedFaces.has(resumed.board.get(id).face) && !resumed.isFaceHidden(id))!;
     assert.equal(resumed.tap(free(target), (t += 10)).kind, 'held', `slot ${i + 1}`);
   }
   assert.equal(resumed.holderFull, true);

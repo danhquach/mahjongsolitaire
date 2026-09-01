@@ -64,15 +64,17 @@ for (const [file, layout] of layouts) {
     assert.deepEqual(layers, layers.map((_, i) => i));
   });
 
-  test(`${file}: fits a landscape board`, () => {
+  test(`${file}: fits the compact portrait frame (issue #99)`, () => {
     const xs = layout.slots.map((s) => s.x);
     const ys = layout.slots.map((s) => s.y);
+    const zs = layout.slots.map((s) => s.z);
     const width = Math.max(...xs) + 2 - Math.min(...xs);
     const height = Math.max(...ys) + 2 - Math.min(...ys);
-    // Turtle is the reference frame at 30×16 half-units; staying inside it
-    // keeps every layout renderable at the same tile size (issue #37 HUD fit).
-    assert.ok(width <= 34, `${layout.id}: ${width} half-units wide`);
-    assert.ok(height <= 18, `${layout.id}: ${height} half-units tall`);
+    // Issue #99: ≤9 tile columns keeps faces legible on a phone; height may
+    // grow to ~10 rows, and depth carries the tile count instead of width.
+    assert.ok(width <= 18, `${layout.id}: ${width} half-units wide (max 9 columns)`);
+    assert.ok(height <= 20, `${layout.id}: ${height} half-units tall (max 10 rows)`);
+    assert.ok(Math.max(...zs) >= 3, `${layout.id}: compact profile stacks 4–5 layers deep`);
   });
 
   test(`${file}: generates provably solvable deals`, () => {
@@ -119,40 +121,35 @@ for (const [file, layout] of layouts) {
   });
 }
 
-test('turtle_classic keeps its classic layer counts 87/36/16/4/1', () => {
+test('turtle_classic keeps its compact layer counts 72/52/12/6/2', () => {
   const layout = layouts.get('turtle_classic.json')!;
   assert.equal(layout.name, 'Turtle');
   const byLayer = new Map<number, number>();
   for (const s of layout.slots) byLayer.set(s.z, (byLayer.get(s.z) ?? 0) + 1);
   assert.deepEqual(
     [0, 1, 2, 3, 4].map((z) => byLayer.get(z)),
-    [87, 36, 16, 4, 1],
+    [72, 52, 12, 6, 2],
   );
 });
 
-test('turtle apex covers the 2×2 below it; wings start free', () => {
+test('turtle silhouette: cap covers the shell below it; the head tip starts free', () => {
   const layout = layouts.get('turtle_classic.json')!;
   const board = new Board(layout.slots.map((slot, id) => ({ id, slot, face: 'f' })));
   const idAt = (x: number, y: number, z: number) =>
     layout.slots.findIndex((s) => s.x === x && s.y === y && s.z === z);
 
-  const apex = idAt(11, 7, 4);
-  assert.notEqual(apex, -1);
-  assert.equal(board.isFree(apex), true);
-  for (const [x, y] of [
-    [10, 6],
-    [12, 6],
-    [10, 8],
-    [12, 8],
-  ] as const) {
-    const id = idAt(x, y, 3);
-    assert.notEqual(id, -1);
-    assert.equal(board.isCovered(id), true, `z3 tile at ${x},${y} must be covered by the apex`);
+  // The two-tile cap sits on the z3 shell ridge and covers it.
+  for (const y of [8, 10] as const) {
+    const cap = idAt(8, y, 4);
+    assert.notEqual(cap, -1);
+    assert.equal(board.isFree(cap), true);
+    assert.equal(board.isCovered(idAt(8, y, 3)), true, `ridge tile at 8,${y},3 covered by the cap`);
   }
-  // Left and right wings straddle two rows and have an open outer edge.
-  assert.equal(board.isFree(idAt(-2, 7, 0)), true);
-  assert.equal(board.isFree(idAt(26, 7, 0)), true);
-  assert.equal(board.isFree(idAt(24, 7, 0)), false); // blocked both sides
+  // Head (row 0) and tail (row 9) tips are on the open edge and start free.
+  assert.equal(board.isFree(idAt(6, 0, 0)), true);
+  assert.equal(board.isFree(idAt(10, 18, 0)), true);
+  // The shell interior starts buried.
+  assert.equal(board.isFree(idAt(8, 8, 0)), false);
 });
 
 test('parseLayout rejects malformed documents', () => {
