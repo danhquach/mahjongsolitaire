@@ -174,40 +174,51 @@ test('a fresh record is all zeroes', () => {
   assert.deepEqual(new RecordStore(undefined).value, EMPTY_RECORD);
 });
 
-test('parsePlayerRecord: counters only — anything else reads as zero', () => {
+test('parsePlayerRecord: counters are non-negative integers or zero; a pre-#19 record starts the new fields empty', () => {
   assert.deepEqual(parsePlayerRecord(null), EMPTY_RECORD);
   assert.deepEqual(parsePlayerRecord({ levelsCleared: -3, bestScore: 2.5, trophies: '9' }), EMPTY_RECORD);
+  // The issue #69 shape: no totalScore, stars or lastDaily. A streak with no
+  // date to anchor it is not a live streak, so it reads as 0.
   assert.deepEqual(parsePlayerRecord({ levelsCleared: 7, bestScore: 1200, dailyStreak: 3, trophies: 2 }), {
+    ...EMPTY_RECORD,
     levelsCleared: 7,
     bestScore: 1200,
-    dailyStreak: 3,
     trophies: 2,
   });
 });
 
-test('recordWin counts the clear and keeps the best score', () => {
+test('recordWin counts the clear, banks the total and keeps the best score', () => {
   const storage = fakeStorage();
   const record = new RecordStore(storage);
-  assert.deepEqual(record.recordWin(900), { ...EMPTY_RECORD, levelsCleared: 1, bestScore: 900 });
-  record.recordWin(450); // a worse score still counts the clear
-  assert.deepEqual(record.value, { ...EMPTY_RECORD, levelsCleared: 2, bestScore: 900 });
+  assert.deepEqual(record.recordWin(900), {
+    ...EMPTY_RECORD,
+    levelsCleared: 1,
+    bestScore: 900,
+    totalScore: 900,
+  });
+  record.recordWin(450); // a worse score still counts the clear, and the total
+  assert.deepEqual(record.value, { ...EMPTY_RECORD, levelsCleared: 2, bestScore: 900, totalScore: 1350 });
   record.recordWin(1500);
   assert.deepEqual(new RecordStore(storage).value, {
     ...EMPTY_RECORD,
     levelsCleared: 3,
     bestScore: 1500,
+    totalScore: 2850,
   });
 });
 
-test('recordWin keeps streak and trophy counts a future feature wrote', () => {
+test('recordWin leaves the Daily fields alone', () => {
   const storage = fakeStorage({
-    [RECORD_STORAGE_KEY]: JSON.stringify({ dailyStreak: 4, trophies: 1 }),
+    [RECORD_STORAGE_KEY]: JSON.stringify({ dailyStreak: 4, lastDaily: '2026-09-01', trophies: 1 }),
   });
   const record = new RecordStore(storage);
   assert.deepEqual(record.recordWin(100), {
+    ...EMPTY_RECORD,
     levelsCleared: 1,
     bestScore: 100,
+    totalScore: 100,
     dailyStreak: 4,
+    lastDaily: '2026-09-01',
     trophies: 1,
   });
 });

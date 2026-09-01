@@ -30,6 +30,9 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright-core';
+// Core's own Daily Challenge hashes (issue #19), so the harness checks the
+// page against the same function every device runs — not a re-derivation.
+import { dailyDateKey, dailyLayoutId, dailySeed } from '../../core/dist/src/index.js';
 
 const CHROMIUM = process.env.CHROMIUM_PATH ?? '/opt/pw-browsers/chromium';
 const DIST = new URL('../dist-web', import.meta.url).pathname;
@@ -411,6 +414,9 @@ for (const vp of VIEWPORTS) {
   // the ladder position to the first turtle_classic level before the app boots.
   await ctx.addInitScript(() => {
     localStorage.setItem('mahjong.progress.v1', JSON.stringify({ level: 47 }));
+    // Issue #105: a never-asked player gets the welcome gate over the board,
+    // which swallows every click below. Answer it as a guest up front.
+    localStorage.setItem('mahjong.profile.v1', JSON.stringify({ choice: 'guest' }));
   });
   await page.goto(url);
   await page.waitForFunction(() => window.__slice !== undefined);
@@ -812,6 +818,76 @@ for (const vp of VIEWPORTS) {
       { rerolled: rerolled.seed, resumed: resumed.seed },
     );
     console.log(`${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: New game re-rolls, Restart replays`);
+  }
+
+  // 2b. Daily Challenge (issue #19): Settings → Daily deals the board every
+  //     player gets today — layout and seed are core's own hashes of the local
+  //     date — the chip says so, it survives a force-quit as a Daily, Restart
+  //     replays it, and New game returns to the ladder's own deal.
+  {
+    const before = failures;
+    const state = () =>
+      page.evaluate(() => ({
+        seed: window.__slice.game.level.seed,
+        layoutId: window.__slice.layoutId,
+        daily: window.__slice.daily,
+        level: window.__slice.ladderLevel,
+        label: document.getElementById('level-label').textContent,
+        chip: document.getElementById('level').textContent,
+        saveDaily: window.__slice.savedState()?.daily ?? null,
+      }));
+    const ladderBefore = await state();
+    // Expected values from core, for the page's own local date (the harness
+    // and the browser share the machine clock and zone).
+    const key = dailyDateKey();
+    const want = { seed: dailySeed(key), layoutId: dailyLayoutId(key) };
+
+    await page.click('#btn-settings');
+    const row = await page.evaluate(() => ({
+      date: document.getElementById('daily-date').textContent,
+      status: document.getElementById('daily-status').textContent,
+    }));
+    check(row.date.length > 2 && row.status.length > 0, 'the Settings row names today and a status', row);
+    await page.click('#btn-daily');
+    await page.waitForFunction(() => !window.__slice.dealing);
+    const dealt = await state();
+    check(dealt.daily === key, 'the Daily is on the table for today\'s date key', { want: key, got: dealt.daily });
+    check(dealt.layoutId === want.layoutId, 'on the layout core hashes for the date', { want: want.layoutId, got: dealt.layoutId });
+    // generateValidatedLevel may step the seed (seed+1, seed+2, … up to its
+    // MAX_RESEEDS of 64 in core/src/generator.ts); a stepped seed is still a
+    // deterministic function of the date, so allow exactly that window.
+    check(
+      dealt.seed >= want.seed && dealt.seed - want.seed < 64,
+      'from the seed core hashes for the date',
+      { want: want.seed, got: dealt.seed },
+    );
+    check(/Daily$/.test(dealt.label) && dealt.chip.length > 0 && !/^\d+$/.test(dealt.chip), 'the HUD chip reads Daily over the date', dealt);
+    check(dealt.saveDaily === key, 'the save records the deal as a Daily', dealt);
+    check(dealt.level === ladderBefore.level, 'the ladder position is untouched', dealt);
+
+    await page.reload();
+    await page.waitForFunction(() => window.__slice !== undefined);
+    const resumed = await state();
+    check(
+      resumed.daily === key && resumed.seed === dealt.seed && resumed.layoutId === dealt.layoutId,
+      'a Daily survives a force-quit as a Daily',
+      resumed,
+    );
+
+    await page.click('#btn-restart');
+    await page.waitForFunction(() => !window.__slice.dealing);
+    const restarted = await state();
+    check(restarted.daily === key && restarted.seed === dealt.seed, 'Restart replays the Daily', restarted);
+
+    await page.click('#btn-new');
+    await page.waitForFunction(() => !window.__slice.dealing);
+    const back = await state();
+    check(
+      back.daily === null && back.level === ladderBefore.level && /Level$/.test(back.label) && back.saveDaily === null,
+      'New game returns to the ladder level, save and chip included',
+      back,
+    );
+    console.log(`${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: Daily Challenge deals, resumes, returns`);
   }
 
   // 2b. The holder (issues #43, #93), driven the way a player drives it: park a

@@ -181,10 +181,10 @@ Starting grant: 5 of each of the three charged boosters; the holder has no balan
 
 - Base: 100 pts per pair.
 - **Super Combo:** consecutive matches within a 5s window escalate a multiplier (×1.2, ×1.5, ×2.0, cap ×3.0). Broken by timeout (issue #93 removed the mismatch — a non-matching tap is a park, not a failed pair). Purely additive reward — never punitive.
-- Star rating per level (1–3) from moves used, hints used, and completion time relative to the level's baseline.
-- Persistent: level index, stars, total score, streak, trophies.
+- Star rating per level (1–3) from moves used, hints used, and completion time relative to the level's baseline. (Decision 0016, issue #19: 3 − [any Hint/Undo/Shuffle charged] − [over baseline], floor 1; "moves used" collapses into assists because a full board always clears in exactly tiles/2 matches and holds. Baseline = pairs × per-band budget: easy 6 s, medium 8 s, medium-plus 9 s, hard 10 s.)
+- Persistent: level index, stars, total score, streak, trophies. (Issue #19: all on the local player record, `mahjong.record.v1`; the level index keeps its own key.)
 
-**Daily Challenge:** one deterministic board per calendar date (seed = date hash), shared across all users. Completion grants a trophy; consecutive days build a streak with escalating rewards.
+**Daily Challenge:** one deterministic board per calendar date (seed = date hash), shared across all users. Completion grants a trophy; consecutive days build a streak with escalating rewards. (Decision 0016: the date is the player's local calendar date; layout and seed are hashes of the "YYYY-MM-DD" key; 1 trophy per clear, 2 from a 7-day streak, 3 from 30; credited once per date.)
 
 ---
 

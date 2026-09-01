@@ -95,6 +95,11 @@ for (const vp of VIEWPORTS) {
   });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => fail(`page error: ${e.message}`));
+  // Issue #105: a never-asked player gets the welcome gate over the board,
+  // which inerts everything the audit walks. Answer it as a guest up front.
+  await ctx.addInitScript(() => {
+    localStorage.setItem('mahjong.profile.v1', JSON.stringify({ choice: 'guest' }));
+  });
   await page.goto(url);
   await page.waitForFunction(() => window.__slice !== undefined);
 
@@ -819,10 +824,11 @@ for (const vp of VIEWPORTS) {
       settingsControls.filter((c) => c.small),
     );
 
-    // Thirteen controls: the profile row (issue #69), six toggles (issue #45
-    // added Highlight free tiles, issue #44 added Reduced motion), four tile
-    // sizes, the version row (issue #81), and Done.
-    check(settingsControls.length === 13, 'settings screen exposes all thirteen controls', {
+    // Fourteen controls: the profile row (issue #69), the Daily Challenge row
+    // (issue #19), six toggles (issue #45 added Highlight free tiles, issue
+    // #44 added Reduced motion), four tile sizes, the version row (issue #81),
+    // and Done.
+    check(settingsControls.length === 14, 'settings screen exposes all fourteen controls', {
       count: settingsControls.length,
     });
 

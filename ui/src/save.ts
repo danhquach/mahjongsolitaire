@@ -47,7 +47,12 @@
 // record from an older build, a hand-edited one, or a layout that has since
 // changed all land there.
 
-import { HOLDER_SLOTS, concealedTileIds, generateValidatedLevel } from '@mahjongsolitaire/core';
+import {
+  HOLDER_SLOTS,
+  concealedTileIds,
+  generateValidatedLevel,
+  isDateKey,
+} from '@mahjongsolitaire/core';
 import type {
   DifficultyBucket,
   Layout,
@@ -72,8 +77,15 @@ import type { KeyValueStorage } from './storage.js';
  *  than the one it captured — same tile count, same-looking ids, silently
  *  incoherent state. The version bump is the migration the ticket calls for:
  *  the in-flight deal is invalidated, level progress (stored separately)
- *  keeps. */
-export const SAVE_VERSION = 5;
+ *  keeps.
+ *
+ *  v6 (issue #19): the record grows the spec §9 `boostersUsed`-style counts
+ *  the star rating needs (`hints`, `undos`, alongside the existing
+ *  `shuffles`) and `daily` — the date key when the deal is a Daily Challenge
+ *  board, null for a ladder deal. A v5 record has neither; resuming it would
+ *  mean guessing (zero assists? a ladder deal?) and this file does not guess.
+ *  Same clean break, same consequence: the in-flight deal restarts. */
+export const SAVE_VERSION = 6;
 /** The slot key is deliberately *not* versioned with the record: the `version`
  *  field inside is what decides whether a record can be trusted, and renaming
  *  the key would only orphan the old bytes instead of overwriting them. */
@@ -87,14 +99,26 @@ export interface SaveState {
   readonly layoutId: string;
   readonly seed: number;
   readonly shuffles: number;
+  /** Hints and Undos charged on this deal (issue #19): with `shuffles`, the
+   *  assists the star rating counts. Undo cannot be recovered from the move
+   *  stack — an undone hold leaves no record — so it is counted here. */
+  readonly hints: number;
+  readonly undos: number;
   readonly elapsedMs: number;
+  /** The Daily Challenge date this deal is for, or null for a ladder deal.
+   *  Stored so the deal resumes as the Daily it is, not as a ladder level
+   *  that happens to share its (layoutId, seed). */
+  readonly daily: string | null;
   readonly snapshot: GameSnapshot;
 }
 
 /** Everything about the session that is not the Game itself. */
 export interface SaveContext {
   readonly shuffles: number;
+  readonly hints: number;
+  readonly undos: number;
   readonly elapsedMs: number;
+  readonly daily: string | null;
 }
 
 /** Capture the current game. Cheap enough to call on every move (144 faces). */
@@ -104,7 +128,10 @@ export function captureSave(game: Game, context: SaveContext): SaveState {
     layoutId: game.level.layoutId,
     seed: game.level.seed,
     shuffles: context.shuffles,
+    hints: context.hints,
+    undos: context.undos,
     elapsedMs: context.elapsedMs,
+    daily: context.daily,
     snapshot: game.snapshot(),
   };
 }
@@ -295,13 +322,15 @@ function parseSnapshot(value: unknown): GameSnapshot | null {
 /** A validated save, or null if the record cannot be trusted. */
 export function parseSave(record: unknown): SaveState | null {
   if (!isRecord(record)) return null;
-  const { version, layoutId, seed, shuffles, elapsedMs } = record;
+  const { version, layoutId, seed, shuffles, hints, undos, elapsedMs, daily } = record;
   if (version !== SAVE_VERSION) return null;
   if (typeof layoutId !== 'string' || layoutId.length === 0) return null;
   // Not capped at 2^32: a deal reseeded near the ceiling (generateValidatedLevel
   // tries seed+1, seed+2, …) legitimately carries a larger seed.
   if (!isCount(seed) || !Number.isSafeInteger(seed)) return null;
-  if (!isCount(shuffles) || !isMs(elapsedMs)) return null;
+  if (!isCount(shuffles) || !isCount(hints) || !isCount(undos) || !isMs(elapsedMs)) return null;
+  // A Daily deal names its date; anything else must say null outright.
+  if (daily !== null && !isDateKey(daily)) return null;
   const snapshot = parseSnapshot(record['snapshot']);
   if (snapshot === null) return null;
   // The clock must not run behind the game it is resuming. main.ts continues
@@ -315,7 +344,7 @@ export function parseSave(record: unknown): SaveState | null {
     ...snapshot.stack.moves.map((m) => m.atMs),
   );
   if (elapsedMs < latestMs) return null;
-  return { version, layoutId, seed, shuffles, elapsedMs, snapshot };
+  return { version, layoutId, seed, shuffles, hints, undos, elapsedMs, daily, snapshot };
 }
 
 // --- resume -------------------------------------------------------------------
