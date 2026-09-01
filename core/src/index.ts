@@ -4,6 +4,16 @@ export { facesMatch, STANDARD_144 } from './faces.js';
 export { CONCEAL_CAP, CONCEAL_RATIO, concealedCount, concealedTileIds } from './conceal.js';
 export { assessDifficulty, bucketDifficulty, difficultyScore, scoreDifficulty } from './difficulty.js';
 export type { DifficultyAssessment, DifficultyBucket, DifficultyMetrics } from './difficulty.js';
+export {
+  DAILY_LAYOUTS,
+  STREAK_TIERS,
+  dailyDateKey,
+  dailyLayoutId,
+  dailySeed,
+  dailyTrophies,
+  daysBetween,
+  isDateKey,
+} from './daily.js';
 export { generateLevel, generateValidatedLevel } from './generator.js';
 export type { GeneratedLevel } from './generator.js';
 export {
@@ -41,3 +51,5 @@ export type {
 export { ScoreKeeper, BASE_PAIR_POINTS, COMBO_WINDOW_MS } from './scoring.js';
 export type { MatchScore, ScoreSnapshot } from './scoring.js';
 export { shuffleBoard } from './shuffle.js';
+export { PAIR_BASELINE_MS, baselineMs, parseStarRating, starRating } from './stars.js';
+export type { StarInputs, StarRating } from './stars.js';

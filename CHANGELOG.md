@@ -6,6 +6,14 @@ commit and build time of the running bundle.
 
 ## 2026-09-01
 
+- Daily Challenge: Settings has a new row that deals the day's board — the
+  same layout and arrangement for every player on that calendar date. Clear
+  it for a trophy; clear it on consecutive days to build a streak, and the
+  streak pays more (two trophies a clear from 7 days, three from 30). Every
+  cleared level is now rated 1–3 stars — one for finishing without a Hint,
+  Undo or Shuffle, one for finishing inside the level's time baseline — and
+  the profile screen shows your stars, total score, live streak and
+  trophies. In-flight saves restart the level once, progress kept (#19).
 - A cleaner HUD: Level and Score are stat chips — a small label over a
   big number, the score in gold with a little pop on every gain — and
   New game / Restart became icon buttons. The Tiles counter is gone

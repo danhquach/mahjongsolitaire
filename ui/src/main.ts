@@ -37,19 +37,26 @@ import { Application } from 'pixi.js';
 import {
   HOLDER_SLOTS,
   bandForLevel,
+  baselineMs,
   concealBucketForBand,
+  dailyDateKey,
+  dailyLayoutId,
+  dailySeed,
   nextPoolLayout,
   concealedTileIds,
   generateValidatedLevel,
   parseLadder,
   parseLayout,
+  starRating,
 } from '@mahjongsolitaire/core';
 import type {
   DifficultyBucket,
   HoldMove,
+  LadderBand,
   LadderEntry,
   Layout,
   Slot,
+  StarRating,
   TileId,
 } from '@mahjongsolitaire/core';
 import { A11yLayer, Announcer, slotPosition } from './a11y.js';
@@ -75,7 +82,7 @@ import { BoardRenderer } from './render.js';
 import { parseChangelog, versionLabel } from './changelog.js';
 import changelogMd from '../../CHANGELOG.md?raw';
 import { ProgressStore } from './progress.js';
-import { AVATARS, ProfileStore, RecordStore, avatarGlyph } from './profile.js';
+import { AVATARS, ProfileStore, RecordStore, avatarGlyph, liveStreak, totalStars } from './profile.js';
 import { SaveStore, captureSave, reopen } from './save.js';
 import { SettingsStore, TILE_SIZE_FACTOR, TILE_SIZE_LABEL, TILE_SIZES } from './settings.js';
 import type { TileSize } from './settings.js';
@@ -100,6 +107,25 @@ const BOOSTER_PLURAL: Record<BoosterKind, string> = {
   undo: 'undos',
   shuffle: 'shuffles',
 };
+
+/** The band a Daily Challenge board plays at (issue #19, decision 0016): its
+ *  concealment bucket and its star-rating baseline. The Daily draws from all
+ *  ten layouts, hard-pool ones included, so it sits one band up from the
+ *  ladder's middle rather than at easy. */
+const DAILY_BAND: LadderBand = 'medium-plus';
+
+/** A date key as the HUD chip shows it ("Sep 1") and as it is read out
+ *  ("September 1, 2026"). Formatted in UTC from the key's own digits so the
+ *  device zone cannot shift the date it names. */
+function formatDateKey(key: string, style: 'short' | 'long'): string {
+  const at = new Date(`${key}T00:00:00Z`);
+  return new Intl.DateTimeFormat(
+    undefined,
+    style === 'short'
+      ? { month: 'short', day: 'numeric', timeZone: 'UTC' }
+      : { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' },
+  ).format(at);
+}
 
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -154,6 +180,10 @@ async function start(): Promise<void> {
   const profileRowName = el<HTMLElement>('profile-row-name');
   const timeStat = el<HTMLElement>('time-stat');
   const elapsedEl = el<HTMLElement>('elapsed');
+  const overlayStars = el<HTMLElement>('overlay-stars');
+  const dailyButton = el<HTMLButtonElement>('btn-daily');
+  const dailyDateEl = el<HTMLElement>('daily-date');
+  const dailyStatusEl = el<HTMLElement>('daily-status');
 
   // One storage handle for every persisted concern (charges, settings, save,
   // ladder progress). Created before the layout is chosen: the save and the
@@ -184,6 +214,10 @@ async function start(): Promise<void> {
   // build) reads as absent, like every other untrusted record.
   const saved = saves.load();
   let entry = ladder[progress.level - 1]!;
+  /** The Daily Challenge on the table, as its date key — null on the ladder
+   *  (issue #19). A saved Daily resumes as one, whatever today's date is: a
+   *  board dealt before midnight is still that date's board. */
+  let daily: string | null = saved?.daily ?? null;
   let bootLayout: Layout | null = null;
   if (saved !== null) {
     try {
@@ -213,7 +247,13 @@ async function start(): Promise<void> {
    *  one (issue #94). Concealment follows the ladder band (decision 0011). */
   function dealCurrentLevel(seed: number): Game {
     const level = generateValidatedLevel(layout, seed);
-    return new Game(level, undefined, concealedTileIds(level, concealBucketFor(progress.level)));
+    return new Game(level, undefined, concealedTileIds(level, concealBucketForBand(bandInPlay())));
+  }
+
+  /** The band the deal on the table plays at: the ladder level's, or the
+   *  Daily's fixed band (issue #19). Drives concealment and the star baseline. */
+  function bandInPlay(): LadderBand {
+    return daily === null ? bandForLevel(progress.level).band : DAILY_BAND;
   }
 
   /** A fresh seed for the same level (issue #94): New game must visibly
@@ -239,9 +279,17 @@ async function start(): Promise<void> {
   const resumed =
     saved === null
       ? null
-      : reopen(layout, saved, concealBucketFor(savedEntry?.level ?? progress.level));
+      : reopen(
+          layout,
+          saved,
+          saved.daily !== null
+            ? concealBucketForBand(DAILY_BAND)
+            : concealBucketFor(savedEntry?.level ?? progress.level),
+        );
   // A failed resume can leave the save's layout loaded; the fresh deal is the
-  // current ladder level's, so re-point at its layout first.
+  // current ladder level's, so re-point at its layout first — and it is a
+  // ladder deal, whatever the rejected save claimed to be.
+  if (resumed === null) daily = null;
   if (resumed === null && layout.id !== entry.layoutId) layout = await fetchLayout(entry.layoutId);
   let game = resumed ?? dealCurrentLevel(entry.seed);
 
@@ -290,6 +338,10 @@ async function start(): Promise<void> {
    *  (level seed, shuffle index) always produces the same board. Restored with
    *  the save so a resumed deal shuffles the way it would have. */
   let shuffleCount = resumed === null ? 0 : saved!.shuffles;
+  /** Hints and Undos charged on this deal (issue #19): with shuffleCount,
+   *  the assists the star rating counts. Restored with the save, like it. */
+  let hintCount = resumed === null ? 0 : saved!.hints;
+  let undoCount = resumed === null ? 0 : saved!.undos;
   const elapsed = new Elapsed(
     () => performance.now(),
     resumed === null ? 0 : saved!.elapsedMs,
@@ -343,7 +395,9 @@ async function start(): Promise<void> {
       hint: hintPair,
       dimBlocked: settings.value.highlightFree,
     });
-    levelEl.textContent = String(progress.level);
+    // The Level chip shows the date on a Daily board (issue #19).
+    levelEl.textContent = daily === null ? String(progress.level) : formatDateKey(daily, 'short');
+    syncHudIdentity();
     drawScore();
     syncBoosterButtons();
     holder.sync({
@@ -405,7 +459,16 @@ async function start(): Promise<void> {
    */
   function persist(): void {
     if (game.status() === 'won') saves.clear();
-    else saves.write(captureSave(game, { shuffles: shuffleCount, elapsedMs: elapsed.ms }));
+    else
+      saves.write(
+        captureSave(game, {
+          shuffles: shuffleCount,
+          hints: hintCount,
+          undos: undoCount,
+          elapsedMs: elapsed.ms,
+          daily,
+        }),
+      );
   }
 
   /** Charge badges + accessible names. Buttons stay enabled at zero charges so
@@ -447,20 +510,48 @@ async function start(): Promise<void> {
     overlayShuffle.hidden = !canShuffle;
     overlayUndo.hidden = !canUndo;
     // Won overlays retitle these; every other dialog gets the defaults back.
+    // On a Daily board the secondary action leaves for the ladder (issue #19).
     overlayRestart.hidden = false;
-    overlayNew.textContent = 'New game';
+    overlayNew.textContent = daily === null ? 'New game' : 'Back to the ladder';
+    overlayStars.hidden = true;
     if (status === 'won') {
-      // Advance the ladder exactly once per win: this branch is inside the
-      // once-per-level transition (the overlayVisible guard above). The
-      // player's record counts the same moment (issue #69).
-      const cleared = progress.level;
-      const atEnd = progress.advance() === cleared;
-      record.recordWin(game.score);
-      overlayTitle.textContent = `Level ${cleared} complete!`;
-      overlayText.textContent = `Final score: ${game.score}`;
-      overlayNew.textContent = atEnd ? 'Play again' : 'Next level';
+      // The star rating (spec §6) is read off the deal before anything below
+      // banks it: assists charged on this deal, and time against the band's
+      // baseline.
+      const stars = starRating(
+        { hints: hintCount, undos: undoCount, shuffles: shuffleCount, elapsedMs: elapsed.ms },
+        baselineMs(game.level.tiles.length, bandInPlay()),
+      );
+      showStars(stars);
       overlayRestart.hidden = true;
-      announcer.say(`Level ${cleared} complete. Final score ${game.score}.`);
+      if (daily === null) {
+        // Advance the ladder exactly once per win: this branch is inside the
+        // once-per-level transition (the overlayVisible guard above). The
+        // player's record counts the same moment (issue #69), stars included.
+        const cleared = progress.level;
+        const atEnd = progress.advance() === cleared;
+        record.recordWin(game.score, { level: cleared, stars });
+        overlayTitle.textContent = `Level ${cleared} complete!`;
+        overlayText.textContent = `Final score: ${game.score}`;
+        overlayNew.textContent = atEnd ? 'Play again' : 'Next level';
+        announcer.say(`Level ${cleared} complete. ${stars} of 3 stars. Final score ${game.score}.`);
+      } else {
+        // A Daily clear banks the score like any win and pays in trophies,
+        // once per date — a replay of a cleared board earns nothing twice.
+        record.recordWin(game.score);
+        const credit = record.recordDailyWin(daily);
+        const payout = credit.credited
+          ? `${credit.trophies === 1 ? 'Trophy earned' : `${credit.trophies} trophies earned`} — ${
+              credit.streak === 1 ? 'a 1-day streak' : `${credit.streak}-day streak`
+            }.`
+          : 'Already cleared — no extra trophy for a replay.';
+        overlayTitle.textContent = 'Daily Challenge complete!';
+        overlayText.textContent = `Final score: ${game.score}. ${payout}`;
+        overlayNew.textContent = 'Back to the ladder';
+        announcer.say(
+          `Daily Challenge complete. ${stars} of 3 stars. Final score ${game.score}. ${payout}`,
+        );
+      }
     } else if (status === 'lost') {
       overlayTitle.textContent = 'Holder full';
       overlayText.textContent =
@@ -525,6 +616,14 @@ async function start(): Promise<void> {
     }
   }
 
+  /** The win dialog's star row (issue #19): filled and empty glyphs for the
+   *  eye, "N of 3 stars" for assistive technology. */
+  function showStars(stars: StarRating): void {
+    overlayStars.textContent = '★'.repeat(stars) + '☆'.repeat(3 - stars);
+    overlayStars.setAttribute('aria-label', `${stars} of 3 stars`);
+    overlayStars.hidden = false;
+  }
+
   /** Close the end-of-level dialog. Returns whether it had been open. */
   function hideOverlay(): boolean {
     if (!overlayVisible) return false;
@@ -569,6 +668,25 @@ async function start(): Promise<void> {
     for (const { input, key } of settingsToggles) input.checked = current[key];
     for (const { input, size } of sizeInputs) input.checked = current.tileSize === size;
     syncProfileRow();
+    syncDailyRow();
+  }
+
+  /** The Settings row into the Daily Challenge (issue #19): today's date, and
+   *  where the player stands — cleared today, a streak to keep alive, or the
+   *  standing invitation. */
+  function syncDailyRow(): void {
+    const today = dailyDateKey();
+    const streak = liveStreak(record.value, today);
+    dailyDateEl.textContent = `· ${formatDateKey(today, 'short')}`;
+    if (daily === today) {
+      dailyStatusEl.textContent = 'On the table now.';
+    } else if (record.value.lastDaily === today) {
+      dailyStatusEl.textContent = `Cleared today ✓ ${streak}-day streak. Tap to play it again.`;
+    } else if (streak > 0) {
+      dailyStatusEl.textContent = `${streak}-day streak — clear today’s board to keep it going.`;
+    } else {
+      dailyStatusEl.textContent = 'One board a day, the same for everyone.';
+    }
   }
 
   /** The Settings row that opens the profile shows who the player is. */
@@ -582,8 +700,10 @@ async function start(): Promise<void> {
    *  a named player, plain "Level" for a guest or before the welcome gate is
    *  answered — a guest chose to stay anonymous. */
   function syncHudIdentity(): void {
+    // On a Daily board the chip is "Daily" over the date (issue #19).
+    const what = daily === null ? 'Level' : 'Daily';
     el<HTMLElement>('level-label').textContent =
-      profile.value.choice === 'named' ? `${profile.value.name} · Level` : 'Level';
+      profile.value.choice === 'named' ? `${profile.value.name} · ${what}` : what;
   }
 
   /** Mirror the in-app Reduced motion toggle onto the DOM (issue #95): the
@@ -727,7 +847,11 @@ async function start(): Promise<void> {
     el<HTMLElement>('record-level').textContent = String(progress.level);
     el<HTMLElement>('record-cleared').textContent = String(record.value.levelsCleared);
     el<HTMLElement>('record-best').textContent = String(record.value.bestScore);
-    el<HTMLElement>('record-streak').textContent = String(record.value.dailyStreak);
+    el<HTMLElement>('record-total').textContent = String(record.value.totalScore);
+    el<HTMLElement>('record-stars').textContent = String(totalStars(record.value));
+    // The streak as it stands today, not as it was last written: a missed
+    // day has already ended it (issue #19).
+    el<HTMLElement>('record-streak').textContent = String(liveStreak(record.value, dailyDateKey()));
     el<HTMLElement>('record-trophies').textContent = String(record.value.trophies);
   }
 
@@ -829,6 +953,11 @@ async function start(): Promise<void> {
         announcer.say(`Tile size ${TILE_SIZE_LABEL[size]}.`);
       });
     }
+    // Daily Challenge (issue #19): Settings steps aside and the board deals.
+    dailyButton.addEventListener('click', () => {
+      closeSettings();
+      void startDaily();
+    });
     el<HTMLButtonElement>('settings-close').addEventListener('click', () => closeSettings());
     // Tapping the dimmed backdrop dismisses the panel (issue #107). Settings
     // persist per change, so dismissal loses nothing; the target check keeps
@@ -980,7 +1109,14 @@ async function start(): Promise<void> {
     }
     const fromDialog = overlayVisible;
     const result = runBooster(kind);
-    if (result.ok) charges.spend(kind);
+    if (result.ok) {
+      charges.spend(kind);
+      // Assists the star rating counts (issue #19) — charged uses only, the
+      // same rule as the charge itself. Shuffle keeps its own count (it seeds
+      // the next shuffle) in runBooster.
+      if (kind === 'hint') hintCount++;
+      if (kind === 'undo') undoCount++;
+    }
     // Undo puts a parked tile back on the board and Shuffle repaints every
     // face: a copy still flying from the old board would paint over the new
     // one (issue #44).
@@ -1173,6 +1309,14 @@ async function start(): Promise<void> {
    */
   async function startLevel(mode: 'replay' | 'reroll' | 'ladder'): Promise<void> {
     if (dealing) return;
+    // On a Daily board (issue #19) Restart replays the Daily; the other two
+    // both mean "back to the ladder", which deals the ladder's own pinned
+    // level — a re-roll of a Daily would be a board nobody else has.
+    const leavingDaily = daily !== null && mode !== 'replay';
+    if (leavingDaily) {
+      daily = null;
+      mode = 'ladder';
+    }
     const next = ladder[progress.level - 1]!;
     const wantedLayoutId =
       mode === 'ladder'
@@ -1180,37 +1324,82 @@ async function start(): Promise<void> {
         : mode === 'reroll'
           ? nextPoolLayout(bandForLevel(progress.level).band, layout.id)
           : layout.id;
-    if (wantedLayoutId !== layout.id) {
-      // The fetch yields the event loop: block input until the new deal is in,
-      // or a tap lands on the outgoing board and mutates a game about to be
-      // discarded (its save clobbered by the new deal's).
-      dealing = true;
-      try {
-        layout = await fetchLayout(wantedLayoutId);
-      } catch {
-        // Offline mid-session: keep the loaded board rather than a blank one.
-        announcer.say('Could not load the next level. Check your connection and try again.');
-        return;
-      } finally {
-        dealing = false;
-      }
-      renderer.setLayout(layout.slots);
-      if (applyHudPlacement()) app.resize();
-    }
+    if (!(await switchLayout(wantedLayoutId))) return;
     entry = next;
-    game = dealCurrentLevel(
+    beginDeal(
       mode === 'replay'
         ? game.level.seed
         : mode === 'reroll'
           ? rerollSeed(game.level.seed)
           : entry.seed,
     );
+    announcer.say(
+      mode === 'replay'
+        ? daily === null
+          ? `Level ${progress.level} restarted. ${game.tilesLeft} tiles.`
+          : `Daily Challenge restarted. ${game.tilesLeft} tiles.`
+        : leavingDaily
+          ? `Back to the ladder. Level ${progress.level}. ${game.tilesLeft} tiles.`
+          : `New game dealt. Level ${progress.level}. ${game.tilesLeft} tiles.`,
+    );
+  }
+
+  /**
+   * Deal today's Daily Challenge (issue #19, spec §6): the board every player
+   * gets for this calendar date — layout and seed are both hashes of the
+   * date. The current ladder deal is dropped (its save is overwritten by the
+   * Daily's; the ladder position keeps), and Back to the ladder re-deals the
+   * ladder level from its pinned seed.
+   */
+  async function startDaily(): Promise<void> {
+    if (dealing) return;
+    const key = dailyDateKey();
+    if (daily === key) {
+      announcer.say(`Already on the Daily Challenge for ${formatDateKey(key, 'long')}.`);
+      return;
+    }
+    if (!(await switchLayout(dailyLayoutId(key)))) return;
+    daily = key;
+    beginDeal(dailySeed(key));
+    announcer.say(
+      `Daily Challenge for ${formatDateKey(key, 'long')}. ${game.tilesLeft} tiles. Everyone gets this board today.`,
+    );
+  }
+
+  /** Load `wantedLayoutId` if it is not on the table. False when the fetch
+   *  failed — the caller keeps the loaded board rather than a blank one. */
+  async function switchLayout(wantedLayoutId: string): Promise<boolean> {
+    if (wantedLayoutId === layout.id) return true;
+    // The fetch yields the event loop: block input until the new deal is in,
+    // or a tap lands on the outgoing board and mutates a game about to be
+    // discarded (its save clobbered by the new deal's).
+    dealing = true;
+    try {
+      layout = await fetchLayout(wantedLayoutId);
+    } catch {
+      // Offline mid-session: keep the loaded board rather than a blank one.
+      announcer.say('Could not load the next level. Check your connection and try again.');
+      return false;
+    } finally {
+      dealing = false;
+    }
+    renderer.setLayout(layout.slots);
+    if (applyHudPlacement()) app.resize();
+    return true;
+  }
+
+  /** Put a fresh deal from `seed` on the (already loaded) layout and reset
+   *  everything per-deal: effects, hint, assist counts, clock, dialog. */
+  function beginDeal(seed: number): void {
+    game = dealCurrentLevel(seed);
     flash = [];
     flashToken++;
     animator.clear();
     trayFx.clear();
     hintPair = [];
     shuffleCount = 0;
+    hintCount = 0;
+    undoCount = 0;
     elapsed.reset();
     const fromDialog = hideOverlay();
     redraw();
@@ -1220,11 +1409,6 @@ async function start(): Promise<void> {
     // Hiding the dialog drops focus to <body>; put it back on the board. Only
     // when the dialog was the source — a header tap should keep its own focus.
     if (fromDialog) a11y.focusActive();
-    announcer.say(
-      mode === 'replay'
-        ? `Level ${progress.level} restarted. ${game.tilesLeft} tiles.`
-        : `New game dealt. Level ${progress.level}. ${game.tilesLeft} tiles.`,
-    );
   }
 
   app.canvas.addEventListener('pointerdown', (ev) => {
@@ -1346,6 +1530,18 @@ async function start(): Promise<void> {
     /** Ladder position + loaded layout (issue #79 QA). */
     get ladderLevel() {
       return progress.level;
+    },
+    /** The Daily Challenge on the table as its date key, or null (issue #19). */
+    get daily() {
+      return daily;
+    },
+    /** Assists charged on this deal — the star rating's inputs (issue #19). */
+    assists(): { hints: number; undos: number; shuffles: number } {
+      return { hints: hintCount, undos: undoCount, shuffles: shuffleCount };
+    },
+    /** The star row as the win dialog shows it: null while hidden. */
+    starsShown(): string | null {
+      return overlayStars.hidden ? null : overlayStars.getAttribute('aria-label');
     },
     get dealing() {
       return dealing;

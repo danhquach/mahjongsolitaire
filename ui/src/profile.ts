@@ -4,16 +4,24 @@
 // later sync backend is an addition, not a rewrite.
 //
 //   mahjong.profile.v1   who is playing: display name + avatar
-//   mahjong.record.v1    what they have done: levels cleared, best score,
-//                        Daily Challenge streak, trophies
+//   mahjong.record.v1    what they have done: levels cleared, best and total
+//                        score, stars per ladder level, Daily Challenge
+//                        streak (+ the date it is anchored to), trophies
 //
-// The record's dailyStreak and trophies fields are parsed and shown from day
-// one but written by nobody yet: the Daily Challenge (issue #19) and trophies
-// arrive later and get a home here instead of a second record. The display
-// name will eventually be shown to other players (issue #70) — length is
-// clamped here, but profanity screening is deliberately deferred until the
-// name actually leaves the device.
+// The Daily Challenge and star fields (issue #19, decision 0016) live here
+// rather than on a second record; a record written before #19 parses with
+// them empty. The display name will eventually be shown to other players
+// (issue #70) — length is clamped here, but profanity screening is
+// deliberately deferred until the name actually leaves the device.
 
+import {
+  LADDER_LENGTH,
+  dailyTrophies,
+  daysBetween,
+  isDateKey,
+  parseStarRating,
+} from '@mahjongsolitaire/core';
+import type { StarRating } from '@mahjongsolitaire/core';
 import { readRecord, writeRecord } from './storage.js';
 import type { KeyValueStorage } from './storage.js';
 
@@ -145,39 +153,92 @@ export class ProfileStore {
 // --- the record ---------------------------------------------------------------
 
 export interface PlayerRecord {
-  /** Wins, lifetime — counts replays too, unlike the ladder position. */
+  /** Wins, lifetime — counts replays and Daily clears too, unlike the ladder
+   *  position. */
   readonly levelsCleared: number;
   /** Highest final score of any won level. */
   readonly bestScore: number;
-  /** Consecutive Daily Challenge days. Written by nobody until issue #19. */
+  /** Every won level's final score, summed (spec §6 "total score"). */
+  readonly totalScore: number;
+  /** Best star rating per ladder level, keyed by the level number as a string
+   *  (JSON object keys). Absent means never cleared. */
+  readonly stars: Readonly<Record<string, StarRating>>;
+  /** Consecutive Daily Challenge days, as of `lastDaily`. */
   readonly dailyStreak: number;
-  /** Trophies collected. Written by nobody until the trophy system lands. */
+  /** The date key of the last Daily Challenge credited, or null. The streak
+   *  is only meaningful next to it: a streak whose last day was the day
+   *  before today is alive, anything older is over (see `liveStreak`). */
+  readonly lastDaily: string | null;
+  /** Trophies collected from Daily clears (`dailyTrophies` per clear). */
   readonly trophies: number;
 }
 
 export const EMPTY_RECORD: PlayerRecord = {
   levelsCleared: 0,
   bestScore: 0,
+  totalScore: 0,
+  stars: {},
   dailyStreak: 0,
+  lastDaily: null,
   trophies: 0,
 };
 
 export const RECORD_STORAGE_KEY = 'mahjong.record.v1';
 
-/** Counters only: a non-negative integer or that field's zero. */
+/** Per-field tolerance, like parseProfile: counters are non-negative integers
+ *  or zero, the stars map keeps only well-formed (level, 1–3) entries, and the
+ *  last Daily date must be a real date key or it is forgotten (with the
+ *  streak it vouched for). A record from before issue #19 has no totalScore,
+ *  stars or lastDaily and simply starts those at empty. */
 export function parsePlayerRecord(record: unknown): PlayerRecord {
   if (typeof record !== 'object' || record === null) return EMPTY_RECORD;
   const raw = record as Record<string, unknown>;
-  const count = (key: keyof PlayerRecord): number => {
+  const count = (key: string): number => {
     const v = raw[key];
     return typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : 0;
   };
+  const stars: Record<string, StarRating> = {};
+  const rawStars = raw['stars'];
+  if (typeof rawStars === 'object' && rawStars !== null && !Array.isArray(rawStars)) {
+    for (const [key, value] of Object.entries(rawStars as Record<string, unknown>)) {
+      const level = Number(key);
+      const rating = parseStarRating(value);
+      if (!Number.isInteger(level) || level < 1 || level > LADDER_LENGTH || rating === null) continue;
+      stars[String(level)] = rating;
+    }
+  }
+  const lastDaily = isDateKey(raw['lastDaily']) ? raw['lastDaily'] : null;
   return {
     levelsCleared: count('levelsCleared'),
     bestScore: count('bestScore'),
-    dailyStreak: count('dailyStreak'),
+    totalScore: count('totalScore'),
+    stars,
+    dailyStreak: lastDaily === null ? 0 : count('dailyStreak'),
+    lastDaily,
     trophies: count('trophies'),
   };
+}
+
+/** Stars earned across the ladder — the profile's headline star count. */
+export function totalStars(record: PlayerRecord): number {
+  return Object.values(record.stars).reduce((n, s) => n + s, 0);
+}
+
+/** The streak as it stands on `today`: the stored count if the last Daily
+ *  was today or yesterday, else 0 — a missed day ends it, and the profile
+ *  must not keep showing a streak that is already over. */
+export function liveStreak(record: PlayerRecord, today: string): number {
+  if (record.lastDaily === null) return 0;
+  const gap = daysBetween(record.lastDaily, today);
+  return gap === 0 || gap === 1 ? record.dailyStreak : 0;
+}
+
+/** What a Daily clear paid out (issue #19). `credited` is false when the
+ *  date was already cleared — a replay earns nothing twice. */
+export interface DailyCredit {
+  readonly credited: boolean;
+  readonly streak: number;
+  readonly trophies: number;
 }
 
 /** The player's own record, updated once per win (main.ts calls this inside
@@ -196,14 +257,47 @@ export class RecordStore {
     return this.current;
   }
 
-  /** A level was won at `score`: one more clear, and a new best if it is one. */
-  recordWin(score: number): PlayerRecord {
+  /** A level was won at `score`: one more clear, the score banked into the
+   *  total, a new best if it is one — and, for a ladder level, its star
+   *  rating kept if it beats the stored one (a Daily clear passes no level:
+   *  stars are per ladder level, the Daily pays in trophies). */
+  recordWin(score: number, rated?: { readonly level: number; readonly stars: StarRating }): PlayerRecord {
+    const banked = Math.max(0, Math.floor(score));
+    const stars = { ...this.current.stars };
+    if (rated !== undefined) {
+      const key = String(rated.level);
+      stars[key] = Math.max(stars[key] ?? 0, rated.stars) as StarRating;
+    }
     this.current = {
       ...this.current,
       levelsCleared: this.current.levelsCleared + 1,
-      bestScore: Math.max(this.current.bestScore, Math.max(0, Math.floor(score))),
+      bestScore: Math.max(this.current.bestScore, banked),
+      totalScore: this.current.totalScore + banked,
+      stars,
     };
     writeRecord(this.storage, this.key, this.current);
     return this.current;
+  }
+
+  /** The Daily Challenge for `dateKey` was cleared: extend or restart the
+   *  streak (consecutive calendar days, `daysBetween` — DST-immune), pay the
+   *  trophies the streak earns, once per date. Clearing a *past* date's board
+   *  is credited too (a board dealt before midnight and finished after it),
+   *  but never re-credited and never counted out of order. */
+  recordDailyWin(dateKey: string): DailyCredit {
+    const { lastDaily, dailyStreak } = this.current;
+    if (lastDaily !== null && daysBetween(lastDaily, dateKey) <= 0) {
+      return { credited: false, streak: dailyStreak, trophies: 0 };
+    }
+    const streak = lastDaily !== null && daysBetween(lastDaily, dateKey) === 1 ? dailyStreak + 1 : 1;
+    const trophies = dailyTrophies(streak);
+    this.current = {
+      ...this.current,
+      dailyStreak: streak,
+      lastDaily: dateKey,
+      trophies: this.current.trophies + trophies,
+    };
+    writeRecord(this.storage, this.key, this.current);
+    return { credited: true, streak, trophies };
   }
 }
