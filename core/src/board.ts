@@ -192,16 +192,29 @@ export class Board {
     return this.tileOverlappingFootprint(slot.x, slot.y, slot.z + 1) !== undefined;
   }
 
-  /** Rule §3.2(2): a present tile overlaps the adjacent 2×2 footprint on the left, same z. */
+  /** Rule §3.2(2): a present tile touches the left long edge, same z — its
+   *  anchor is exactly 2 half-units left with vertical overlap (issue #74:
+   *  a tile a further half-unit away overlaps the adjacent footprint but does
+   *  not touch the edge, so it must not block). */
   isBlockedLeft(id: TileId): boolean {
     const { slot } = this.get(id);
-    return this.tileOverlappingFootprint(slot.x - 2, slot.y, slot.z) !== undefined;
+    return this.tileTouchingEdge(slot.x - 2, slot.y, slot.z) !== undefined;
   }
 
-  /** Rule §3.2(2): a present tile overlaps the adjacent 2×2 footprint on the right, same z. */
+  /** Rule §3.2(2): a present tile touches the right long edge, same z. */
   isBlockedRight(id: TileId): boolean {
     const { slot } = this.get(id);
-    return this.tileOverlappingFootprint(slot.x + 2, slot.y, slot.z) !== undefined;
+    return this.tileTouchingEdge(slot.x + 2, slot.y, slot.z) !== undefined;
+  }
+
+  /** First present tile anchored at column `x` (edge contact) whose rows
+   *  overlap the 2×2 footprint rooted at (x, y) on layer z, or undefined. */
+  private tileTouchingEdge(x: number, y: number, z: number): Tile | undefined {
+    for (let dy = -1; dy <= 1; dy++) {
+      const t = this.occupied.get(`${x},${y + dy},${z}`);
+      if (t) return t;
+    }
+    return undefined;
   }
 
   /**
