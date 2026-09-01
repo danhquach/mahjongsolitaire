@@ -460,6 +460,17 @@ export class Game {
     const selected = this.stack.selection;
     if (selected === id) return this.park(id, nowMs);
     if (this.isFaceHidden(id)) {
+      // Issue #77: a fresh peek that turns up the partner of a face already
+      // showing matches in this same tap — against the selection first (an
+      // explicit pick outranks, as in step 4), then the unselected peek. A
+      // non-matching reveal falls through to the ordinary peek, so the
+      // one-unselected-peek memory mechanic is untouched; the holder is still
+      // never consulted for a hidden tile (decision 0010: that tap-time leak
+      // is the one this branch exists to prevent).
+      for (const other of [selected, this.peekedId]) {
+        if (other === null || other === id || this.isFaceHidden(other)) continue;
+        if (canMatch(this.board, other, id).ok) return this.playPair(other, id, nowMs);
+      }
       // One unselected peek at a time: this assignment is what re-conceals the
       // previous one (issue #64 answer 3).
       this.peekedId = id;

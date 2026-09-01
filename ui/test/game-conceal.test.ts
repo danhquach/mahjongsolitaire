@@ -48,24 +48,65 @@ test('tap on a hidden free tile peeks: face shown, nothing selected', () => {
 });
 
 test('peeking a second tile re-conceals the first (one at a time)', () => {
-  const game = new Game(ROW, undefined, [0, 2]);
+  // Non-matching faces: a matching pair would auto-match instead (issue #77).
+  const game = new Game(ROW, undefined, [0, 1]);
   game.tap(free(0), 1);
-  const outcome = game.tap(free(2), 2);
-  assert.deepEqual(outcome, { kind: 'peeked', id: 2 });
+  const outcome = game.tap(free(1), 2);
+  assert.deepEqual(outcome, { kind: 'peeked', id: 1 });
   assert.equal(game.isFaceHidden(0), true);
-  assert.equal(game.isFaceHidden(2), false);
+  assert.equal(game.isFaceHidden(1), false);
 });
 
-test('selecting a peeked tile pins the reveal, so a concealed pair can match', () => {
-  const game = new Game(ROW, undefined, [0, 2]);
-  game.tap(free(0), 1); // peek
+test('selecting a peeked tile pins the reveal through a non-matching peek', () => {
+  const game = new Game(ROW, undefined, [0, 1]);
+  game.tap(free(0), 1); // peek dots-1
   const selected = game.tap(free(0), 2); // second tap: ordinary select
   assert.equal(selected.kind, 'selected');
-  game.tap(free(2), 3); // peek the partner — the pinned tile stays up
+  game.tap(free(1), 3); // peek bamboo-2 — no match, the pinned tile stays up
   assert.equal(game.isFaceHidden(0), false);
-  const matched = game.tap(free(2), 4);
-  assert.equal(matched.kind, 'matched');
+  assert.equal(game.isFaceHidden(1), false);
+});
+
+test('a fresh peek that reveals the peeked tile’s partner matches in that tap (issue #77)', () => {
+  const game = new Game(ROW, undefined, [0, 2]);
+  game.tap(free(0), 1); // peek dots-1
+  const outcome = game.tap(free(2), 2); // concealed partner: match, not a peek cycle
+  assert.equal(outcome.kind, 'matched');
   assert.equal(game.tilesLeft, 2);
+  assert.equal(game.peeked, null);
+});
+
+test('a fresh peek that reveals the selection’s partner matches, selection outranking the peek (issue #77)', () => {
+  const pairs: GeneratedLevel = {
+    layoutId: 'conceal-fixture',
+    seed: 0,
+    tiles: [
+      tile(0, 0, 0, 0, 'dots-1'),
+      tile(1, 4, 0, 0, 'dots-1'),
+      tile(2, 8, 0, 0, 'dots-1'),
+      tile(3, 12, 0, 0, 'dots-1'),
+    ],
+    solution: [
+      [0, 1],
+      [2, 3],
+    ],
+  };
+  const game = new Game(pairs, undefined, [2, 3]);
+  game.tap(free(2), 1); // unselected peek: dots-1
+  game.tap(free(0), 2); // select a revealed dots-1
+  const outcome = game.tap(free(3), 3); // concealed dots-1: match the selection, not the peek
+  assert.equal(outcome.kind, 'matched');
+  assert.ok(outcome.kind === 'matched' && outcome.a === 0 && outcome.b === 3);
+  assert.equal(game.isFaceHidden(2), true); // the losing peek re-conceals with the board change
+});
+
+test('the holder is still never consulted for a hidden tile (issue #77 keeps decision 0010)', () => {
+  const game = new Game(ROW, undefined, [2]);
+  game.tap(free(0), 1); // select dots-1
+  game.tap(free(0), 2); // park it — face-up on the player's shelf
+  const outcome = game.tap(free(2), 3); // concealed dots-1: must peek, not auto-clear
+  assert.deepEqual(outcome, { kind: 'peeked', id: 2 });
+  assert.equal(game.tilesLeft, 4);
 });
 
 test('a mismatch involving a concealed tile re-conceals and drops the selection', () => {
@@ -131,8 +172,7 @@ test('undoing a match brings concealed tiles back face-down', () => {
   const game = new Game(ROW, undefined, [0, 2]);
   game.tap(free(0), 1);
   game.tap(free(0), 2);
-  game.tap(free(2), 3);
-  game.tap(free(2), 4); // matched
+  game.tap(free(2), 3); // matched — the reveal completes the pair (issue #77)
   assert.equal(game.undo()?.kind, 'match');
   // Undo restores the pre-move selection (tile 0 was selected), and a selection
   // pins its reveal — so 0 comes back face-up-by-selection while 2, whose peek
@@ -168,8 +208,7 @@ test('a removed concealed tile is not reported hidden', () => {
   const game = new Game(ROW, undefined, [0, 2]);
   game.tap(free(0), 1);
   game.tap(free(0), 2);
-  game.tap(free(2), 3);
-  game.tap(free(2), 4);
+  game.tap(free(2), 3); // matched — the reveal completes the pair (issue #77)
   assert.equal(game.isFaceHidden(0), false);
   assert.equal(game.isFaceHidden(2), false);
 });
