@@ -70,7 +70,11 @@ const VIEWPORTS = [
 ].map((vp) => ({
   ...vp,
   ...{
-    '390x844': { hud: 'top', minTileW: 38, minCoverage: 0.81 },
+    // 0.81 → 0.74 with the HUD rework: the old header wrapped to two rows
+    // (114px) at 390px, the stat-chip header holds one (60px), so the board
+    // box gained 54px of height the width-constrained turtle cannot fill —
+    // same 39.9px tiles, smaller fill ratio. Measured 0.762.
+    '390x844': { hud: 'top', minTileW: 38, minCoverage: 0.74 },
     '844x390': { hud: 'side', minTileW: 26, minCoverage: 0.37 },
     // The floor covers every pool layout the session may have on the table
     // when it rotates in (board aspect now varies per deal — issue #99).

@@ -6,6 +6,12 @@ commit and build time of the running bundle.
 
 ## 2026-09-01
 
+- A cleaner HUD: Level and Score are stat chips — a small label over a
+  big number, the score in gold with a little pop on every gain — and
+  New game / Restart became icon buttons. The Tiles counter is gone
+  (the board shows what is left; screen-reader announcements still
+  speak the count). On phones the old header wrapped to two rows; the
+  new one holds one, so the board gets the height back.
 - The game now has a player: Settings opens a profile screen with a
   display name and a pickable avatar, plus your own record — current
   level, levels cleared, and best score (streaks and trophies start

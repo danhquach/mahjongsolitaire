@@ -127,7 +127,6 @@ async function start(): Promise<void> {
   const appRoot = el<HTMLDivElement>('app');
   const boardDiv = el<HTMLDivElement>('board');
   const scoreEl = el<HTMLElement>('score');
-  const tilesLeftEl = el<HTMLElement>('tiles-left');
   const overlay = el<HTMLDivElement>('overlay');
   const overlayTitle = el<HTMLElement>('overlay-title');
   const overlayText = el<HTMLElement>('overlay-text');
@@ -343,8 +342,7 @@ async function start(): Promise<void> {
       dimBlocked: settings.value.highlightFree,
     });
     levelEl.textContent = String(progress.level);
-    scoreEl.textContent = String(game.score);
-    tilesLeftEl.textContent = String(game.tilesLeft);
+    drawScore();
     syncBoosterButtons();
     holder.sync({
       slots: game.holderSlots(),
@@ -360,6 +358,25 @@ async function start(): Promise<void> {
     // an unmatched tile ends the level, so a free tile's accessible name has
     // to say so.
     a11y.sync(a11yTiles(), (t) => tileCssRect(t.slot), game.holderVacancies === 1);
+  }
+
+  /** The score the chip currently shows; -1 until the first paint so a resumed
+   *  score does not pop on boot. */
+  let shownScore = -1;
+
+  /** The score chip: the number, plus a pop on every gain (HUD rework). A new
+   *  deal drops the score back to 0, which updates without the fanfare; the
+   *  pop's reduced-motion opt-outs are pure CSS (see index.html). */
+  function drawScore(): void {
+    scoreEl.textContent = String(game.score);
+    if (game.score > shownScore && shownScore >= 0) {
+      scoreEl.classList.remove('bump');
+      // Restart the animation even when a pop is still playing: without the
+      // reflow the class swap in one task is a no-op to the animator.
+      void scoreEl.offsetWidth;
+      scoreEl.classList.add('bump');
+    }
+    shownScore = game.score;
   }
 
   /** Opt-in count-up readout (spec §6). Hidden entirely while timed mode is
