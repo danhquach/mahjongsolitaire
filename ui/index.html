@@ -360,7 +360,8 @@
          (spec §7: every action within 2 taps). Rows are whole-row labels so
          the touch target is the text as well as the control, and the card
          scrolls rather than overflowing a small phone in landscape. */
-      #settings {
+      #settings,
+      #changelog {
         position: absolute;
         inset: 0;
         display: none;
@@ -368,10 +369,12 @@
         justify-content: center;
         background: rgba(0, 0, 0, 0.55);
       }
-      #settings.visible {
+      #settings.visible,
+      #changelog.visible {
         display: flex;
       }
-      #settings .card {
+      #settings .card,
+      #changelog .card {
         background: #f0fdf4;
         color: #14532d;
         border-radius: 12px;
@@ -382,9 +385,26 @@
         text-align: left;
         font-size: 18px; /* spec §7: ≥ 18sp body */
       }
-      #settings h2 {
+      #settings h2,
+      #changelog h2 {
         margin: 0 0 12px;
         font-size: 24px;
+      }
+      #changelog h3 {
+        margin: 16px 0 4px;
+        font-size: 18px;
+      }
+      #changelog ul {
+        margin: 4px 0;
+        padding-left: 22px;
+      }
+      #changelog li {
+        margin: 4px 0;
+      }
+      #changelog p {
+        margin: 4px 0;
+        font-size: 15px;
+        color: #3f6212;
       }
       #settings fieldset {
         margin: 12px 0 0;
@@ -422,7 +442,8 @@
         font-size: 15px;
         color: #3f6212;
       }
-      #settings .card > button {
+      #settings .card > button,
+      #changelog .card > button {
         margin-top: 16px;
         width: 100%;
         font-size: 18px;
@@ -432,6 +453,18 @@
         border: 1px solid #14532d;
         background: #166534;
         color: #f0fdf4;
+      }
+      /* The version row reads as a settings row, not a primary action
+         (issue #81); only the Done button keeps the filled style. */
+      #settings .card > button.version-row {
+        margin-top: 12px;
+        text-align: left;
+        border: none;
+        background: none;
+        color: inherit;
+        padding: 6px 0;
+        border-radius: 0;
+        border-top: 1px solid #d1fae5;
       }
 
       /* --- Accessibility layer (issue #12) ---------------------------------
@@ -593,6 +626,14 @@
               <button id="overlay-new" type="button">New game</button>
             </div>
           </div>
+          <div id="changelog" role="dialog" aria-modal="true" aria-labelledby="changelog-title">
+            <div class="card">
+              <h2 id="changelog-title">What’s new</h2>
+              <!-- Filled from the bundled CHANGELOG.md by main.ts (issue #81). -->
+              <div id="changelog-body"></div>
+              <button id="changelog-close" type="button">Done</button>
+            </div>
+          </div>
           <div id="settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
             <div class="card">
               <h2 id="settings-title">Settings</h2>
@@ -659,6 +700,14 @@
                   <span>Extra large</span>
                 </label>
               </fieldset>
+              <!-- Issue #81: which build is this? The commit stamp is the
+                   load-bearing part; tapping the row opens the changelog. -->
+              <button id="btn-version" type="button" class="row version-row">
+                <span>
+                  Version <strong id="version">dev</strong>
+                  <span class="hint">Tap to see what’s new.</span>
+                </span>
+              </button>
               <button id="settings-close" type="button">Done</button>
             </div>
           </div>

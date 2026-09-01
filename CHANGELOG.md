@@ -1,0 +1,46 @@
+# Changelog
+
+Playtest builds deploy from `main` on every merge; entries are grouped by
+deploy day. The in-game Settings screen shows this file with the exact
+commit and build time of the running bundle.
+
+## 2026-09-01
+
+- The game now plays the 150-level ladder: each level has its own layout,
+  deal and difficulty, clearing a level advances, and progress survives
+  restarts (#79).
+- Matching a found concealed pair is two taps: peeking a tile that pairs
+  with the face already showing matches it immediately (#77).
+- Matches with a held tile play the full match animation on the board-side
+  tile (#73).
+- Fixed: an uncovered tile with a same-layer neighbour half a tile away on
+  one side was wrongly unselectable (#74).
+- Version number and this changelog are visible in Settings (#81).
+
+## 2026-08-31
+
+- Flowers replaced with four composed Seasons tiles (#75).
+- 150-level plateau ladder shipped in data, with its release gate (#18).
+- Holder slots draw the real tile at board size (#66).
+- Face-down tiles: difficulty-scaled concealment with peek-to-reveal (#64).
+- The holder is one-way and a full holder ends the level (#63).
+- Parking moved onto the board: activate a selected tile to park it; a tap
+  on a tile whose partner is held clears the pair (#62).
+- Holder: four off-board slots a free tile can be parked in (#43).
+- Match feedback: the pair flies together and collides, with sound, haptic
+  and particle burst; reduced-motion substitutes a cross-fade (#44).
+- Tile depth shading and side faces (#45).
+- All ten layouts shipped and solvability-swept (#17).
+- The HUD edge is chosen per viewport for the largest board fit (#37).
+
+## 2026-08-30
+
+- First playable vertical slice: one Turtle level, tap input, mis-tap
+  forgiveness, portrait and landscape (#11, #16).
+- Accessibility foundation: DOM/ARIA board mirror, spoken outcomes, 48dp
+  targets (#12).
+- Boosters: Hint, Undo, Shuffle with persisted charges (#13).
+- Auto-save on every move, resume after force-quit, settings screen (#14).
+- Playtest deploys to Cloudflare on every green main build (#15).
+- Core engine: board rules, generator, solver, difficulty, scoring,
+  shuffle (#5–#10).
