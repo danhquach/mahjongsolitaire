@@ -113,6 +113,41 @@ test('half-offset side neighbor blocks (spec: edge must be FULLY unblocked)', ()
   );
 });
 
+test('half-unit-gap same-layer neighbor does not touch the edge → no block (issue #74)', () => {
+  // Neighbor anchored 3 half-units away: overlaps the adjacent footprint but
+  // leaves a half-unit gap to the edge — must not block either tile.
+  assertFixture(
+    [
+      { x: 0, y: 0, z: 0 },
+      { x: 3, y: 0, z: 0 },
+    ],
+    ['free', 'free'],
+  );
+});
+
+test('half-unit-gap neighbor with y-stagger still does not block (issue #74)', () => {
+  assertFixture(
+    [
+      { x: 0, y: 0, z: 0 },
+      { x: 3, y: 1, z: 0 },
+    ],
+    ['free', 'free'],
+  );
+});
+
+test('issue #74 report shape: touching left neighbor, gap-right tile → left-blocked, selectable', () => {
+  // Upper-layer cluster: tile touches a same-layer neighbor on the left only;
+  // the nearest same-layer tile to the right is a half-unit clear of the edge.
+  assertFixture(
+    [
+      { x: 2, y: 0, z: 1 },
+      { x: 0, y: 0, z: 1 },
+      { x: 5, y: 0, z: 1 },
+    ],
+    ['left-blocked', 'right-blocked', 'free'],
+  );
+});
+
 test('both-blocked via two half-offset flankers on opposite sides', () => {
   assertFixture(
     [

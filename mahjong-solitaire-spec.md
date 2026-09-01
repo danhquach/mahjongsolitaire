@@ -81,7 +81,7 @@ Tile { id: uuid, slot: Slot, face: FaceId, removed: bool }
 ### 3.2 Free-tile rule
 A tile is **free** (selectable) iff:
 1. No tile occupies any overlapping footprint at `z+1` ("not covered"), AND
-2. Its **left** edge or **right** edge is fully unblocked at the same `z` (no tile overlapping the adjacent 2×2 footprint on that side).
+2. Its **left** edge or **right** edge is fully unblocked at the same `z` (no tile **touching** that edge: anchored exactly 2 half-units away on that side with vertical overlap; a tile a further half-unit away does not touch the edge and does not block — clarified by issue #74).
 
 Vertical adjacency does not block.
 
