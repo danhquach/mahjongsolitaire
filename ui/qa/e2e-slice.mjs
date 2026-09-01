@@ -67,9 +67,10 @@ const VIEWPORTS = [
     '390x844': { hud: 'top', minTileW: 23, minCoverage: 0.29 },
     '844x390': { hud: 'side', minTileW: 34, minCoverage: 0.64 },
     '810x1080': { hud: 'top', minTileW: 51, minCoverage: 0.5 },
-    // Lowered for issue #43: the holder strip takes its height out of the fit
-    // (68px of 810 here), which costs this viewport ~9% of its tile width.
-    '1080x810': { hud: 'top', minTileW: 60, minCoverage: 0.79 },
+    // Lowered for issue #43 (the holder strip takes its height out of the fit)
+    // and again for issue #66 (slots grew to full tile size — the accepted
+    // trade: measured 59.95px here, floor ~1px below).
+    '1080x810': { hud: 'top', minTileW: 59, minCoverage: 0.79 },
   }[`${vp.width}x${vp.height}`],
 }));
 
@@ -729,10 +730,34 @@ for (const vp of VIEWPORTS) {
             ?.getAttribute('aria-label'),
           said: document.getElementById('a11y-status').textContent,
           tilesLeft: window.__slice.game.tilesLeft,
+          // Issue #66: the parked tile's visual vs a board tile's on-screen
+          // top-face size. The slot draws face + side depth, so the ratio is
+          // (TILE+SIDE)/TILE — a little over 1 on both axes, and equal-scale.
+          slotTile: (() => {
+            const r = document
+              .querySelector(`#holder [data-tile-id="${t.id}"] .tile`)
+              ?.getBoundingClientRect();
+            const free = window.__slice.game.hitCandidates()[0];
+            const b = window.__slice.tileCssRect(free.id);
+            return r ? { wRatio: r.width / b.w, hRatio: r.height / b.h } : null;
+          })(),
         }),
         target,
       );
       const strip = await slotMetrics();
+      check(
+        parked.slotTile !== null &&
+          parked.slotTile.wRatio >= 1 &&
+          parked.slotTile.wRatio <= 1.2 &&
+          parked.slotTile.hRatio >= 1 &&
+          parked.slotTile.hRatio <= 1.2 &&
+          // Equal scale on both axes, ratios normalised by (TILE+SIDE)/TILE per
+          // axis (71/64, 91/84); tolerance covers the strip's whole-px rounding
+          // at phone scale, where 1px is ~4% of a tile.
+          Math.abs(parked.slotTile.wRatio / (71 / 64) - parked.slotTile.hRatio / (91 / 84)) < 0.05,
+        'a parked tile reads the same size as a board tile (issue #66)',
+        parked.slotTile,
+      );
       check(parked.holder.slots[0] === target.id, 'the tile is in the first slot', parked);
       check(parked.holder.holdsUsed === 1, 'the hold is counted', parked);
       check(!parked.onBoard, 'a parked tile is off the board', parked);

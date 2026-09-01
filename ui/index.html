@@ -227,45 +227,43 @@
         flex-direction: column;
         padding: 8px 6px;
       }
+      /* A slot is a 48dp-minimum button (spec §7) around a tile-sized visual:
+         the .tile span is sized by holder.ts to the board's current on-screen
+         tile size (issue #66), so a parked tile and a board tile always read
+         the same — the button only outgrows it when tiles drop below 48dp. */
       #holder .slot {
         position: relative;
         display: grid;
         place-items: center;
-        width: 48px;
-        height: 56px;
+        min-width: 48px;
+        min-height: 48px;
         padding: 0;
+        border: none;
+        background: transparent;
+      }
+      /* Empty look: a dashed tile-sized placeholder. Filled: the renderer's
+         own picture of the parked tile (face, side depth, pips, corner tag),
+         set as this span's background by holder.ts — same material as the
+         board, no second implementation of the art. */
+      #holder .slot .tile {
+        display: block;
+        box-sizing: border-box;
         border: 2px dashed #4d7c5a;
         border-radius: 8px;
-        background: transparent;
-        color: #bbf7d0;
-        font-family: system-ui, sans-serif;
+        background: transparent center / 100% 100% no-repeat;
       }
-      #holder .slot.filled {
-        border-style: solid;
+      #holder .slot.filled .tile {
+        border: none;
+        border-radius: 0;
       }
       /* The last empty slot (issue #63). Filling it ends the level, so it is
          marked before the player takes the step, not explained afterwards.
          Amber and a heavier dash — a colour *and* a weight change, because
          spec §7 forbids carrying meaning on colour alone; the slot's own
          accessible name and the selected tile's both spell it out too. */
-      #holder .slot.last {
+      #holder .slot.last .tile {
         border-color: #f59e0b;
         border-width: 3px;
-        color: #fcd34d;
-      }
-      #holder .slot .glyph {
-        font-size: 26px;
-        font-weight: bold;
-        line-height: 1;
-      }
-      /* Same corner tag as the painted tile, same job: telling two faces apart
-         at a glance without relying on colour (spec §7). */
-      #holder .slot .tag {
-        position: absolute;
-        top: 2px;
-        left: 4px;
-        font-size: 13px;
-        font-weight: bold;
       }
       /* The two cues the board uses, in the board's colours (render.ts). */
       #holder .slot.selected {
