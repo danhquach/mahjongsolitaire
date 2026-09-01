@@ -575,6 +575,15 @@ async function start(): Promise<void> {
   function syncProfileRow(): void {
     profileRowGlyph.textContent = avatarGlyph(profile.value.avatar);
     profileRowName.textContent = profile.value.name;
+    syncHudIdentity();
+  }
+
+  /** The Level chip carries the player's name (issue #106): "Dan · Level" for
+   *  a named player, plain "Level" for a guest or before the welcome gate is
+   *  answered — a guest chose to stay anonymous. */
+  function syncHudIdentity(): void {
+    el<HTMLElement>('level-label').textContent =
+      profile.value.choice === 'named' ? `${profile.value.name} · Level` : 'Level';
   }
 
   /** Mirror the in-app Reduced motion toggle onto the DOM (issue #95): the
@@ -767,6 +776,7 @@ async function start(): Promise<void> {
   function wireWelcome(): void {
     el<HTMLButtonElement>('welcome-create').addEventListener('click', () => {
       profile.setChoice('named');
+      syncHudIdentity();
       closeWelcome();
       openProfile();
     });
