@@ -1,6 +1,28 @@
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'vite';
 
+// Build identity (issue #81): the package version alone cannot identify a
+// build (both packages sit at 0.1.0), so the commit and build time are the
+// load-bearing stamp. Outside a git checkout (a tarball build) the commit
+// reads "unknown" rather than failing the build.
+function gitCommit(): string {
+  try {
+    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+  } catch {
+    return 'unknown';
+  }
+}
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as {
+  version: string;
+};
+
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+    __BUILD_COMMIT__: JSON.stringify(gitCommit()),
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+  },
   // Relative asset paths so the bundle works from any sub-path (Pages/CF, issue #15).
   base: './',
   // Layouts are data files, not code (spec §9 /data): serve them verbatim and

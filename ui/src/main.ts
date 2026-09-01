@@ -62,6 +62,8 @@ import { hitTest } from './hit-test.js';
 import { HUD_PLACEMENTS, chooseHudPlacement } from './hud-fit.js';
 import type { HudCandidate, HudPlacement } from './hud-fit.js';
 import { BoardRenderer } from './render.js';
+import { parseChangelog, versionLabel } from './changelog.js';
+import changelogMd from '../../CHANGELOG.md?raw';
 import { ProgressStore } from './progress.js';
 import { SaveStore, captureSave, reopen } from './save.js';
 import { SettingsStore, TILE_SIZE_FACTOR, TILE_SIZE_LABEL, TILE_SIZES } from './settings.js';
@@ -129,6 +131,9 @@ async function start(): Promise<void> {
   const holderRoot = el<HTMLDivElement>('holder');
   const settingsPanel = el<HTMLDivElement>('settings');
   const settingsButton = el<HTMLButtonElement>('btn-settings');
+  const changelogPanel = el<HTMLDivElement>('changelog');
+  const changelogBody = el<HTMLDivElement>('changelog-body');
+  const changelogClose = el<HTMLButtonElement>('changelog-close');
   const timeStat = el<HTMLElement>('time-stat');
   const elapsedEl = el<HTMLElement>('elapsed');
 
@@ -243,6 +248,7 @@ async function start(): Promise<void> {
    *  outgoing board is dropped until the new deal is in. */
   let dealing = false;
   let settingsVisible = false;
+  let changelogVisible = false;
   /** Tiles the last Hint pointed at — highlighted until the board changes. */
   let hintPair: readonly TileId[] = [];
   /** Shuffles taken on this deal; feeds the shuffle seed so a given
@@ -533,7 +539,7 @@ async function start(): Promise<void> {
   }
 
   function openSettings(): void {
-    if (settingsVisible || overlayVisible) return;
+    if (settingsVisible || overlayVisible || changelogVisible) return;
     syncSettingsControls();
     settingsVisible = true;
     settingsPanel.classList.add('visible');
@@ -546,6 +552,50 @@ async function start(): Promise<void> {
     if (!settingsVisible) return;
     settingsVisible = false;
     settingsPanel.classList.remove('visible');
+    setBackgroundInert(false);
+    settingsButton.focus();
+  }
+
+  // --- version + changelog (issue #81) ----------------------------------------
+
+  /** Render the bundled CHANGELOG.md into the dialog: release headings become
+   *  sub-headings, bullets become list items, prose becomes paragraphs. */
+  function fillChangelog(): void {
+    changelogBody.textContent = '';
+    let list: HTMLUListElement | null = null;
+    for (const block of parseChangelog(changelogMd)) {
+      if (block.kind === 'item') {
+        if (!list) {
+          list = document.createElement('ul');
+          changelogBody.append(list);
+        }
+        const li = document.createElement('li');
+        li.textContent = block.text;
+        list.append(li);
+        continue;
+      }
+      list = null;
+      const node = document.createElement(block.kind === 'heading' ? 'h3' : 'p');
+      node.textContent = block.text;
+      changelogBody.append(node);
+    }
+  }
+
+  function openChangelog(): void {
+    if (changelogVisible) return;
+    // Opened from inside Settings: that panel steps aside rather than stacking.
+    closeSettings();
+    changelogVisible = true;
+    changelogPanel.classList.add('visible');
+    setBackgroundInert(true);
+    changelogClose.focus();
+    announcer.say('What’s new.');
+  }
+
+  function closeChangelog(): void {
+    if (!changelogVisible) return;
+    changelogVisible = false;
+    changelogPanel.classList.remove('visible');
     setBackgroundInert(false);
     settingsButton.focus();
   }
@@ -580,6 +630,7 @@ async function start(): Promise<void> {
     // <body>, and a panel-scoped handler would never see the key.
     document.addEventListener('keydown', (ev) => {
       if (settingsVisible && ev.key === 'Escape') closeSettings();
+      if (changelogVisible && ev.key === 'Escape') closeChangelog();
     });
   }
 
@@ -958,7 +1009,7 @@ async function start(): Promise<void> {
   // on a booster button or <body> rather than on the tile itself.
   document.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Escape') return;
-    if (overlayVisible || settingsVisible) return;
+    if (overlayVisible || settingsVisible || changelogVisible) return;
     if (game.status() !== 'playing' || game.selection === null) return;
     ev.preventDefault();
     applyTap({ kind: 'miss' });
@@ -999,6 +1050,14 @@ async function start(): Promise<void> {
   overlayRestart.addEventListener('click', () => void startLevel());
 
   wireSettings();
+  el<HTMLElement>('version').textContent = versionLabel(
+    __APP_VERSION__,
+    __BUILD_COMMIT__,
+    __BUILD_TIME__,
+  );
+  fillChangelog();
+  el<HTMLButtonElement>('btn-version').addEventListener('click', () => openChangelog());
+  changelogClose.addEventListener('click', () => closeChangelog());
   syncSettingsControls();
 
   // A hidden page is the last moment the browser reliably gives us before the
