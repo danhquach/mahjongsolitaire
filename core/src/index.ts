@@ -19,6 +19,7 @@ export {
   findHint,
   hasPlayableMove,
   legalPairs,
+  takeablePairs,
   DEFAULT_MAX_HOLD_STATES,
   DEFAULT_MAX_STATES,
 } from './solver.js';

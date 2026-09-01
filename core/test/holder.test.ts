@@ -25,7 +25,7 @@ import { MoveStack } from '../src/moves.js';
 import { mulberry32 } from '../src/rng.js';
 import { ScoreKeeper } from '../src/scoring.js';
 import { shuffleBoard } from '../src/shuffle.js';
-import { findHint, hasPlayableMove, legalPairs, solve } from '../src/solver.js';
+import { findHint, hasPlayableMove, legalPairs, solve, takeablePairs } from '../src/solver.js';
 
 const slot = (x: number, y: number, z = 0): Slot => ({ x, y, z });
 
@@ -241,29 +241,42 @@ test('hasPlayableMove says stuck when no hold can expose a pair', () => {
   assert.equal(hasPlayableMove(board), false);
 });
 
-test('the park that fills the last slot is not a way out (decision 0009)', () => {
+test('the park that fills the last slot is not a way out (decision 0009 / 0013)', () => {
   // Parking tile 1 frees tile 0, which pairs with tile 2 — the one-deep
   // lookahead above. Under issue #43 that made this position live at any holder
-  // depth. Under 0009 the park that fills the holder ends the level instead, so
-  // the same position with a single vacancy is a real deadlock, and the dialog
-  // is right to offer Shuffle rather than a move that loses.
+  // depth. Decision 0009 made the park that fills the holder a loss, and
+  // decision 0013 (issue #93) made every pair transit the holder — so the
+  // exposed pair itself must still be takeable: a board pair costs a park and
+  // a clear, and needs two vacancies *after* the park that exposed it.
   const tiles = [
     { id: 0, slot: slot(0, 0, 0), face: 'dots-1' },
     { id: 1, slot: slot(0, 0, 1), face: 'bamboo-2' }, // covers tile 0
     { id: 2, slot: slot(4, 0, 0), face: 'dots-1' },
     { id: 3, slot: slot(8, 0, 0), face: 'bamboo-5' },
   ];
-  for (const capacity of [4, 3, 2]) {
+  for (const capacity of [4, 3]) {
     const board = new Board(tiles, { holderCapacity: capacity });
     assert.deepEqual(legalPairs(board), [], `capacity ${capacity}: no pair on the board`);
-    assert.equal(hasPlayableMove(board), true, `capacity ${capacity}: a vacancy survives the park`);
+    assert.equal(
+      hasPlayableMove(board),
+      true,
+      `capacity ${capacity}: the exposed pair can still transit`,
+    );
   }
+  // Two slots: the park that exposes the pair leaves one vacancy, and the
+  // exposed board pair would need that last slot to transit — a dead end
+  // under issue #93, where it used to be live.
+  const twoSlots = new Board(tiles, { holderCapacity: 2 });
+  assert.deepEqual(legalPairs(twoSlots), []);
+  assert.equal(hasPlayableMove(twoSlots), false, 'the exposed pair could not transit');
   const lastSlot = new Board(tiles, { holderCapacity: 1 });
   assert.deepEqual(legalPairs(lastSlot), []);
   assert.equal(hasPlayableMove(lastSlot), false, 'the only park would fill the holder');
 
-  // Same thing reached the way a player reaches it: three of four slots spent
-  // on tiles that pair with nothing, leaving one vacancy and no way through.
+  // Same thing reached the way a player reaches it: slots spent on tiles that
+  // pair with nothing. With three vacancies the line is live (park tile 1,
+  // then transit the exposed pair through the two slots left); with two it is
+  // not, and with one even the park itself would lose.
   const spent = new Board([
     ...tiles,
     { id: 4, slot: slot(12, 0, 0), face: 'wind-east' },
@@ -271,13 +284,55 @@ test('the park that fills the last slot is not a way out (decision 0009)', () =>
     { id: 6, slot: slot(20, 0, 0), face: 'wind-west' },
   ]);
   spent.hold(4);
+  assert.equal(spent.holderVacancies(), 3);
+  assert.equal(hasPlayableMove(spent), true, 'three vacancies: park, then transit');
   spent.hold(5);
   assert.equal(spent.holderVacancies(), 2);
-  assert.equal(hasPlayableMove(spent), true, 'two vacancies: the park still leaves one');
+  assert.equal(hasPlayableMove(spent), false, 'two: the exposed pair could not transit');
   spent.hold(6);
   assert.equal(spent.holderVacancies(), 1);
   assert.deepEqual(legalPairs(spent), []);
-  assert.equal(hasPlayableMove(spent), false, 'one vacancy: the only park would lose');
+  assert.equal(hasPlayableMove(spent), false, 'one: the only park would lose');
+});
+
+test('takeablePairs filters legal pairs down to the issue #93 gesture', () => {
+  // dots-1 ×2 free on the board, bamboo-2 ×2 of which one is parked.
+  const board = new Board([
+    { id: 0, slot: slot(0, 0, 0), face: 'dots-1' },
+    { id: 1, slot: slot(4, 0, 0), face: 'dots-1' },
+    { id: 2, slot: slot(8, 0, 0), face: 'bamboo-2' },
+    { id: 3, slot: slot(12, 0, 0), face: 'bamboo-2' },
+    { id: 4, slot: slot(16, 0, 0), face: 'wind-east' },
+    { id: 5, slot: slot(20, 0, 0), face: 'wind-south' },
+  ]);
+  board.hold(2);
+  // Board–held pair: one tap, always takeable. Board–board pair: needs two
+  // vacancies to transit.
+  assert.deepEqual(takeablePairs(board), [
+    [0, 1],
+    [2, 3],
+  ]);
+  board.hold(4);
+  board.hold(5); // one vacancy left
+  assert.deepEqual(
+    takeablePairs(board),
+    [[2, 3]],
+    'with one vacancy only the board–held pair is takeable',
+  );
+  assert.equal(hasPlayableMove(board), true, 'and it keeps the position live');
+
+  // A held–held pair has no gesture at all (a held tile is not tappable).
+  const heldPair = new Board(
+    [
+      { id: 0, slot: slot(0, 0, 0), face: 'dots-1' },
+      { id: 1, slot: slot(4, 0, 0), face: 'dots-1' },
+      { id: 2, slot: slot(8, 0, 0), face: 'wind-east' },
+    ],
+    { holder: [0, 1, null, null] },
+  );
+  assert.deepEqual(legalPairs(heldPair), [[0, 1]], 'the pure match rule still sees it');
+  assert.deepEqual(takeablePairs(heldPair), [], 'but no gesture can play it');
+  assert.equal(hasPlayableMove(heldPair), false, 'so the position is honestly stuck');
 });
 
 test('shuffle permutes the board around a held tile, which keeps its own face', () => {

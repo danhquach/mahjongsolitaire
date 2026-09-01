@@ -1,5 +1,6 @@
-// Face-down tiles on the game controller (issue #64, decision 0010): peek,
-// selection pinning, mismatch re-conceal, holder reveal, undo, shuffle, resume.
+// Face-down tiles on the game controller (issue #64, decision 0010; gesture
+// reworked by issue #93): first tap reveals in place, second tap sends the
+// tile to the holder, holder reveal, undo, shuffle, resume.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -37,18 +38,25 @@ test('a small deal is easy, so nothing is concealed by default', () => {
   for (const t of game.board.allTiles()) assert.equal(game.isFaceHidden(t.id), false);
 });
 
-test('tap on a hidden free tile peeks: face shown, nothing selected', () => {
+test('tap on a hidden free tile peeks: face shown, nothing moves', () => {
   const game = new Game(ROW, undefined, [0, 2]);
   assert.equal(game.isFaceHidden(0), true);
   const outcome = game.tap(free(0), 1);
   assert.deepEqual(outcome, { kind: 'peeked', id: 0 });
-  assert.equal(game.selection, null);
   assert.equal(game.peeked, 0);
   assert.equal(game.isFaceHidden(0), false);
+  assert.deepEqual(game.holderSlots(), [null, null, null, null], 'the reveal moved nothing');
+});
+
+test('the second tap sends the revealed tile to the holder (issue #93)', () => {
+  const game = new Game(ROW, undefined, [0]);
+  game.tap(free(0), 1); // reveal
+  const outcome = game.tap(free(0), 2); // send
+  assert.deepEqual(outcome, { kind: 'held', id: 0, slot: 0 });
+  assert.equal(game.peeked, null, 'the board changed, so the peek is spent');
 });
 
 test('peeking a second tile re-conceals the first (one at a time)', () => {
-  // Non-matching faces: a matching pair would auto-match instead (issue #77).
   const game = new Game(ROW, undefined, [0, 1]);
   game.tap(free(0), 1);
   const outcome = game.tap(free(1), 2);
@@ -57,112 +65,39 @@ test('peeking a second tile re-conceals the first (one at a time)', () => {
   assert.equal(game.isFaceHidden(1), false);
 });
 
-test('selecting a peeked tile pins the reveal through a non-matching peek', () => {
-  const game = new Game(ROW, undefined, [0, 1]);
-  game.tap(free(0), 1); // peek dots-1
-  const selected = game.tap(free(0), 2); // second tap: ordinary select
-  assert.equal(selected.kind, 'selected');
-  game.tap(free(1), 3); // peek bamboo-2 — no match, the pinned tile stays up
-  assert.equal(game.isFaceHidden(0), false);
-  assert.equal(game.isFaceHidden(1), false);
-});
-
-test('a fresh peek that reveals the peeked tile’s partner matches in that tap (issue #77)', () => {
+test('the reveal tap never matches — even when the face pairs with a peek (issue #93)', () => {
+  // Under issue #77 a fresh peek that turned up the peeked tile's partner
+  // matched in that same tap. Issue #93 retires that: the first tap on a
+  // concealed tile is the reveal and only the reveal.
   const game = new Game(ROW, undefined, [0, 2]);
   game.tap(free(0), 1); // peek dots-1
-  const outcome = game.tap(free(2), 2); // concealed partner: match, not a peek cycle
-  assert.equal(outcome.kind, 'matched');
+  const outcome = game.tap(free(2), 2); // concealed partner: still just a peek
+  assert.deepEqual(outcome, { kind: 'peeked', id: 2 });
+  assert.equal(game.tilesLeft, 4, 'nothing matched on the reveal');
+  assert.equal(game.isFaceHidden(0), true, 'the earlier peek dropped — one at a time');
+  // The second tap on the revealed tile plays it into the holder…
+  assert.equal(game.tap(free(2), 3).kind, 'held');
+  // …and its partner (hidden again) needs its own reveal before it can follow.
+  game.tap(free(0), 4);
+  assert.equal(game.tap(free(0), 5).kind, 'matched');
   assert.equal(game.tilesLeft, 2);
-  assert.equal(game.peeked, null);
 });
 
-test('a fresh peek that reveals the selection’s partner matches, selection outranking the peek (issue #77)', () => {
-  const pairs: GeneratedLevel = {
-    layoutId: 'conceal-fixture',
-    seed: 0,
-    tiles: [
-      tile(0, 0, 0, 0, 'dots-1'),
-      tile(1, 4, 0, 0, 'dots-1'),
-      tile(2, 8, 0, 0, 'dots-1'),
-      tile(3, 12, 0, 0, 'dots-1'),
-    ],
-    solution: [
-      [0, 1],
-      [2, 3],
-    ],
-  };
-  const game = new Game(pairs, undefined, [2, 3]);
-  game.tap(free(2), 1); // unselected peek: dots-1
-  game.tap(free(0), 2); // select a revealed dots-1
-  const outcome = game.tap(free(3), 3); // concealed dots-1: match the selection, not the peek
-  assert.equal(outcome.kind, 'matched');
-  assert.ok(outcome.kind === 'matched' && outcome.a === 0 && outcome.b === 3);
-  assert.equal(game.isFaceHidden(2), true); // the losing peek re-conceals with the board change
-});
-
-test('the holder is still never consulted for a hidden tile (issue #77 keeps decision 0010)', () => {
+test('the holder is never consulted for a hidden tile (decision 0010)', () => {
   const game = new Game(ROW, undefined, [2]);
-  game.tap(free(0), 1); // select dots-1
-  game.tap(free(0), 2); // park it — face-up on the player's shelf
+  game.tap(free(0), 1); // dots-1 to the holder
   const outcome = game.tap(free(2), 3); // concealed dots-1: must peek, not auto-clear
   assert.deepEqual(outcome, { kind: 'peeked', id: 2 });
   assert.equal(game.tilesLeft, 4);
-});
-
-test('a mismatch involving a concealed tile re-conceals and drops the selection', () => {
-  const game = new Game(ROW, undefined, [0, 1]);
-  game.tap(free(0), 1); // peek dots-1
-  game.tap(free(0), 2); // select it (pinned)
-  game.tap(free(1), 3); // peek bamboo-2
-  const outcome = game.tap(free(1), 4); // mismatch against the pinned dots-1
-  assert.equal(outcome.kind, 'mismatch');
-  assert.equal(game.selection, null);
-  assert.equal(game.peeked, null);
-  assert.equal(game.isFaceHidden(0), true);
-  assert.equal(game.isFaceHidden(1), true);
-});
-
-test('a mismatch against a parked concealed tile follows the ordinary rule', () => {
-  // Tile 0 (concealed dots-1) is parked — permanently face-up in the holder —
-  // so a mismatch against it has nothing to re-conceal: selection moves on.
-  const game = new Game(ROW, undefined, [0]);
-  game.tap(free(0), 1); // peek
-  game.tap(free(0), 2); // select
-  game.tap(free(0), 3); // park
-  game.tapHeld(0, 4); // select it in the holder
-  const outcome = game.tap(free(1), 5); // bamboo-2: mismatch
-  assert.equal(outcome.kind, 'mismatch');
-  assert.equal(game.selection, 1);
-  assert.equal(game.isFaceHidden(0), false);
-});
-
-test('a mismatch between two face-up tiles still moves the selection', () => {
-  const game = new Game(ROW, undefined, [0]);
-  game.tap(free(1), 1); // select bamboo-2 (face-up)
-  const outcome = game.tap(free(2), 2); // dots-1, face-up: ordinary mismatch
-  assert.equal(outcome.kind, 'mismatch');
-  assert.equal(game.selection, 2);
-});
-
-test('a hidden tile never answers the holder auto-clear on the peek tap', () => {
-  // Park bamboo-2 (1), then tap its hidden partner (3): first tap must peek,
-  // not clear the pair; the second tap clears it.
-  const game = new Game(ROW, undefined, [3]);
-  game.tap(free(1), 1);
-  game.tap(free(1), 2); // park
-  assert.equal(game.holderSlots()[0], 1);
-  const first = game.tap(free(3), 3);
-  assert.deepEqual(first, { kind: 'peeked', id: 3 });
-  assert.equal(game.holderSlots()[0], 1);
-  const second = game.tap(free(3), 4);
-  assert.equal(second.kind, 'matched');
+  // The second tap is the move, and it clears the pair in the holder.
+  assert.equal(game.tap(free(2), 4).kind, 'matched');
+  assert.equal(game.tilesLeft, 2);
 });
 
 test('a parked concealed tile shows its face in the holder', () => {
   const game = new Game(ROW, undefined, [0]);
   game.tap(free(0), 1); // peek
-  game.tap(free(0), 2); // select
-  const outcome = game.tap(free(0), 3); // park
+  const outcome = game.tap(free(0), 2); // send to the holder
   assert.equal(outcome.kind, 'held');
   assert.equal(game.isFaceHidden(0), false);
   assert.equal(game.peeked, null);
@@ -170,20 +105,18 @@ test('a parked concealed tile shows its face in the holder', () => {
 
 test('undoing a match brings concealed tiles back face-down', () => {
   const game = new Game(ROW, undefined, [0, 2]);
-  game.tap(free(0), 1);
-  game.tap(free(0), 2);
-  game.tap(free(2), 3); // matched — the reveal completes the pair (issue #77)
+  game.tap(free(0), 1); // reveal
+  game.tap(free(0), 2); // to the holder (face-up there)
+  game.tap(free(2), 3); // reveal the partner
+  game.tap(free(2), 4); // matched in the holder
   assert.equal(game.undo()?.kind, 'match');
-  // Undo restores the pre-move selection (tile 0 was selected), and a selection
-  // pins its reveal — so 0 comes back face-up-by-selection while 2, whose peek
-  // does not survive the undo, comes back concealed.
-  assert.equal(game.selection, 0);
+  // Tile 0 comes back *held* (the match took it from the holder), so it stays
+  // face-up on the player's shelf; tile 2 comes back to the board, and its
+  // peek does not survive the undo — face-down again.
+  assert.equal(game.board.isHeld(0), true);
   assert.equal(game.isFaceHidden(0), false);
   assert.equal(game.isFaceHidden(2), true);
   assert.equal(game.peeked, null);
-  // Dropping the restored selection re-conceals tile 0 too.
-  game.tap({ kind: 'miss' }, 5);
-  assert.equal(game.isFaceHidden(0), true);
 });
 
 test('shuffle drops the peek and keeps the tile hidden', () => {
@@ -206,9 +139,10 @@ test('resume re-derives concealment: the injected set never persists', () => {
 
 test('a removed concealed tile is not reported hidden', () => {
   const game = new Game(ROW, undefined, [0, 2]);
-  game.tap(free(0), 1);
-  game.tap(free(0), 2);
-  game.tap(free(2), 3); // matched — the reveal completes the pair (issue #77)
+  game.tap(free(0), 1); // reveal
+  game.tap(free(0), 2); // to the holder
+  game.tap(free(2), 3); // reveal
+  game.tap(free(2), 4); // matched
   assert.equal(game.isFaceHidden(0), false);
   assert.equal(game.isFaceHidden(2), false);
 });

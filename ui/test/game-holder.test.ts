@@ -1,11 +1,11 @@
-// Holder behaviour on the game controller (issues #43, #62, #63): parking from
-// the board, the one-tap clear against a held tile, tapping a held tile, and the
+// Holder behaviour on the game controller (issues #43, #63, #93): the one-tap
+// send to the holder, pairs assembling and clearing in the holder, and the
 // places the holder changes what the HUD is told — tiles left, the win check,
 // the deadlock check, and — since decision 0009 — the loss.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { HOLDER_SLOTS, SEED_LAYOUTS, generateLevel } from '@mahjongsolitaire/core';
+import { HOLDER_SLOTS, SEED_LAYOUTS, generateLevel, legalPairs } from '@mahjongsolitaire/core';
 import type { GeneratedLevel, TileId } from '@mahjongsolitaire/core';
 import { Game } from '../src/game.js';
 import type { GameSnapshot } from '../src/game.js';
@@ -18,11 +18,9 @@ function newGame(seed = 1): Game {
   return new Game(generateLevel(ROWS, seed));
 }
 
-/** Issue #62's park gesture: select the tile, then activate it again. Two
- *  ordinary taps, no timing window — that is the whole mechanism. */
+/** Issue #93's park: one tap on a revealed free tile is the whole gesture. */
 function park(game: Game, id: TileId, atMs: number) {
-  game.tap(free(id), atMs);
-  return game.tap(free(id), atMs + 1);
+  return game.tap(free(id), atMs);
 }
 
 const tile = (id: number, x: number, y: number, z: number, face: string) => ({
@@ -97,9 +95,9 @@ const FOUR_DOTS: GeneratedLevel = {
 
 /**
  * A resumed game holding two tiles of the *same* face. Play can no longer reach
- * this state — rule 2 clears the pair instead of parking the second copy — but a
- * save written by the issue #43 build can, and the format did not change, so
- * both the strip and the one-tap clear still have to cope with it.
+ * this state — the second copy clears the pair instead of parking — but a save
+ * written by an older build can, and the format did not change, so both the
+ * strip and the pair clear still have to cope with it.
  */
 function twoIdenticalParked(): Game {
   const snapshot: GameSnapshot = {
@@ -111,62 +109,57 @@ function twoIdenticalParked(): Game {
   return new Game(FOUR_DOTS, snapshot);
 }
 
-// --- parking from the board (issue #62 rule 1) --------------------------------
+// --- the one-tap send (issue #93) ----------------------------------------------
 
-test('activating the selected free tile again parks it', () => {
+test('one tap on a revealed free tile sends it to the holder', () => {
   const game = new Game(COVERED);
 
-  assert.deepEqual(game.tap(free(1), 1), { kind: 'selected', id: 1 });
-  assert.deepEqual(game.tap(free(1), 2), { kind: 'held', id: 1, slot: 0 });
+  assert.deepEqual(game.tap(free(1), 1), { kind: 'held', id: 1, slot: 0 });
   assert.deepEqual(game.holderSlots(), [1, null, null, null]);
   assert.equal(game.holdsUsed, 1);
-  assert.equal(game.selection, null, 'the tile is off the board; the selection goes with it');
+  assert.equal(game.selection, null, 'no selection step exists any more');
   assert.equal(game.board.isFree(0), true, 'and what it covered is free');
 });
 
-test('a blocked tile is never parked: it cannot even be selected', () => {
+test('a blocked tile is never parked', () => {
   const game = new Game(COVERED);
   assert.equal(game.tap({ kind: 'blocked', id: 0 }, 0).kind, 'blocked');
-  assert.equal(game.tap({ kind: 'blocked', id: 0 }, 1).kind, 'blocked');
-  assert.equal(game.selection, null);
   assert.deepEqual(game.holderSlots(), [null, null, null, null]);
-});
-
-test('a parked tile cannot be parked again — the second tap deselects it', () => {
-  const game = new Game(COVERED);
-  park(game, 1, 0);
-  assert.deepEqual(game.tapHeld(1, 2), { kind: 'selected', id: 1 });
-  assert.deepEqual(game.tapHeld(1, 3), { kind: 'deselected', id: 1 });
-  assert.deepEqual(game.holderSlots(), [1, null, null, null], 'still exactly one slot used');
 });
 
 test('the park that fills the fourth slot loses the level (decision 0009)', () => {
   const game = new Game(FILL_TO_LOSE);
-  for (let i = 0; i < HOLDER_SLOTS - 1; i++) {
+  for (let i = 0; i < HOLDER_SLOTS - 2; i++) {
     assert.equal(park(game, i, i * 4).kind, 'held', `slot ${i + 1}`);
     assert.equal(game.status(), 'playing', `slot ${i + 1} is survivable`);
   }
+  // The third park leaves one vacancy: the board pair cannot transit any more
+  // (issue #93, takeablePairs), so this is already a deadlock — the dialog
+  // fires *before* the fatal park, which is the warning working as intended.
+  assert.equal(park(game, HOLDER_SLOTS - 2, 50).kind, 'held');
   assert.equal(game.holderVacancies, 1, 'one slot left — the warning point');
-  assert.equal(game.status(), 'playing');
+  assert.equal(game.status(), 'stuck');
 
   // The fatal park reports itself as an ordinary hold; status is what changes.
+  // (Unreachable through the gated input layer once the deadlock dialog is up,
+  // but the controller is pure and the loss must outrank the deadlock.)
   assert.equal(park(game, HOLDER_SLOTS - 1, 100).kind, 'held');
   assert.equal(game.holderFull, true);
   assert.equal(game.holderVacancies, 0);
   assert.equal(game.status(), 'lost');
   assert.equal(game.tilesLeft, HOLDER_SLOTS + 2, 'the tiles are all still in play');
-  assert.notEqual(game.hint(), null, 'and a pair is still there to be played — it is lost anyway');
+  assert.notEqual(legalPairs(game.board).length, 0, 'with a pair in plain sight — lost anyway');
+  assert.equal(game.hint(), null, 'which the hint no longer dangles: no tap can play it');
 });
 
 test('the loss outranks everything a playable board would say', () => {
-  // A pair is free on the board the whole way through, so this position would
-  // report 'playing' on any other reading. Decision 0009 makes a full holder
-  // final regardless, and the difference matters: 'stuck' offers Shuffle and
-  // Undo, 'lost' offers neither.
+  // A pair sits free on the board the whole way through. Decision 0009 makes a
+  // full holder final regardless, and the difference matters: 'stuck' offers
+  // Shuffle and Undo, 'lost' offers neither.
   const game = new Game(FILL_TO_LOSE);
   for (let i = 0; i < HOLDER_SLOTS; i++) park(game, i, i * 4);
   assert.equal(game.status(), 'lost');
-  assert.notEqual(game.hint(), null, 'even with a playable pair in plain sight');
+  assert.notEqual(legalPairs(game.board).length, 0, 'even with a pair in plain sight');
 });
 
 test('undo is what takes a hold back — there is no return move', () => {
@@ -178,11 +171,10 @@ test('undo is what takes a hold back — there is no return move', () => {
 
   // Undo still rewinds the hold — the dialog just does not offer it (main.ts
   // inerts the rail behind the loss overlay), which is what makes it final in
-  // play while the move stack stays honest.
+  // play while the move stack stays honest. What comes back is the position
+  // as it was: one vacancy, no takeable pair — a deadlock, not a live board.
   assert.equal(game.undo()?.kind, 'hold');
-  assert.equal(game.status(), 'playing');
-  assert.equal(game.selection, HOLDER_SLOTS - 1, 'restored to the selection the park was made from');
-  game.tap({ kind: 'miss' }, 200); // the selection is part of the hash
+  assert.equal(game.status(), 'stuck');
   assert.equal(game.stateHash(), survivable);
 });
 
@@ -191,44 +183,45 @@ test('a park asked of an already-full holder changes nothing', () => {
   // pure, so it answers rather than throwing.
   const game = new Game(FILL_TO_LOSE);
   for (let i = 0; i < HOLDER_SLOTS; i++) park(game, i, i * 4);
-  game.tap(free(HOLDER_SLOTS + 1), 200);
   const before = game.stateHash();
   assert.deepEqual(game.tap(free(HOLDER_SLOTS + 1), 201), {
     kind: 'holder-full',
     id: HOLDER_SLOTS + 1,
   });
   assert.equal(game.stateHash(), before, 'a refused park changes nothing at all');
-  assert.equal(game.selection, HOLDER_SLOTS + 1);
   assert.equal(game.status(), 'lost');
 });
 
-// --- the one-tap clear against the holder (issue #62 rule 2) ------------------
+// --- pairs assemble and clear in the holder (issue #93) ------------------------
 
-test('one tap on a board tile clears it against a matching held tile', () => {
+test('one tap on a board tile clears it against its match in the holder', () => {
   const game = new Game(COVERED);
   park(game, 1, 0); // bamboo-2 into slot 1; tile 3 is its partner on the board
 
   const outcome = game.tap(free(3), 10);
   assert.equal(outcome.kind, 'matched');
+  assert.ok(outcome.kind === 'matched' && outcome.a === 1 && outcome.b === 3, 'a is the held one');
   assert.deepEqual(game.holderSlots(), [null, null, null, null], 'the slot is freed');
   assert.equal(game.tilesLeft, 2);
   assert.equal(game.score, 100);
-  assert.equal(game.selection, null);
 });
 
-test('the holder clear fires past a stale, non-matching selection', () => {
-  const game = new Game(COVERED);
-  park(game, 1, 0);
-  game.tap(free(0), 10); // dots-1: matches neither the holder nor tile 3
-  assert.equal(game.selection, 0);
-
-  const outcome = game.tap(free(3), 11);
-  assert.equal(outcome.kind, 'matched', 'not a mismatch against the stale selection');
-  assert.equal(game.score, 100, 'so no mismatch broke the combo either');
-  assert.deepEqual(game.holderSlots(), [null, null, null, null]);
+test('a matching tap never takes a slot, so it cannot lose the level in passing', () => {
+  // Two unmatched dots plus one bamboo-1 parked — one slot left. Tapping the
+  // second bamboo-1 completes a pair: it must clear in the holder, never pass
+  // through the fatal fourth slot.
+  const game = new Game(FILL_TO_LOSE);
+  park(game, 0, 0);
+  park(game, 1, 10);
+  park(game, HOLDER_SLOTS, 20); // bamboo-1
+  assert.equal(game.holderVacancies, 1);
+  const outcome = game.tap(free(HOLDER_SLOTS + 1), 30);
+  assert.equal(outcome.kind, 'matched');
+  assert.notEqual(game.status(), 'lost', 'completing a pair with one slot left is safe');
+  assert.equal(game.holderVacancies, 2, 'the pair freed its slot');
 });
 
-test('rule 2 makes two copies of one face unparkable — the pair clears instead', () => {
+test('two copies of one face are unparkable together — the pair clears instead', () => {
   const game = new Game(FOUR_DOTS);
   park(game, 0, 0);
   assert.deepEqual(game.holderSlots(), [0, null, null, null]);
@@ -246,50 +239,11 @@ test('a resumed game with two identical tiles parked clears the first slot', () 
   assert.deepEqual(game.holderSlots(), [null, 2, null, null], 'slot 1 cleared, slot 2 kept');
 });
 
-// --- deselecting -------------------------------------------------------------
-
-test('a tap on empty board is what deselects now', () => {
+test('a tap on empty board does nothing', () => {
   const game = new Game(COVERED);
-  game.tap(free(1), 0);
-  assert.deepEqual(game.tap({ kind: 'miss' }, 1), { kind: 'selection-cleared' });
-  assert.equal(game.selection, null);
-  assert.deepEqual(game.holderSlots(), [null, null, null, null], 'and nothing was parked');
-  assert.deepEqual(game.tap({ kind: 'miss' }, 2), { kind: 'none' }, 'nothing left to clear');
-});
-
-// --- tapping a held tile ------------------------------------------------------
-
-test('a held tile selected from the strip matches a board tile', () => {
-  const game = new Game(COVERED);
-  park(game, 1, 0); // bamboo-2
-  assert.deepEqual(game.tapHeld(1, 10), { kind: 'selected', id: 1 });
-  const outcome = game.tap(free(3), 11);
-  assert.equal(outcome.kind, 'matched');
-  assert.deepEqual(game.holderSlots(), [null, null, null, null]);
-  assert.equal(game.tilesLeft, 2);
-  assert.equal(game.score, 100);
-});
-
-test('two held tiles can still be matched against each other', () => {
-  const game = twoIdenticalParked();
-  game.tapHeld(1, 10);
-  assert.equal(game.tapHeld(2, 11).kind, 'matched');
-  assert.deepEqual(game.holderSlots(), [null, null, null, null]);
-  assert.equal(game.tilesLeft, 2);
-});
-
-test('a held tile mismatches like a board tile', () => {
-  const game = new Game(COVERED);
-  park(game, 1, 0); // bamboo-2
-  game.tapHeld(1, 10);
-  assert.equal(game.tap(free(0), 11).kind, 'mismatch', 'dots-1 against bamboo-2');
-  assert.equal(game.selection, 0, 'the selection moves to the tile just tapped');
-});
-
-test('a tap on a tile that is not held is not a holder tap', () => {
-  const game = new Game(COVERED);
-  park(game, 1, 0);
-  assert.deepEqual(game.tapHeld(2, 10), { kind: 'none' });
+  const before = game.stateHash();
+  assert.deepEqual(game.tap({ kind: 'miss' }, 1), { kind: 'none' });
+  assert.equal(game.stateHash(), before);
 });
 
 // --- what the HUD is told -----------------------------------------------------
@@ -342,8 +296,8 @@ test('a park that would fill the holder is not a way out of a deadlock', () => {
 test('hint sees a holder pair rather than reporting no moves', () => {
   const game = new Game(COVERED);
   park(game, 1, 0);
-  game.tap(free(0), 10);
-  game.tap(free(2), 11); // clears the board pair, leaving 1 (held) + 3
+  game.tap(free(0), 10); // dots-1 to the holder…
+  game.tap(free(2), 11); // …cleared by its partner, leaving 1 (held) + 3
   assert.equal(game.tilesLeft, 2);
   const pair = game.hint();
   assert.notEqual(pair, null);
@@ -355,17 +309,16 @@ test('hint sees a holder pair rather than reporting no moves', () => {
 
 test('undo takes back a park and a holder match', () => {
   const game = new Game(COVERED);
-  game.tap(free(1), 0);
-  const selected = game.stateHash();
+  const fresh = game.stateHash();
 
   game.tap(free(1), 1); // park it
   assert.equal(game.undo()?.kind, 'hold');
   assert.deepEqual(game.holderSlots(), [null, null, null, null]);
-  assert.equal(game.stateHash(), selected, 'selection and all');
+  assert.equal(game.stateHash(), fresh);
 
   game.tap(free(1), 2);
   const parked = game.stateHash();
-  game.tap(free(3), 3); // one-tap clear against the holder
+  game.tap(free(3), 3); // the pair clears in the holder
   assert.equal(game.tilesLeft, 2);
   assert.equal(game.undo()?.kind, 'match');
   assert.deepEqual(game.holderSlots(), [1, null, null, null], 'back into its own slot');

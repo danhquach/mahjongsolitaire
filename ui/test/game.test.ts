@@ -1,5 +1,6 @@
-// Tap semantics on the core engine (issue #11): select / deselect / match /
-// mismatch / blocked / miss, plus win and stuck detection.
+// Tap semantics on the core engine (issue #11, reworked by issue #93): every
+// tap on a revealed free tile sends it to the holder, pairs assemble and clear
+// there, plus win and stuck detection.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -18,53 +19,44 @@ function newGame(seed = 1): Game {
   return new Game(generateLevel(ROWS, seed));
 }
 
-test('select, then deselect with a tap on empty board', () => {
-  // Issue #62 took the second tap on the tile itself: it parks now, so the tap
-  // that drops a selection is a tap on nothing (or Escape, wired in main.ts).
-  const game = newGame();
-  const [a] = game.level.solution[0]!;
-  assert.deepEqual(game.tap(free(a), 0), { kind: 'selected', id: a });
-  assert.equal(game.selection, a);
-  assert.deepEqual(game.tap({ kind: 'miss' }, 1), { kind: 'selection-cleared' });
-  assert.equal(game.selection, null);
-});
-
-test('matching pair removes both tiles and scores', () => {
+test('one tap sends a free tile to the holder; its partner clears the pair', () => {
   const game = newGame();
   const [a, b] = game.level.solution[0]!;
-  game.tap(free(a), 0);
+  assert.deepEqual(game.tap(free(a), 0), { kind: 'held', id: a, slot: 0 });
+  assert.equal(game.selection, null, 'selection is not a concept any more (issue #93)');
   const outcome = game.tap(free(b), 1);
   assert.equal(outcome.kind, 'matched');
+  assert.ok(outcome.kind === 'matched' && outcome.a === a && outcome.b === b);
   assert.equal(game.score, 100);
   assert.equal(game.tilesLeft, game.level.tiles.length - 2);
-  assert.equal(game.selection, null);
   assert.equal(game.board.get(a).removed, true);
   assert.equal(game.board.get(b).removed, true);
+  assert.deepEqual(
+    game.holderSlots(),
+    [null, null, null, null],
+    'the pair cleared out of the holder — the slot is free again',
+  );
 });
 
-test('mismatch moves the selection and breaks the combo, never deducts', () => {
+test('a non-matching tap is a park, never a mismatch — the combo only times out', () => {
   const game = newGame();
-  const [[a1, b1], [a2]] = [game.level.solution[0]!, game.level.solution[1]!];
+  const [[a1, b1], [a2, b2]] = [game.level.solution[0]!, game.level.solution[1]!];
   game.tap(free(a1), 0);
   game.tap(free(b1), 100); // match #1 → 100 points
-  // In-window match would be ×1.2; force a mismatch first.
-  const boardFaces = (id: TileId) => game.board.get(id).face;
-  assert.notEqual(boardFaces(a2), undefined);
-  const other = game
-    .hitCandidates()
-    .find((t) => t.free && boardFaces(t.id) !== boardFaces(a2) && t.id !== a2)!;
+  // A tile of a different face goes to the holder; nothing breaks the combo.
   game.tap(free(a2), 200);
-  const outcome = game.tap(free(other.id), 300);
-  assert.equal(outcome.kind, 'mismatch');
-  assert.equal(game.selection, other.id); // selection moved to the second tile
-  assert.equal(game.score, 100); // no deduction (spec §6)
-  // Next match is out of combo: back to ×1 base points.
-  game.tap(miss, 400);
-  const [x, y] = game.level.solution[1]!;
-  game.tap(free(x), 500);
-  const m = game.tap(free(y), 600);
+  const m = game.tap(free(b2), 300); // still inside the 5s window of match #1
   assert.equal(m.kind, 'matched');
-  assert.equal(m.kind === 'matched' && m.score.multiplier, 1);
+  assert.equal(m.kind === 'matched' && m.score.multiplier, 1.2, 'the combo survived the park');
+
+  // Out of window: back to ×1 base points.
+  const game2 = newGame();
+  const [[c1, d1], [c2, d2]] = [game2.level.solution[0]!, game2.level.solution[1]!];
+  game2.tap(free(c1), 0);
+  game2.tap(free(d1), 10);
+  game2.tap(free(c2), 20);
+  const late = game2.tap(free(d2), 10 + COMBO_WINDOW_MS + 1);
+  assert.equal(late.kind === 'matched' && late.score.multiplier, 1, 'the window expired');
 });
 
 test('consecutive in-window matches escalate the combo', () => {
@@ -77,16 +69,14 @@ test('consecutive in-window matches escalate the combo', () => {
   assert.equal(m.kind === 'matched' && m.score.multiplier, 1.2);
 });
 
-test('blocked tap keeps the selection; miss clears it', () => {
+test('a blocked tap and a miss change nothing', () => {
   const game = newGame();
-  const [a] = game.level.solution[0]!;
   const buried = game.hitCandidates().find((t) => !t.free)!;
-  game.tap(free(a), 0);
-  assert.deepEqual(game.tap(blocked(buried.id), 1), { kind: 'blocked', id: buried.id });
-  assert.equal(game.selection, a);
-  assert.deepEqual(game.tap(miss, 2), { kind: 'selection-cleared' });
-  assert.equal(game.selection, null);
-  assert.deepEqual(game.tap(miss, 3), { kind: 'none' });
+  const before = game.stateHash();
+  assert.deepEqual(game.tap(blocked(buried.id), 0), { kind: 'blocked', id: buried.id });
+  assert.deepEqual(game.tap(miss, 1), { kind: 'none' });
+  assert.equal(game.stateHash(), before);
+  assert.deepEqual(game.holderSlots(), [null, null, null, null]);
 });
 
 test('playing the full solution wins the game', () => {

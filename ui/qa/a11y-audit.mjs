@@ -11,8 +11,8 @@
 //   1. every tile is a named, traversable node in reading order;
 //   2. every interactive target is ≥ 48×48 dp on every shipped viewport;
 //   3. every action is ≤ 2 taps from the board;
-//  3b. the holder strip (issue #43) is a named group of named slots, empty ones
-//      out of the tab order, and the whole park/return loop works by keyboard;
+//  3b. the holder strip (issue #43/#93) is a named group of named slots, and
+//      the whole park + pair-clear loop works by keyboard;
 //   4. a pair can be matched with the keyboard alone, outcomes are announced,
 //      and focus survives the tiles being removed;
 //   5. the end-of-level dialog is modal and takes focus;
@@ -39,8 +39,10 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'applica
 const MIN_TOUCH_TARGET = 48;
 /** Spec §7: "every action reachable within 2 taps from the board". */
 const MAX_TAPS_TO_ACTION = 2;
-// A face-down tile (issue #64) appends its peek affordance after the position.
-const TILE_LABEL = /^.+, (available|blocked), row \d+, column \d+(, activate to peek at it)?$/;
+// A free tile names its action after the position (issue #93); a face-down one
+// offers the peek instead (issue #64); a blocked one offers nothing.
+const TILE_LABEL =
+  /^.+, (available|blocked), row \d+, column \d+(, activate to (peek at it|send it to the holder|send it to the last holder slot, which ends the level|clear it with its match in the holder))?$/;
 /** Controls behind the modal dialog: the header and the booster rail. */
 const BACKGROUND_CONTROLS = ['btn-new', 'btn-restart', 'btn-hint', 'btn-undo', 'btn-shuffle'];
 
@@ -131,8 +133,8 @@ for (const vp of VIEWPORTS) {
       'blocked tiles are announced as unavailable (aria-disabled)',
     );
     check(
-      nodes.every((n) => n.pressed === 'false'),
-      'no tile starts selected',
+      nodes.every((n) => n.pressed === null),
+      'tiles carry no pressed state — selection is gone (issue #93)',
     );
 
     // The board group carries a name, and the canvas is not double-announced.
@@ -207,7 +209,9 @@ for (const vp of VIEWPORTS) {
         .presentTiles()
         // Face-up only (issue #64): the tap below must select, not peek.
         .filter((t) => g.board.isFree(t.id) && !g.isFaceHidden(t.id))
-        .slice(0, 5)
+        // Three, not five: each tap parks now (issue #93), and the fourth
+        // park would end the level under decision 0009.
+        .slice(0, 3)
         .map((t) => {
           const box = document
             .querySelector(`#a11y-layer [data-tile-id="${t.id}"]`)
@@ -217,12 +221,17 @@ for (const vp of VIEWPORTS) {
     });
     for (const s of sample) {
       await page.mouse.click(s.x, s.y);
-      const hit = await page.evaluate(() => window.__slice.game.selection);
-      check(hit === s.id, 'pointer tap at a focus proxy centre hits that tile', { want: s.id, hit });
-      // Deselect. A second tap on the same tile parks it now (issue #62), so
-      // the way to leave the board untouched is Escape.
-      await page.keyboard.press('Escape');
+      // The tap acts (issue #93): the tile leaves the board — to the holder,
+      // or straight out with its match.
+      const acted = await page.evaluate(
+        (i) => !window.__slice.game.board.presentTiles().some((t) => t.id === i),
+        s.id,
+      );
+      check(acted, 'pointer tap at a focus proxy centre hits that tile', { want: s.id, acted });
     }
+    // A fresh deal: the taps above parked tiles the sections below must not
+    // inherit (and five parks would sit one short of the loss).
+    await page.evaluate(() => document.getElementById('btn-restart').click());
   }
 
   // --- 3. Every action ≤ 2 taps from the board. ----------------------------
@@ -302,8 +311,8 @@ for (const vp of VIEWPORTS) {
     );
     check(empty.small === 0, `every holder slot is ≥ ${MIN_TOUCH_TARGET}dp`, empty);
 
-    // Park a tile with the keyboard alone (issue #62): focus its node, Enter to
-    // select, Enter again to park. Real key presses, not synthesised clicks —
+    // Park a tile with the keyboard alone (issue #93): focus its node, one
+    // Enter is the whole gesture. Real key presses, not synthesised clicks —
     // the point is that the browser's own key-to-activation step reaches the
     // gesture, because parking has no rail control to fall back on any more.
     const chosen = await page.evaluate(() => {
@@ -326,31 +335,19 @@ for (const vp of VIEWPORTS) {
       null,
     );
 
-    const focusedTile = await page.evaluate((t) => {
+    const focused = await page.evaluate((t) => {
       const node = document.querySelector(`#a11y-layer [data-tile-id="${t.id}"]`);
       node.focus();
-      return document.activeElement === node;
+      return {
+        focusedTile: document.activeElement === node,
+        label: node.getAttribute('aria-label'),
+      };
     }, chosen);
-    check(focusedTile, 'a tile node takes keyboard focus', { focusedTile });
-    await page.keyboard.press('Enter');
-    const selected = await page.evaluate(
-      (t) => ({
-        label: document
-          .querySelector(`#a11y-layer [data-tile-id="${t.id}"]`)
-          ?.getAttribute('aria-label'),
-        pressed: document
-          .querySelector(`#a11y-layer [data-tile-id="${t.id}"]`)
-          ?.getAttribute('aria-pressed'),
-        selection: window.__slice.selection,
-      }),
-      chosen,
-    );
-    check(selected.selection === chosen.id, 'Enter selects the tile', selected);
-    check(selected.pressed === 'true', 'and the node reads as pressed', selected);
+    check(focused.focusedTile, 'a tile node takes keyboard focus', focused);
     check(
-      /activate again to park it in the holder/i.test(selected.label ?? ''),
-      'and its name spells out the park action — the explicit a11y path',
-      selected,
+      /activate to send it to the holder/i.test(focused.label ?? ''),
+      'its name spells out the park action — the explicit a11y path',
+      focused,
     );
 
     await page.keyboard.press('Enter');
@@ -360,24 +357,25 @@ for (const vp of VIEWPORTS) {
       return {
         group: document.getElementById('holder').getAttribute('aria-label'),
         label: slot?.getAttribute('aria-label') ?? null,
-        pressed: slot?.getAttribute('aria-pressed'),
         disabled: slot?.disabled,
         big: r ? r.width >= 48 && r.height >= 48 : false,
         said: document.getElementById('a11y-status').textContent,
         slots: window.__slice.holder().slots,
       };
     }, chosen);
-    check(parked.slots[0] === chosen.id, 'a second Enter parks it', parked);
+    check(parked.slots[0] === chosen.id, 'one Enter parks it', parked);
     check(/1 of 4 slots used/.test(parked.group ?? ''), 'the group recounts', parked);
     check(
-      parked.label !== null && /, in holder slot 1$/.test(parked.label),
-      'a parked tile is named by face and slot',
+      parked.label !== null &&
+        /, in holder slot 1 — tap its matching tile on the board to clear the pair$/.test(
+          parked.label,
+        ),
+      'a parked tile is named by face, slot, and the way it leaves',
       parked,
     );
-    check(parked.pressed === 'false' && parked.disabled === false,
-      'and is a live, unpressed target', parked);
+    check(parked.disabled === true, 'and is information, not a control (issue #93)', parked);
     check(parked.big, `and is ≥ ${MIN_TOUCH_TARGET}dp`, parked);
-    check(/held in slot 1/.test(parked.said ?? ''), 'the hold is announced', parked.said);
+    check(/sent to holder slot 1/.test(parked.said ?? ''), 'the hold is announced', parked.said);
 
     // The one-tap clear, by keyboard: Enter on the partner takes the pair.
     const cleared = await page.evaluate((t) => {
@@ -427,7 +425,8 @@ for (const vp of VIEWPORTS) {
   // what activating it again would cost — before the activation, not after.
   {
     // Park by keyboard, three times, skipping any face already in the holder
-    // (that first activation would clear the pair instead — issue #62 rule 2).
+    // (that activation would clear the pair instead — issue #93). The tile's
+    // name is read *before* the Enter: the cue must precede the step.
     const parkByKeyboard = async () => {
       const target = await page.evaluate(() => {
         const b = window.__slice.game.board;
@@ -437,7 +436,7 @@ for (const vp of VIEWPORTS) {
             .slots.filter((id) => id !== null)
             .map((id) => b.get(id).face),
         );
-        // Face-up only (issue #64): the two Enters below are select + park.
+        // Face-up only (issue #64): the Enter below must park, not peek.
         const id = b
           .freeTileIds()
           .find((x) => !parked.has(b.get(x).face) && !window.__slice.game.isFaceHidden(x));
@@ -446,14 +445,13 @@ for (const vp of VIEWPORTS) {
         return id;
       });
       if (target === null) return null;
-      await page.keyboard.press('Enter');
-      const selected = await page.evaluate(
+      const label = await page.evaluate(
         (id) =>
           document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.getAttribute('aria-label'),
         target,
       );
       await page.keyboard.press('Enter');
-      return { target, selected };
+      return { target, label };
     };
 
     let third = null;
@@ -464,9 +462,9 @@ for (const vp of VIEWPORTS) {
       third = step;
     }
     check(
-      /activate again to park it in the holder$/.test(third?.selected ?? ''),
+      /activate to send it to the holder$/.test(third?.label ?? ''),
       'a park with room left offers the action with no warning attached',
-      third?.selected,
+      third?.label,
     );
 
     const warned = await page.evaluate(() => {
@@ -487,7 +485,9 @@ for (const vp of VIEWPORTS) {
       warned,
     );
     check(
-      /empty — the last one; filling it ends the level/.test(warned.lastLabel ?? ''),
+      /empty — the last one; a tile with no match in the holder ends the level/.test(
+        warned.lastLabel ?? '',
+      ),
       'and the slot itself is not just "empty"',
       warned,
     );
@@ -502,11 +502,11 @@ for (const vp of VIEWPORTS) {
     const fatal = await parkByKeyboard();
     check(fatal !== null, 'a fourth tile is available to park', fatal);
     check(
-      /activate again to park it in the last holder slot, which ends the level/.test(
-        fatal?.selected ?? '',
+      /activate to send it to the last holder slot, which ends the level/.test(
+        fatal?.label ?? '',
       ),
-      'the selected tile warns before the activation that loses',
-      fatal?.selected,
+      'the focused tile warns before the activation that loses',
+      fatal?.label,
     );
 
     // …and the dialog that follows is a modal that takes focus, offering only
@@ -614,14 +614,20 @@ for (const vp of VIEWPORTS) {
       focusIsTile: document.activeElement?.classList.contains('tile-node') === true,
     }));
     check(after.tilesLeft === tilesBefore - 2, 'keyboard match removed the pair', after);
-    check(/pair matched\./.test(after.status), 'match is announced politely', after.status);
+    check(
+      /pair matched in the holder\./.test(after.status),
+      'match is announced politely',
+      after.status,
+    );
     check(
       after.focusInLayer && after.focusIsTile,
       'focus stays on the board after the matched tiles are removed',
       after,
     );
 
-    // aria-pressed carries selection state for the first tap of a pair.
+    // The park itself is announced — the first half of every pair transits
+    // the holder now (issue #93), and a screen-reader player has to hear
+    // where their tile went.
     const [c] = await page.evaluate(() => window.__slice.game.level.solution[1]);
     await page.evaluate((tileId) => {
       document.querySelector(`#a11y-layer [data-tile-id="${tileId}"]`).focus();
@@ -631,42 +637,10 @@ for (const vp of VIEWPORTS) {
       await page.keyboard.press('Enter');
     }
     await page.keyboard.press('Enter');
-    const pressed = await page.evaluate(
-      (tileId) =>
-        document
-          .querySelector(`#a11y-layer [data-tile-id="${tileId}"]`)
-          .getAttribute('aria-pressed'),
-      c,
+    const parkSaid = await page.evaluate(
+      () => document.getElementById('a11y-status').textContent,
     );
-    check(pressed === 'true', 'selected tile reports aria-pressed=true', pressed);
-    await page.keyboard.press('Escape'); // deselect (issue #62), board untouched
-
-    // A face mismatch is announced too — otherwise nothing tells a screen
-    // reader user why the board did not change.
-    const pair = await page.evaluate(() => {
-      const g = window.__slice.game;
-      // Face-up only (issue #64): the Enters below must select, not peek.
-      const free = g.board
-        .presentTiles()
-        .filter((t) => g.board.isFree(t.id) && !g.isFaceHidden(t.id));
-      for (const a of free) {
-        const b = free.find((x) => x.id !== a.id && x.face !== a.face);
-        if (b) return [a.id, b.id];
-      }
-      return null;
-    });
-    if (pair) {
-      for (const id of pair) {
-        await page.evaluate((tileId) => {
-          document.querySelector(`#a11y-layer [data-tile-id="${tileId}"]`).focus();
-        }, id);
-        await page.keyboard.press('Enter');
-      }
-      const said = await page.evaluate(() => document.getElementById('a11y-status').textContent);
-      check(/ do not match\./.test(said), 'face mismatch is announced', said);
-      // The mismatch leaves the second tile selected (spec §6); clear it.
-      await page.keyboard.press('Escape');
-    }
+    check(/sent to holder slot \d/.test(parkSaid ?? ''), 'a park is announced', parkSaid);
 
     // A blocked tile is announced, never silently ignored.
     const blockedId = await page.evaluate(() => {

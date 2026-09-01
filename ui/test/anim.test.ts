@@ -1,87 +1,31 @@
-// Issue #44: the match sequence has to be *felt*, but what a test can hold is
-// its arithmetic — that the two tiles actually meet, that they accelerate into
-// the hit rather than drift, that the whole thing fits the 400ms budget, and
-// that reduced motion removes travel without removing the flash.
+// Issue #44 / #93: the feedback sequences have to be *felt*, but what a test
+// can hold is their arithmetic — the shake decays, the flip never overshoots,
+// the particle burst is deterministic and radial, and the tray timeline fits
+// a budget that never throttles a fast player.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  CROSSFADE_MS,
-  FADE_MS,
   FLIP_MS,
   flipScaleX,
+  PAIR_CLEAR_MS,
+  PAIR_SHOW_MS,
   PARTICLE_COUNT,
   PARTICLE_MS,
   SHAKE_AMPLITUDE,
   SHAKE_MS,
-  TRAVEL_MS,
-  impactAt,
-  matchDuration,
-  matchFrame,
+  TRAY_FLY_MS,
   particleBurst,
   particleFrame,
   shakeOffset,
 } from '../src/anim.js';
 
-const A = { x: 100, y: 100 };
-const B = { x: 300, y: 180 };
-const MID = { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 };
-
-test('both tiles arrive at the pair midpoint on impact', () => {
-  const t = impactAt(false);
-  for (const from of [A, B]) {
-    const f = matchFrame(from, MID, t, false);
-    assert.ok(Math.abs(f.cx - MID.x) < 1, `cx ${f.cx}`);
-    assert.ok(Math.abs(f.cy - MID.y) < 1, `cy ${f.cy}`);
-  }
-});
-
-test('travel starts at the tile and accelerates into the hit', () => {
-  const start = matchFrame(A, MID, 0, false);
-  assert.equal(start.cx, A.x);
-  assert.equal(start.cy, A.y);
-  // Each successive slice covers more ground than the one before it.
-  const step = TRAVEL_MS / 10;
-  let previous = -Infinity;
-  for (let i = 0; i < 10; i++) {
-    const a = matchFrame(A, MID, step * i, false);
-    const b = matchFrame(A, MID, step * (i + 1), false);
-    const covered = Math.hypot(b.cx - a.cx, b.cy - a.cy);
-    assert.ok(covered > previous, `slice ${i} covered ${covered} <= ${previous}`);
-    previous = covered;
-  }
-});
-
-test('the sequence fits the 400ms budget and its phases sum to it', () => {
-  assert.equal(matchDuration(false), TRAVEL_MS + FADE_MS);
-  assert.ok(matchDuration(false) < 400, `${matchDuration(false)}ms`);
-  // Particles start at impact and must not outlive the sequence.
-  assert.ok(impactAt(false) + PARTICLE_MS <= matchDuration(false));
-});
-
-test('the tile is gone by the end and never before the impact', () => {
-  assert.equal(matchFrame(A, MID, impactAt(false), false).alpha, 1);
-  assert.equal(matchFrame(A, MID, matchDuration(false), false).alpha, 0);
-});
-
-test('flash peaks at impact and decays to nothing', () => {
-  const at = impactAt(false);
-  assert.equal(matchFrame(A, MID, at - 1, false).flash < 1, true);
-  assert.equal(matchFrame(A, MID, at, false).flash, 1);
-  assert.equal(matchFrame(A, MID, matchDuration(false), false).flash, 0);
-});
-
-test('reduced motion cross-fades in place, keeping the flash', () => {
-  assert.equal(matchDuration(true), CROSSFADE_MS);
-  assert.equal(impactAt(true), 0);
-  for (let t = 0; t <= CROSSFADE_MS; t += 10) {
-    const f = matchFrame(A, MID, t, true);
-    assert.equal(f.cx, A.x, `travelled at t=${t}`);
-    assert.equal(f.cy, A.y, `travelled at t=${t}`);
-    assert.equal(f.scale, 1, `scaled at t=${t}`);
-  }
-  assert.equal(matchFrame(A, MID, 0, true).flash, 1);
-  assert.equal(matchFrame(A, MID, CROSSFADE_MS, true).alpha, 0);
+test('the tray sequence stays inside a fast-play budget (issue #93)', () => {
+  // Flight + dwell + clear: the board is already correct underneath, so the
+  // whole show is decoration — it must never feel like a lock-out.
+  assert.ok(TRAY_FLY_MS + PAIR_SHOW_MS + PAIR_CLEAR_MS <= 600);
+  // Particles ride the clear and must not outlive it.
+  assert.ok(PARTICLE_MS <= PAIR_CLEAR_MS);
 });
 
 test('shake starts and ends at rest, decays, and changes direction', () => {

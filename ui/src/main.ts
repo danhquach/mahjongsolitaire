@@ -16,15 +16,18 @@
 // (effects.ts / anim.ts) while the board redraws without it, the sound answers
 // the tap and the haptic waits for the impact, and reduced motion — OS
 // preference or in-app toggle — substitutes a cross-fade.
-// Issue #62 moves parking onto the board and retires the rail's Hold control:
-// activating the selected free tile again parks it, and one tap on a board tile
-// that matches something in the holder clears that pair. Deselecting is what
-// moved out of the way — it is now a tap on empty board, or Escape.
+// Issue #93 reworks the gesture around the holder (decision 0013): one tap on
+// any revealed free tile sends it to the holder, pairs assemble and clear in
+// the strip (fly-in, side-by-side dwell, score popup, particle burst — DOM
+// effects in tray-fx.ts, because the strip lives outside the canvas), and
+// selection stops existing as an input concept — no select, deselect or
+// mismatch, and no Escape handling.
 // Issue #63 makes the holder one-way and a full one final (decision 0009), so
 // the HUD gains the two things a hard-fail owes the player: a warning before
-// the fatal park (the last empty slot is marked, and a selected tile's
-// accessible name says what activating it again would cost) and a loss dialog
-// that offers only a restart, because there is nothing else left to offer.
+// the fatal park (the last empty slot is marked, and — since issue #93 — every
+// free tile with no match in the holder says that activating it sends it to
+// the last slot and ends the level) and a loss dialog that offers only a
+// restart, because there is nothing else left to offer.
 
 import { Application } from 'pixi.js';
 import {
@@ -50,7 +53,8 @@ import { BoosterCharges } from './boosters.js';
 import type { BoosterKind } from './boosters.js';
 import { Elapsed, formatElapsed } from './elapsed.js';
 import { Animator } from './effects.js';
-import type { FlyingTile } from './effects.js';
+import { TrayFx } from './tray-fx.js';
+import type { Box } from './tray-fx.js';
 import { Feedback, navigatorVibrate, webAudioPlayer } from './feedback.js';
 import type { Cue } from './feedback.js';
 import { faceStyle } from './faces.js';
@@ -227,7 +231,7 @@ async function start(): Promise<void> {
   // Match / mismatch animation (issue #44). Reduced motion is the OS preference
   // OR the in-app toggle, read per effect so either can be changed mid-session;
   // the animator itself never touches game state or the input path.
-  const animator = new Animator(renderer.effects, app.ticker, {
+  const animator = new Animator(app.ticker, {
     reduced: () => settings.value.reducedMotion || prefersReducedMotion(),
     tileNode: (id) => renderer.tileNode(id),
   });
@@ -261,6 +265,15 @@ async function start(): Promise<void> {
     resumed === null ? 0 : saved!.elapsedMs,
   );
 
+  /** On-screen size of a tile's picture, side depth included, CSS px — what
+   *  the holder slots draw and what a tray flight carries (issue #66/#93). */
+  function tileCssSize(): { w: number; h: number } {
+    return {
+      w: (TILE_W + SIDE_DEPTH) * renderer.scale,
+      h: (TILE_H + SIDE_DEPTH) * renderer.scale,
+    };
+  }
+
   /** Canvas-relative CSS-px rect of a tile's top face (a11y nodes + QA). */
   function tileCssRect(slot: Slot): Rect {
     const r = tileRect(slot);
@@ -275,13 +288,20 @@ async function start(): Promise<void> {
       face: t.face,
       free: game.board.isFree(t.id),
       // Visibility this frame, not deal-time concealment (issue #64): a peeked
-      // or selected tile announces its face like any other.
+      // tile announces its face like any other.
       concealed: game.isFaceHidden(t.id),
+      // The game's own match rule (issue #93): a tile whose match is in the
+      // holder announces "clear the pair" rather than "send to the holder".
+      pairsWithHeld: game.pairsWithHeld(t.id),
     }));
   }
 
   const a11y = new A11yLayer(a11yRoot, (id) => activateTile(id));
-  const holder = new HolderStrip(holderRoot, HOLDER_SLOTS, (id) => activateHeld(id));
+  const holder = new HolderStrip(holderRoot, HOLDER_SLOTS);
+  // The tray effects layer (issue #93): fixed overlay, page coordinates.
+  const trayFx = new TrayFx(el<HTMLDivElement>('fx-layer'), () =>
+    settings.value.reducedMotion || prefersReducedMotion(),
+  );
 
   function label(id: TileId): string {
     return faceStyle(game.board.get(id).face).label;
@@ -289,7 +309,6 @@ async function start(): Promise<void> {
 
   function redraw(): void {
     renderer.draw(game, {
-      selection: game.selection,
       flash,
       hint: hintPair,
       dimBlocked: settings.value.highlightFree,
@@ -304,18 +323,14 @@ async function start(): Promise<void> {
       // A parked tile is the tile (issue #66): the renderer's own picture of
       // it, at the board's current on-screen tile size (side depth included).
       tileImage: (face) => renderer.tileImage(face),
-      tileSize: {
-        w: (TILE_W + SIDE_DEPTH) * renderer.scale,
-        h: (TILE_H + SIDE_DEPTH) * renderer.scale,
-      },
-      selection: game.selection,
+      tileSize: tileCssSize(),
       hint: hintPair,
-      flash,
     });
     drawClock();
-    // The last argument is the issue #63 warning: with one slot left, a park
-    // ends the level, so a selected tile's accessible name has to say so.
-    a11y.sync(a11yTiles(), game.selection, (t) => tileCssRect(t.slot), game.holderVacancies === 1);
+    // The last argument is the issue #63 warning: with one slot left, parking
+    // an unmatched tile ends the level, so a free tile's accessible name has
+    // to say so.
+    a11y.sync(a11yTiles(), (t) => tileCssRect(t.slot), game.holderVacancies === 1);
   }
 
   /** Opt-in count-up readout (spec §6). Hidden entirely while timed mode is
@@ -328,7 +343,7 @@ async function start(): Promise<void> {
 
   /**
    * Auto-save (spec §7: "on every move"). Called after anything that changes
-   * the board, the score, or the selection.
+   * the board or the score.
    *
    * A *won* level has nothing to resume into, so its save is dropped —
    * otherwise the next boot would reopen a cleared board. A *stuck* one is
@@ -399,7 +414,7 @@ async function start(): Promise<void> {
     } else if (status === 'lost') {
       overlayTitle.textContent = 'Holder full';
       overlayText.textContent =
-        'All four holder slots are taken, and a parked tile can only leave by being matched. The level is over — restart it, or start a new game.';
+        'All four holder slots hold unmatched tiles, and a tile can only leave the holder by being matched. The level is over — restart it, or start a new game.';
       announcer.say(
         `Holder full. The level is over. Score ${game.score}. Restart the level, or start a new game.`,
       );
@@ -635,41 +650,25 @@ async function start(): Promise<void> {
     });
   }
 
-  /** Board-px centre of a tile's top face — where a flying copy starts. */
+  /** Board-px centre of a tile's top face — the flip effect's fixed line. */
   function tileCenter(id: TileId): { x: number; y: number } {
     const r = tileRect(game.board.get(id).slot);
     return { x: r.x + TILE_W / 2, y: r.y + TILE_H / 2 };
   }
 
-  /**
-   * Fly a matched pair together (issue #44).
-   *
-   * Copies are built from the board's own renderer *after* the match has been
-   * applied — `board.get()` still resolves a removed tile — so the board can
-   * redraw without the pair while the copies carry the motion. Nothing here is
-   * awaited: the next tap is accepted mid-flight, and the tiles it would fly
-   * are already out of the model, so they cannot be matched twice.
-   */
-  function playMatchAnimation(a: TileId, b: TileId, heldBefore: ReadonlySet<TileId>): void {
-    // A tile matched out of the holder has no board position to fly from — the
-    // strip is HUD, not board space — so only the board-side tiles fly. A
-    // holder match still gets the full effect on its one board tile (issue
-    // #73): two copies of it collapse on its own centre, so the punch, flash
-    // and burst play in place. The slot emptying is the holder's own feedback.
-    const onBoard = [a, b].filter((id) => !heldBefore.has(id));
-    const flying: FlyingTile[] = [];
-    for (const id of onBoard.length === 1 ? [onBoard[0]!, onBoard[0]!] : onBoard) {
-      const display = renderer.detachedTile(game, id);
-      if (display) flying.push({ display, center: tileCenter(id) });
-    }
-    // Nothing sensible to fly (both tiles held, or no copies): the board is
-    // already correct — fire the impact haptic rather than waiting for a
-    // collision that never happens (issue #43).
-    if (flying.length !== 2) {
-      feedback.haptic('match');
-      return;
-    }
-    animator.playMatch(flying[0]!, flying[1]!, () => feedback.haptic('match'));
+  /** Page-coordinate box of a tile's picture on the board (side depth
+   *  included, matching the strip's slot pictures) — where a tray flight
+   *  starts. `board.get()` still resolves a removed or held tile, so this
+   *  works after the model has already moved it (issue #93). */
+  function tileFlightBox(id: TileId): Box {
+    const r = tileCssRect(game.board.get(id).slot);
+    const canvas = app.canvas.getBoundingClientRect();
+    return { x: canvas.x + r.x, y: canvas.y + r.y, ...tileCssSize() };
+  }
+
+  /** The renderer's picture of a tile, as the strip draws it (issue #66). */
+  function tilePicture(id: TileId): string {
+    return renderer.tileImage(game.board.get(id).face);
   }
 
   function flashTiles(ids: readonly number[]): void {
@@ -687,32 +686,28 @@ async function start(): Promise<void> {
     switch (outcome.kind) {
       case 'matched':
         announcer.say(
-          `${label(outcome.a)} pair matched. ${game.tilesLeft} tiles left. Score ${game.score}.`,
+          `${label(outcome.a)} pair matched in the holder. ${game.tilesLeft} tiles left. Score ${game.score}.`,
         );
-        break;
-      case 'mismatch':
-        announcer.say(`${label(outcome.a)} and ${label(outcome.b)} do not match.`);
         break;
       case 'blocked':
         announcer.say(`${label(outcome.id)} is blocked by another tile.`);
-        break;
-      case 'selection-cleared':
-        announcer.say('Selection cleared.');
         break;
       case 'held':
         // Never reached on the park that fills the last slot — that one is a
         // loss, and showStatus announces it instead (see finishTap). One slot
         // left is the moment to warn, because the next park is the fatal one.
         announcer.say(
-          `${label(outcome.id)} held in slot ${outcome.slot + 1}. ${
+          `${label(outcome.id)} sent to holder slot ${outcome.slot + 1}. ${
             game.holderVacancies === 1
-              ? 'One holder slot left. Parking another tile ends the level.'
+              ? 'One holder slot left. A tile with no match in the holder ends the level.'
               : `${game.tilesLeft} tiles left.`
           }`,
         );
         break;
       case 'holder-full':
-        announcer.say('The holder is full. Match a held tile to free a slot.');
+        announcer.say(
+          'The holder is full. Tap a board tile that matches a held tile to free a slot.',
+        );
         break;
       case 'peeked':
         // The reveal is the entire outcome (issue #64): a sighted player sees
@@ -720,7 +715,6 @@ async function start(): Promise<void> {
         announcer.say(`${label(outcome.id)} revealed.`);
         break;
       default:
-        // select / deselect are carried by the button's aria-pressed state.
         break;
     }
   }
@@ -796,7 +790,10 @@ async function start(): Promise<void> {
     if (result.ok) charges.spend(kind);
     // Undo puts a matched tile back and Shuffle repaints every face: a copy
     // still flying from the old board would paint over the new one (issue #44).
-    if (result.ok && (kind === 'undo' || kind === 'shuffle')) animator.clear();
+    if (result.ok && (kind === 'undo' || kind === 'shuffle')) {
+      animator.clear();
+      trayFx.clear();
+    }
     redraw();
     if (result.ok) persist();
     // Undo and Shuffle can lift a deadlock: showStatus closes the dialog once
@@ -826,12 +823,9 @@ async function start(): Promise<void> {
    */
   function tapCue(outcome: TapOutcome): Cue | null {
     switch (outcome.kind) {
-      case 'mismatch':
       case 'blocked':
       case 'holder-full':
         return 'mismatch';
-      case 'selected':
-      case 'deselected':
       case 'held':
       case 'peeked':
         return 'select';
@@ -840,16 +834,10 @@ async function start(): Promise<void> {
     }
   }
 
-  /** Ids sitting in the holder right now — captured before a tap, because after
-   *  a match the tiles are removed and no longer say where they came from. */
-  function heldIds(): ReadonlySet<TileId> {
-    return new Set(game.holderSlots().filter((id): id is TileId => id !== null));
-  }
-
   /** Concealed tiles currently showing their face on the board (issue #64) —
-   *  the peek plus a pinned selection. Captured before a tap and diffed after
-   *  it, so every reveal and re-conceal gets its flip, whichever rule caused
-   *  it (peek, second peek, mismatch, deselect, Escape). */
+   *  the peek. Captured before a tap and diffed after it, so every reveal and
+   *  re-conceal gets its flip, whichever rule caused it (peek, second peek,
+   *  a board change dropping the peek). */
   function shownConcealed(): ReadonlySet<TileId> {
     const shown = new Set<TileId>();
     for (const t of game.board.presentTiles()) {
@@ -886,57 +874,63 @@ async function start(): Promise<void> {
     // goes backwards. Elapsed time is saved with the game, so it is the one
     // clock that stays monotonic across a force-quit (core's own contract:
     // "monotonic within a game — e.g. elapsed game time").
-    const before = heldIds();
+    const before = game.holderSlots();
     const shownBefore = shownConcealed();
     finishTap(game.tap(hit, elapsed.ms), before, shownBefore);
   }
 
-  /** Tap on a tile in the holder (issue #43): same select / match semantics as
-   *  a free board tile, reached through the strip's own button. */
-  function activateHeld(id: TileId): void {
-    if (dealing || game.status() !== 'playing') return;
-    const before = heldIds();
-    const shownBefore = shownConcealed();
-    finishTap(game.tapHeld(id, elapsed.ms), before, shownBefore);
-  }
-
-  /** Everything a resolved tap owes the player: feedback, save, announcement. */
+  /** Everything a resolved tap owes the player: feedback, save, announcement.
+   *  `heldBefore` is the holder as it was when the tap landed — a match empties
+   *  the partner's slot, and the pair-clear effect has to know which one. */
   function finishTap(
     outcome: TapOutcome,
-    heldBefore: ReadonlySet<TileId>,
+    heldBefore: readonly (TileId | null)[],
     shownBefore: ReadonlySet<TileId>,
   ): void {
-    // Reveal / re-conceal flips (issue #64) — started first so the mismatch
-    // shake below can skip the tiles that are flipping.
-    const flipped = playFlips(shownBefore);
+    // Reveal / re-conceal flips (issue #64).
+    playFlips(shownBefore);
     // A match or a park changes the board, so the highlighted hint is stale.
-    // Any other tap keeps it: selecting one hinted tile must not hide its
-    // partner.
+    // Any other tap keeps it: peeking near one hinted tile must not hide it.
     if (outcome.kind === 'matched' || outcome.kind === 'held') hintPair = [];
-    if (outcome.kind === 'mismatch') {
-      flashTiles([outcome.a, outcome.b]);
-      // A re-concealing tile flips instead of shaking — the two effects would
-      // fight over the same node transform, and the flip is the information.
-      animator.shake([outcome.a, outcome.b].filter((id) => !flipped.has(id)));
-    } else if (outcome.kind === 'blocked') {
+    if (outcome.kind === 'blocked') {
       flashTiles([outcome.id]);
       animator.shake([outcome.id]);
     }
+    // The tray effects (issue #93): captured before the redraw empties the
+    // slot / drops the board tile — board.get() still resolves either, and
+    // the pictures come from the renderer's own bake (issue #66).
     if (outcome.kind === 'matched') {
-      // Sound answers the tap; the haptic waits for the collision (issue #44).
+      // Sound answers the tap; the haptic waits for the pair clear (the same
+      // split issue #44 used for the collision).
       feedback.sound('match');
-      // The copies have to be captured before the redraw that drops the pair —
-      // they live in the effects layer, which the redraw does not touch.
-      playMatchAnimation(outcome.a, outcome.b, heldBefore);
+      const slotIndex = heldBefore.indexOf(outcome.a);
+      const slotNode = slotIndex === -1 ? undefined : holder.slotNode(slotIndex);
+      if (slotNode) {
+        trayFx.pairClear(
+          { incoming: tilePicture(outcome.b), parked: tilePicture(outcome.a) },
+          tileFlightBox(outcome.b),
+          slotNode,
+          outcome.score.points,
+          () => feedback.haptic('match'),
+        );
+      } else {
+        // No slot to anchor on (never in play; belt-and-braces): the redraw is
+        // the feedback, so fire the haptic now rather than never.
+        feedback.haptic('match');
+      }
+    } else if (outcome.kind === 'held') {
+      const slotNode = holder.slotNode(outcome.slot);
+      if (slotNode) {
+        trayFx.flyToSlot(tilePicture(outcome.id), tileFlightBox(outcome.id), slotNode, () => {});
+      }
+      feedback.cue(tapCue(outcome)!);
     } else {
       const cue = tapCue(outcome);
       if (cue) feedback.cue(cue);
     }
     redraw();
-    // Spec §7: auto-save on every move. The selection counts as state too — a
-    // force-quit between the two taps of a pair resumes with it intact. A tap
-    // that changed nothing (a miss with no selection, a buried tile) has
-    // nothing to save.
+    // Spec §7: auto-save on every move. A tap that changed nothing (a miss, a
+    // buried tile) has nothing to save.
     // A refused park (issue #43 rule 5) changed nothing either, and a peek is
     // deliberately not saved (issue #64): a reload re-conceals.
     if (!['none', 'blocked', 'holder-full', 'peeked'].includes(outcome.kind)) persist();
@@ -989,6 +983,7 @@ async function start(): Promise<void> {
     flash = [];
     flashToken++;
     animator.clear();
+    trayFx.clear();
     hintPair = [];
     shuffleCount = 0;
     elapsed.reset();
@@ -1002,19 +997,6 @@ async function start(): Promise<void> {
     if (fromDialog) a11y.focusActive();
     announcer.say(`New game dealt. Level ${progress.level}. ${game.tilesLeft} tiles.`);
   }
-
-  // Deselect (issue #62). Activating the selected tile again now parks it, so
-  // the gesture that *drops* a selection is a tap on empty board — and Escape
-  // for a keyboard or screen-reader player, who has no empty board to aim at.
-  // Document-scoped for the same reason the settings handler is: focus may sit
-  // on a booster button or <body> rather than on the tile itself.
-  document.addEventListener('keydown', (ev) => {
-    if (ev.key !== 'Escape') return;
-    if (overlayVisible || settingsVisible || changelogVisible) return;
-    if (game.status() !== 'playing' || game.selection === null) return;
-    ev.preventDefault();
-    applyTap({ kind: 'miss' });
-  });
 
   app.canvas.addEventListener('pointerdown', (ev) => {
     if (game.status() !== 'playing') return;
@@ -1067,11 +1049,12 @@ async function start(): Promise<void> {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
       elapsed.pause();
-      // requestAnimationFrame stops on a hidden page, so a match in flight
-      // would freeze here and finish its last 100ms whenever the player comes
-      // back — a stale pair painted over a board that has moved on. The board
-      // underneath is already correct without them, so drop them (issue #44).
+      // requestAnimationFrame stops on a hidden page, so a flight or a shake
+      // would freeze here and finish whenever the player comes back — stale
+      // copies painted over a board that has moved on. The board underneath is
+      // already correct without them, so drop them (issue #44 / #93).
       animator.clear();
+      trayFx.clear();
       persist();
     } else {
       elapsed.resume();
@@ -1144,7 +1127,8 @@ async function start(): Promise<void> {
         holdsUsed: game.holdsUsed,
       };
     },
-    /** The current selection (issue #62 QA: the park gesture needs it). */
+    /** Legacy selection (issue #93 retired the gesture; a pre-#93 save can
+     *  still restore one, and the QA harness asserts it stays null in play). */
     get selection() {
       return game.selection;
     },
@@ -1169,9 +1153,9 @@ async function start(): Promise<void> {
     boardExtent(): { w: number; h: number } {
       return { w: renderer.boardExtent.w, h: renderer.boardExtent.h };
     },
-    /** Whether any match/shake effect is live (issue #44 QA assertions). */
+    /** Whether any board or tray effect is live (issue #44 / #93 QA). */
     animating(): boolean {
-      return animator.busy;
+      return animator.busy || trayFx.busy;
     },
     /** The effective reduced-motion decision, OS preference included. */
     reducedMotion(): boolean {

@@ -6,6 +6,11 @@ commit and build time of the running bundle.
 
 ## 2026-09-01
 
+- The holder is now the whole matching gesture (#93): one tap sends a
+  revealed free tile to the holder, a concealed tile takes a reveal tap
+  first, and pairs assemble and clear inside the holder — fly-in,
+  side-by-side beat, score popup and particle burst. Selection and
+  mismatches are gone; the combo now only breaks by timeout.
 - Stacks read as physical piles: deeper cast shadows, thicker beveled
   sides and a larger per-layer offset carry depth, and tile faces stay
   bright on every layer (#86).

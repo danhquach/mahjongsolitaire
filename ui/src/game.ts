@@ -1,7 +1,8 @@
 // Vertical-slice game controller (issue #11): tap semantics on top of the
 // core engine. Pure logic — no rendering, no timers — so tap flows are
-// unit-testable headlessly. Spec §7: tap select/deselect only; a mismatch
-// never costs points (§6) but breaks the combo.
+// unit-testable headlessly. Since issue #93 one tap is one move (spec §3.3):
+// there is no selection and no mismatch, and the combo breaks only by
+// timeout (§6).
 //
 // Issue #13 adds the three boosters on top of the same core primitives:
 // `hint()` (solver-backed, cycling), `undo()` (the move stack's unlimited
@@ -25,37 +26,37 @@
 // the level. That is a third terminal status — `lost` — and it is why `status()`
 // asks about the holder before it asks whether a move is left.
 //
-// Issue #62 moves parking onto the board itself and retires the rail control.
-// Two rules, both living in `tapBoard`:
-//   * a second activation of the already-selected free tile parks it, and
-//   * one tap on a board tile that matches something in the holder clears that
-//     pair outright, instead of only selecting.
-// The first rule takes over the gesture that used to deselect, so deselecting
-// moves to a tap on empty board (or Escape — main.ts). Note what it is *not*:
-// there is no timing window and no `dblclick`, so this is "activate the tile you
-// already picked", which a keyboard or screen reader reaches with two ordinary
-// activations. Spec §7's "no double-tap … requirements for core play" therefore
-// still holds — see the spec amendment on §3.3.
+// Issue #93 reworks the whole gesture around the holder (decision 0013,
+// superseding issue #62's select-then-park): *every* tap on a revealed free
+// tile sends it to the holder, and pairs assemble and clear there. Selection
+// stops being a concept for matching — there is no select, no deselect, and no
+// mismatch. One tap is the whole move:
+//   * the tapped tile's face matches a held tile → the pair clears (the tile
+//     never occupies a slot, so completing a pair can never trip the full-
+//     holder loss in passing);
+//   * otherwise the tile is parked, and the park that fills the fourth slot
+//     still loses (decision 0009, unchanged).
 //
 // Issue #64 adds face-down tiles (decision 0010). Concealment changes what the
 // player *knows*, never what is legally matchable: the set of concealed ids is
 // fixed at deal time (core's concealedTileIds — deterministic, so a resume
 // re-derives it and nothing new is saved), and everything the solver, hint and
 // deadlock check read is untouched. The controller owns the reveal state: one
-// unselected peek at a time, a selection pins its reveal, a mismatch
-// re-conceals, and any board change drops the peek.
+// peek at a time, and any board change drops it. Under issue #93 the first tap
+// on a concealed free tile is the reveal and *only* the reveal — it never
+// consults the holder (decision 0010's tap-time leak) and never moves the tile;
+// the second tap sends the now-visible tile to the holder like any other.
 
 import {
   Board,
   MoveStack,
   ScoreKeeper,
   assessDifficulty,
-  canMatch,
   concealedTileIds,
   findHint,
   hasPlayableMove,
-  legalPairs,
   shuffleBoard,
+  takeablePairs,
 } from '@mahjongsolitaire/core';
 import type {
   GeneratedLevel,
@@ -73,20 +74,18 @@ import type { Hit, HitCandidate } from './hit-test.js';
 export type GameStatus = 'playing' | 'won' | 'stuck' | 'lost';
 
 export type TapOutcome =
-  | { readonly kind: 'selected'; readonly id: TileId }
-  | { readonly kind: 'deselected'; readonly id: TileId }
+  /** The tapped board tile paired with `a` — always a held tile (issue #93:
+   *  every pair resolves in the holder). `b` is the tile just tapped. */
   | { readonly kind: 'matched'; readonly a: TileId; readonly b: TileId; readonly score: MatchScore }
-  | { readonly kind: 'mismatch'; readonly a: TileId; readonly b: TileId }
   | { readonly kind: 'blocked'; readonly id: TileId }
-  | { readonly kind: 'selection-cleared' }
-  /** Issue #62: the selected free tile was parked by activating it again. */
+  /** Issue #93: the tapped free tile went to the holder in one tap. */
   | { readonly kind: 'held'; readonly id: TileId; readonly slot: number }
-  /** …and the same activation with every slot taken. Nothing changed: a full
-   *  holder refuses the park rather than ending the level (issue #43 rule 5),
-   *  so the tile stays selected and playable. */
+  /** …and the same tap with every slot taken. Nothing changed: unreachable in
+   *  play — a full holder is already a lost level (decision 0009) and the input
+   *  layer gates on `status()` — but the controller is pure, so it answers. */
   | { readonly kind: 'holder-full'; readonly id: TileId }
-  /** Issue #64: a tap on a face-down free tile peeks at it — reveals the face,
-   *  selects nothing, costs nothing. Only ever one unselected peek at a time. */
+  /** Issue #64: a tap on a face-down free tile peeks at it — reveals the face
+   *  in place, moves nothing, costs nothing. Only ever one peek at a time. */
   | { readonly kind: 'peeked'; readonly id: TileId }
   | { readonly kind: 'none' };
 
@@ -147,9 +146,9 @@ export class Game {
    *  concealed tile removes it, but nothing ever leaves this set — an undone
    *  match brings the tile back concealed, which is what "survives undo" means. */
   private readonly concealed: ReadonlySet<TileId>;
-  /** The one unselected peek (issue #64, decision 0010). Everything else about
-   *  face visibility is computed — see isFaceHidden — so re-concealing on
-   *  deselect, mismatch and undo mostly falls out for free. */
+  /** The one peek (issue #64, decision 0010). Everything else about face
+   *  visibility is computed — see isFaceHidden — so re-concealing on undo,
+   *  shuffle, match and park mostly falls out for free. */
   private peekedId: TileId | null = null;
 
   /**
@@ -188,6 +187,9 @@ export class Game {
     };
   }
 
+  /** Issue #93 retired selection as a gesture: no tap sets it any more. It
+   *  survives read-only because the save format carries it (a pre-#93 save can
+   *  restore one) and the QA harness asserts on it. */
   get selection(): TileId | null {
     return this.stack.selection;
   }
@@ -232,18 +234,17 @@ export class Game {
     return this.concealed.has(id);
   }
 
-  /** The one unselected peek, or null. */
+  /** The one peek, or null. */
   get peeked(): TileId | null {
     return this.peekedId;
   }
 
   /**
    * Is this tile's face hidden this frame? Computed, not stored: a concealed
-   * tile shows its face while it is the peek or the selection (selection *pins*
-   * a reveal — decision 0010 — which is what makes a concealed–concealed pair
-   * matchable), and once parked it stays face-up (the holder strip is the
-   * player's own shelf; re-hiding what they knowingly parked would be a memory
-   * test the ticket's cap exists to prevent).
+   * tile shows its face while it is the peek (a restored pre-#93 selection
+   * still pins a reveal too), and once parked it stays face-up (the holder
+   * strip is the player's own shelf; re-hiding what they knowingly parked
+   * would be a memory test the ticket's cap exists to prevent).
    */
   isFaceHidden(id: TileId): boolean {
     if (!this.concealed.has(id)) return false;
@@ -326,7 +327,7 @@ export class Game {
   // --- holder (issue #43) -----------------------------------------------------
 
   /**
-   * Park the selected free tile (issue #62 rule 1).
+   * Send a free tile to the holder (issue #93: one tap is the whole gesture).
    *
    * Since decision 0009 this is the one move that can end the level: the holder
    * is one-way, and the park that fills the fourth slot loses. The outcome is a
@@ -345,10 +346,18 @@ export class Game {
     return { kind: 'held', id, slot };
   }
 
+  /** Does tapping this board tile clear a pair in the holder (issue #93)?
+   *  The one home of the rule — the a11y labels and the QA harness ask here
+   *  rather than re-deriving face sets. */
+  pairsWithHeld(id: TileId): boolean {
+    return !this.isFaceHidden(id) && this.holderPartner(id) !== null;
+  }
+
   /**
-   * The held tile a board tile would clear against (issue #62 rule 2), or null.
-   * Slot order rather than id order: with two identical faces parked, the pair
-   * that vanishes should be the one the player reads first in the strip.
+   * The held tile a board tile would clear against (issue #93), or null.
+   * Slot order rather than id order: with two identical faces parked (only a
+   * pre-#93 save can hold that state), the pair that vanishes should be the
+   * one the player reads first in the strip.
    */
   private holderPartner(id: TileId): TileId | null {
     const face = this.board.get(id).face;
@@ -357,23 +366,6 @@ export class Game {
       if (this.board.get(held).face === face) return held;
     }
     return null;
-  }
-
-  /**
-   * Tap on a tile in the holder. Select, deselect, match — a held tile is
-   * matchable, so this is the board's own tap rule minus the two board-only
-   * moves: a parked tile cannot be parked again, and rule 2's one-tap clear is
-   * about reaching *into* the holder from the board, so two held tiles still
-   * pair the ordinary way.
-   */
-  tapHeld(id: TileId, nowMs: number): TapOutcome {
-    if (!this.board.isHeld(id)) return { kind: 'none' };
-    const selected = this.stack.selection;
-    if (selected === id) {
-      this.stack.clearSelection();
-      return { kind: 'deselected', id };
-    }
-    return this.pairOrSelect(selected, id, nowMs);
   }
 
   /**
@@ -401,12 +393,15 @@ export class Game {
     return true;
   }
 
-  /** Hint cycle order: the solver's move first, then every other legal pair. */
+  /** Hint cycle order: the solver's move first, then every other takeable
+   *  pair. Takeable, not merely legal (issue #93): the Hint booster must never
+   *  point at a pair whose first tap parks into the fatal fourth slot, nor at
+   *  a held–held pair no gesture can play. */
   private rankedPairs(): HintPair[] {
-    const pairs = legalPairs(this.board);
-    const best = findHint(this.board);
-    if (best === null) return pairs;
+    const pairs = takeablePairs(this.board);
     const key = (p: HintPair) => `${Math.min(p[0], p[1])}:${Math.max(p[0], p[1])}`;
+    const best = findHint(this.board);
+    if (best === null || !pairs.some((p) => key(p) === key(best))) return pairs;
     const bestKey = key(best);
     return [best, ...pairs.filter((p) => key(p) !== bestKey)];
   }
@@ -430,11 +425,8 @@ export class Game {
   tap(hit: Hit, nowMs: number): TapOutcome {
     switch (hit.kind) {
       case 'miss':
-        if (this.stack.selection === null) return { kind: 'none' };
-        this.stack.clearSelection();
-        return { kind: 'selection-cleared' };
+        return { kind: 'none' };
       case 'blocked':
-        // Keep any selection — a stray tap on a buried tile shouldn't cost it.
         return { kind: 'blocked', id: hit.id };
       case 'free':
         return this.tapBoard(hit.id, nowMs);
@@ -442,73 +434,28 @@ export class Game {
   }
 
   /**
-   * Tap on a free board tile (issue #62). In order:
+   * Tap on a free board tile (issue #93). In order:
    *
-   * 1. the tile is already selected → park it (rule 1);
-   * 2. its face is hidden → peek at it (issue #64). Everything below acts on a
-   *    face the player can see, so a hidden tile answers nothing else — not
-   *    even the holder auto-clear, which would otherwise leak the face on the
-   *    tap *before* the reveal. A second tap on the now-peeked tile falls
-   *    through to the ordinary rules;
-   * 3. it completes the pair the player selected → match, as always;
-   * 4. it matches something in the holder → clear that pair on this one tap
-   *    (rule 2). Deliberately *after* the player's own selection: an explicit
-   *    pick outranks a partner they may have parked several moves ago;
-   * 5. otherwise select, or mismatch against the current selection.
+   * 1. its face is hidden → peek at it (issue #64), and nothing else: the tap
+   *    that reveals must not also move the tile, and the holder is never
+   *    consulted for a hidden face (decision 0010: that would leak the face on
+   *    the tap *before* the reveal). The second tap, on the now-visible tile,
+   *    falls through to the rules below;
+   * 2. its face matches a held tile → the pair clears (issue #93: pairs
+   *    assemble and resolve in the holder). The tapped tile never takes a
+   *    slot, so completing a pair cannot trip the full-holder loss in passing;
+   * 3. otherwise it goes to the holder — one tap, no select-first step.
    */
   private tapBoard(id: TileId, nowMs: number): TapOutcome {
-    const selected = this.stack.selection;
-    if (selected === id) return this.park(id, nowMs);
     if (this.isFaceHidden(id)) {
-      // Issue #77: a fresh peek that turns up the partner of a face already
-      // showing matches in this same tap — against the selection first (an
-      // explicit pick outranks, as in step 4), then the unselected peek. A
-      // non-matching reveal falls through to the ordinary peek, so the
-      // one-unselected-peek memory mechanic is untouched; the holder is still
-      // never consulted for a hidden tile (decision 0010: that tap-time leak
-      // is the one this branch exists to prevent).
-      for (const other of [selected, this.peekedId]) {
-        if (other === null || other === id || this.isFaceHidden(other)) continue;
-        if (canMatch(this.board, other, id).ok) return this.playPair(other, id, nowMs);
-      }
-      // One unselected peek at a time: this assignment is what re-conceals the
-      // previous one (issue #64 answer 3).
+      // One peek at a time: this assignment is what re-conceals the previous
+      // one (issue #64 answer 3, kept under issue #93).
       this.peekedId = id;
       return { kind: 'peeked', id };
     }
-    if (selected !== null && canMatch(this.board, selected, id).ok) {
-      return this.playPair(selected, id, nowMs);
-    }
     const partner = this.holderPartner(id);
     if (partner !== null) return this.playPair(partner, id, nowMs);
-    return this.pairOrSelect(selected, id, nowMs);
-  }
-
-  /** The tail both tap paths share: match the selection, else select / mismatch. */
-  private pairOrSelect(selected: TileId | null, id: TileId, nowMs: number): TapOutcome {
-    if (selected === null) {
-      this.stack.select(id);
-      return { kind: 'selected', id };
-    }
-    if (canMatch(this.board, selected, id).ok) return this.playPair(selected, id, nowMs);
-    // Face mismatch: combo breaks (§6), selection moves to the new tile.
-    this.scores.recordMismatch();
-    // …unless a face-down tile was involved (issue #64 answer 3): a mismatch
-    // re-conceals, and both the selection pin and the peek are how a concealed
-    // face stays up — so both are dropped rather than moved. Selecting the new
-    // tile here would pin it face-up through the very mismatch that is supposed
-    // to hide it again. A *parked* concealed tile is exempt: the holder shows
-    // its face permanently, so there is nothing to re-conceal and the ordinary
-    // rule applies.
-    const reconceals = (tileId: TileId) =>
-      this.concealed.has(tileId) && !this.board.isHeld(tileId);
-    if (reconceals(selected) || reconceals(id)) {
-      this.stack.clearSelection();
-      this.forgetPeek();
-      return { kind: 'mismatch', a: selected, b: id };
-    }
-    this.stack.select(id);
-    return { kind: 'mismatch', a: selected, b: id };
+    return this.park(id, nowMs);
   }
 
   private playPair(a: TileId, b: TileId, nowMs: number): TapOutcome {

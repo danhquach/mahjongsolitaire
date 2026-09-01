@@ -1,4 +1,4 @@
-// Holder strip (issue #43): the four slots a free tile can be parked in, drawn
+// Holder strip (issue #43): the four slots a tapped free tile travels to, drawn
 // above the board.
 //
 // This is DOM, not canvas, and deliberately so. The strip is HUD furniture, not
@@ -20,6 +20,12 @@
 // ends the level (decision 0009), so the last empty slot is marked `.last` and
 // the group says so — a hard-fail the player can walk into needs to be visible
 // before they take the step, not explained afterwards in a dialog.
+//
+// Issue #93 makes the strip where pairs resolve — and takes its buttons out of
+// the action. A held tile is no longer tappable: it can only leave by its
+// partner being tapped on the board, so every slot stays disabled and the
+// buttons are pure information (face, position, the last-slot warning), which
+// assistive technology still reads in place.
 
 import type { TileId } from '@mahjongsolitaire/core';
 import { faceStyle } from './faces.js';
@@ -34,9 +40,6 @@ export interface HolderView {
   /** On-screen size of a board tile, side depth included, CSS px (issue #66).
    *  Slots track it so a parked tile and a board tile always read the same. */
   readonly tileSize: { readonly w: number; readonly h: number };
-  readonly selection: TileId | null;
-  /** Tiles to outline in red this frame (mismatch feedback), as on the board. */
-  readonly flash: readonly TileId[];
   /** Tiles the Hint booster is pointing at — a hinted held tile is half of a
    *  playable pair, so it has to be findable here too. */
   readonly hint: readonly TileId[];
@@ -45,17 +48,14 @@ export interface HolderView {
 /**
  * The holder's slots as buttons. Rebuilt in place on every redraw: four nodes
  * is nothing, and updating attributes rather than replacing elements is what
- * keeps focus where the player left it.
+ * keeps the DOM stable under the strip's own animations (issue #93).
  */
 export class HolderStrip {
   private readonly slotNodes: HTMLButtonElement[] = [];
-  /** Last synced occupancy — what a slot's click resolves to. */
-  private held: (TileId | null)[] = [];
 
   constructor(
     private readonly root: HTMLElement,
     capacity: number,
-    onActivate: (id: TileId) => void,
   ) {
     root.setAttribute('role', 'group');
     for (let i = 0; i < capacity; i++) {
@@ -63,32 +63,34 @@ export class HolderStrip {
       node.type = 'button';
       node.className = 'slot';
       node.dataset['slot'] = String(i);
+      // Nothing to activate (issue #93: a held tile leaves only by its partner
+      // being tapped on the board) — the buttons are information, not controls.
+      node.disabled = true;
       // The tile picture (issue #66) — a child rather than the button's own
       // background, so the 48dp button box and the tile-sized visual can
       // differ when the board's tiles are smaller than the touch target.
       node.appendChild(Object.assign(document.createElement('span'), { className: 'tile' }));
-      node.addEventListener('click', () => {
-        const id = this.heldIn(i);
-        if (id !== null) onActivate(id);
-      });
       this.slotNodes.push(node);
       root.appendChild(node);
     }
-    this.held = new Array<TileId | null>(capacity).fill(null);
   }
 
-  private heldIn(index: number): TileId | null {
-    return this.held[index] ?? null;
+  /** The slot buttons, in slot order — where the fly-in / pair-clear effects
+   *  anchor themselves (issue #93). */
+  slotNode(index: number): HTMLElement | undefined {
+    return this.slotNodes[index];
   }
 
   sync(view: HolderView): void {
-    this.held = [...this.slotNodes.keys()].map((i) => view.slots[i] ?? null);
-    const used = this.held.filter((id) => id !== null).length;
-    const lastFree = this.slotNodes.length - used === 1 ? this.held.indexOf(null) : -1;
+    const held = [...this.slotNodes.keys()].map((i) => view.slots[i] ?? null);
+    const used = held.filter((id) => id !== null).length;
+    const lastFree = this.slotNodes.length - used === 1 ? held.indexOf(null) : -1;
     this.root.setAttribute(
       'aria-label',
       `Holder, ${used} of ${this.slotNodes.length} slots used${
-        lastFree === -1 ? '' : ', one slot left — parking another tile ends the level'
+        lastFree === -1
+          ? ''
+          : ', one slot left — a tile with no match in the holder ends the level'
       }`,
     );
     // Whole CSS px: the strip's height feeds back into the board's fit, so a
@@ -96,7 +98,7 @@ export class HolderStrip {
     const w = Math.max(1, Math.round(view.tileSize.w));
     const h = Math.max(1, Math.round(view.tileSize.h));
     this.slotNodes.forEach((node, i) => {
-      const id = this.held[i] ?? null;
+      const id = held[i] ?? null;
       // The warning cue: only ever on the one empty slot that would be filled.
       node.classList.toggle('last', i === lastFree);
       const tile = node.querySelector<HTMLElement>('.tile')!;
@@ -105,30 +107,25 @@ export class HolderStrip {
       if (tile.style.width !== `${w}px`) tile.style.width = `${w}px`;
       if (tile.style.height !== `${h}px`) tile.style.height = `${h}px`;
       if (id === null) {
-        node.classList.remove('filled', 'selected', 'hinted', 'flashed');
+        node.classList.remove('filled', 'hinted');
         node.setAttribute(
           'aria-label',
           i === lastFree
-            ? `Holder slot ${i + 1}, empty — the last one; filling it ends the level`
+            ? `Holder slot ${i + 1}, empty — the last one; a tile with no match in the holder ends the level`
             : `Holder slot ${i + 1}, empty`,
         );
-        // Nothing to activate and nothing to explain — unlike a spent booster,
-        // an empty slot has no message, so it stays out of the tab order.
-        node.disabled = true;
-        node.removeAttribute('aria-pressed');
         delete node.dataset['tileId'];
         // Back to the dashed-outline placeholder from the stylesheet.
         tile.style.backgroundImage = '';
         return;
       }
       const style = faceStyle(view.faceOf(id));
-      node.disabled = false;
       node.classList.add('filled');
-      node.classList.toggle('selected', view.selection === id);
       node.classList.toggle('hinted', view.hint.includes(id));
-      node.classList.toggle('flashed', view.flash.includes(id));
-      node.setAttribute('aria-pressed', String(view.selection === id));
-      node.setAttribute('aria-label', `${style.label}, in holder slot ${i + 1}`);
+      node.setAttribute(
+        'aria-label',
+        `${style.label}, in holder slot ${i + 1} — tap its matching tile on the board to clear the pair`,
+      );
       // Same hook the board's a11y nodes carry, so scripted QA can reach a tile
       // by id without caring which layer it is currently in.
       node.dataset['tileId'] = String(id);
@@ -139,7 +136,7 @@ export class HolderStrip {
     });
   }
 
-  /** Take the strip out of the tab order and the a11y tree (modal dialogs). */
+  /** Take the strip out of the a11y tree (modal dialogs). */
   setInert(inert: boolean): void {
     if (inert) this.root.setAttribute('inert', '');
     else this.root.removeAttribute('inert');

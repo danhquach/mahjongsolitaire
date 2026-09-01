@@ -265,22 +265,44 @@
         border-color: #f59e0b;
         border-width: 3px;
       }
-      /* The two cues the board uses, in the board's colours (render.ts). */
-      #holder .slot.selected {
-        outline: 3px solid #f59e0b;
-        outline-offset: 1px;
-      }
+      /* The hint cue, in the board's colour (render.ts). */
       #holder .slot.hinted {
         outline: 3px solid #2563eb;
         outline-offset: 1px;
       }
-      #holder .slot.flashed {
-        outline: 3px solid #dc2626;
-        outline-offset: 1px;
+      /* A tile is flying to this slot (issue #93, tray-fx.ts): the redraw has
+         already filled it, so hide the picture until the copy lands. */
+      #holder .slot.incoming .tile {
+        visibility: hidden;
       }
-      #holder .slot:focus-visible {
-        outline: 4px solid #f59e0b;
-        outline-offset: 2px;
+      /* Tray effects overlay (issue #93): flights from board to holder, the
+         side-by-side pair clear, the score popup and the sparks. Fixed and
+         pointer-transparent — copies are pictures, never controls. */
+      #fx-layer {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 30;
+      }
+      #fx-layer .fx-tile {
+        position: fixed;
+        background: transparent center / 100% 100% no-repeat;
+        will-change: transform, opacity;
+      }
+      #fx-layer .fx-score {
+        position: fixed;
+        transform: translate(-50%, -50%);
+        font-weight: 700;
+        font-size: 20px;
+        color: #fff6d8;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+        will-change: transform, opacity;
+      }
+      #fx-layer .fx-spark {
+        position: fixed;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        will-change: transform, opacity;
       }
       #board {
         flex: 1;
@@ -297,6 +319,9 @@
         display: none;
         align-items: center;
         justify-content: center;
+        /* Above #fx-layer (z-index 30): the modal must cover a pair clear
+           still playing out — a win always ends with one (issue #93). */
+        z-index: 40;
         background: rgba(0, 0, 0, 0.55);
       }
       #overlay.visible {
@@ -536,6 +561,7 @@
            height out of the fit and the board re-fits around it. -->
       <div id="play-area">
         <div id="holder"></div>
+        <div id="fx-layer"></div>
         <div id="board">
           <div id="a11y-layer"></div>
           <!-- The way into settings lives here rather than in the header: at

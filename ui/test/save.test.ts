@@ -60,9 +60,9 @@ function fingerprint(game: Game) {
   };
 }
 
-/** Issue #62's park gesture: select the tile, then activate it again. */
+/** Issue #93's park: one tap on a revealed free tile is the whole gesture. */
 function park(game: Game, id: TileId, atMs: number): void {
-  game.tap(free(id), atMs);
+  reveal(game, id, atMs);
   game.tap(free(id), atMs + 1);
 }
 
@@ -72,15 +72,11 @@ function reveal(game: Game, id: TileId, nowMs: number): void {
   if (game.isFaceHidden(id)) game.tap(free(id), nowMs);
 }
 
-/** Tap a tile wherever it is: on the board, or in the holder (issue #43). */
+/** Tap a tile wherever it is. A held tile is a no-op (issue #93: a held tile
+ *  is not tappable — its partner's board tap is what clears the pair). */
 function tapAnywhere(game: Game, id: TileId, nowMs: number): void {
-  if (game.board.isHeld(id)) {
-    game.tapHeld(id, nowMs);
-    return;
-  }
-  // The reveal itself can complete the pair (issue #77 auto-match) — the
-  // follow-up tap would then land on a removed tile.
-  if (game.isFaceHidden(id) && game.tap(free(id), nowMs).kind === 'matched') return;
+  if (game.board.isHeld(id) || game.board.get(id).removed) return;
+  reveal(game, id, nowMs);
   game.tap(free(id), nowMs);
 }
 
@@ -134,11 +130,11 @@ test('issue #43: save/restore at every move index of a level played with holds',
     const move = level.solution[index];
     if (!move) break;
     const t = index * 4;
-    // Park a free tile every third move, so a force-quit lands on a mid-hold
-    // state. Issue #62's park is two taps on the same tile — and the first of
-    // them clears the pair outright if the face is already in the holder, which
-    // is exactly how slots come free again.
-    if (index % 3 === 0 && !game.holderFull) {
+    // Park an extra free tile every third move, so a force-quit lands on a
+    // mid-hold state. Since issue #93 every pair transits the holder too, so
+    // the backlog is capped: the transit park needs a slot of its own, and a
+    // backlog of three would make it the fatal fourth (decision 0009).
+    if (index % 3 === 0 && game.holderVacancies >= 3) {
       const parkedFaces = new Set(
         game
           .holderSlots()
@@ -150,19 +146,16 @@ test('issue #43: save/restore at every move index of a level played with holds',
         .find((id) => copiesInPlay(game, id) === 2 && !parkedFaces.has(game.board.get(id).face));
       if (target !== undefined) {
         reveal(game, target, t);
-        game.tap(free(target), t);
         if (game.tap(free(target), t + 1).kind === 'held') holds++;
       }
     }
-    // A fresh selection, so the pair below is not read as a mismatch.
-    game.tap({ kind: 'miss' }, t + 2);
     tapAnywhere(game, move[0], t + 2);
-    // One tap did both when the partner was parked (issue #62 rule 2).
+    // The first tap did both when the partner was parked (issue #93).
     if (!game.board.get(move[1]).removed) tapAnywhere(game, move[1], t + 3);
   }
   assert.equal(game.tilesLeft, 0, 'the sample level was played to completion');
-  assert.ok(holds > 4, `the sweep should exercise the holder (${holds} holds)`);
-  assert.equal(game.holdsUsed, holds);
+  assert.ok(holds > 4, `the sweep should park extra singletons (${holds} parks)`);
+  assert.ok(game.holdsUsed > holds, 'every pair transits the holder too (issue #93)');
 });
 
 test('a resumed game keeps playing identically to one that never quit', () => {
@@ -207,19 +200,22 @@ test('reopen with a conceal bucket re-derives that band’s concealment (issue #
   assert.notEqual(plain, null);
 });
 
-test('resume restores a live selection, and the undo stack behind it', () => {
+test('resume restores a mid-pair holder, and the undo stack behind it', () => {
   const level = generateValidatedLevel(TURTLE, SAMPLE_SEED);
   const game = new Game(level);
   for (const [a, b] of level.solution.slice(0, 5)) {
+    reveal(game, a, 0);
     game.tap(free(a), 0);
+    reveal(game, b, 0);
     game.tap(free(b), 0);
   }
-  game.tap(free(level.solution[5]![0]), 0); // first tap of a pair: selection live
-  assert.notEqual(game.selection, null);
+  reveal(game, level.solution[5]![0], 0);
+  game.tap(free(level.solution[5]![0]), 0); // first half of a pair: parked
+  assert.notEqual(game.holderSlots()[0], null);
 
   const resumed = forceQuit(game)!;
-  assert.equal(resumed.selection, game.selection);
-  assert.equal(resumed.undoDepth, 5);
+  assert.deepEqual(resumed.holderSlots(), game.holderSlots());
+  assert.equal(resumed.undoDepth, game.undoDepth);
   // Unlimited undo depth (spec §5) survives the quit, all the way back.
   while (resumed.undo());
   assert.equal(resumed.tilesLeft, level.tiles.length);
@@ -276,7 +272,7 @@ function heldSave(): SaveState {
   const game = new Game(generateValidatedLevel(TURTLE, SAMPLE_SEED));
   const [a, b] = game.level.solution[0]!;
   park(game, a, 100); // park half of the first pair…
-  game.tap(free(b), 120); // …and clear it from the board in one tap (issue #62)
+  game.tap(free(b), 120); // …and clear it in the holder with one tap (issue #93)
   const parked = game.level.solution[1]![0];
   park(game, parked, 140); // leave a second tile in the holder
   return captureSave(game, { shuffles: 0, elapsedMs: 1000 });
@@ -301,6 +297,9 @@ const holderOf = (save: Record<string, unknown>): (number | null)[] =>
   snap(save)['holder'] as (number | null)[];
 const movesOf = (save: Record<string, unknown>): Record<string, unknown>[] =>
   stack(save)['moves'] as Record<string, unknown>[];
+/** The match moves only — every pair is a hold + a match since issue #93. */
+const matchesOf = (save: Record<string, unknown>): Record<string, unknown>[] =>
+  movesOf(save).filter((m) => m['kind'] === 'match');
 
 test('a well-formed save parses; an absent one is simply absent', () => {
   assert.notEqual(parseSave(JSON.parse(JSON.stringify(sampleSave()))), null);
@@ -313,6 +312,7 @@ test('parseSave rejects every malformed record instead of trusting it', () => {
     // A v1 record is a *shape* this build cannot vouch for (no holder, no move
     // kinds), so it reads as absent and the player gets a fresh deal (#43).
     'a stale version': (s) => void (s['version'] = 1),
+    'a pre-#93 v3 record': (s) => void (s['version'] = 3),
     'a version from the future': (s) => void (s['version'] = 99),
     'missing layoutId': (s) => void delete s['layoutId'],
     'non-integer seed': (s) => void (s['seed'] = 1.5),
@@ -325,9 +325,9 @@ test('parseSave rejects every malformed record instead of trusting it', () => {
     'duplicate removal': (s) => void (snap(s)['removed'] = [4, 4, 5, 6, 7, 8]),
     'unsorted removals': (s) => void (snap(s)['removed'] = (snap(s)['removed'] as number[]).reverse()),
     'removals without moves': (s) => void (stack(s)['moves'] = []),
-    'move outside the removals': (s) => void ((stack(s)['moves'] as Record<string, unknown>[])[0]!['a'] = 999),
+    'move outside the removals': (s) => void (matchesOf(s)[0]!['a'] = 999),
     'self-matching move': (s) => {
-      const move = (stack(s)['moves'] as Record<string, unknown>[])[0]!;
+      const move = matchesOf(s)[0]!;
       move['b'] = move['a'];
     },
     'backwards timestamps': (s) => {
@@ -340,7 +340,7 @@ test('parseSave rejects every malformed record instead of trusting it', () => {
     // hashes identically to an honest game, then throws out of Board.restore
     // several undos later.
     'a tile claimed by two moves': (s) => {
-      const moves = stack(s)['moves'] as Record<string, unknown>[];
+      const moves = matchesOf(s);
       moves[1]!['a'] = moves[0]!['a'];
     },
     'a removal no move accounts for': (s) => {
@@ -414,10 +414,10 @@ test('issue #63: a v2 record is refused outright, `unhold` and all', () => {
   // answer: a v2 record reads as absent and the player gets a fresh deal.
   const v2 = JSON.parse(JSON.stringify(sampleSave())) as Record<string, unknown>;
   v2['version'] = 2;
-  assert.equal(parseSave(v2), null, 'a v2 record is not a v3 record');
+  assert.equal(parseSave(v2), null, 'a v2 record is not a current record');
 
-  // …and the move-kind check behind it, in case a record ever claims v3 while
-  // carrying the old shape.
+  // …and the move-kind check behind it, in case a record ever claims the
+  // current version while carrying the old shape.
   const forged = JSON.parse(JSON.stringify(heldSave())) as Record<string, unknown>;
   const hold = movesOf(forged).find((m) => m['kind'] === 'hold');
   assert.notEqual(hold, undefined, 'the base save has a hold to re-label');
@@ -452,7 +452,6 @@ test('a short holder array is padded, not honoured as a smaller holder', () => {
     const target = resumed.board
       .freeTileIds()
       .find((id) => !parkedFaces.has(resumed.board.get(id).face))!;
-    resumed.tap(free(target), (t += 10));
     assert.equal(resumed.tap(free(target), (t += 10)).kind, 'held', `slot ${i + 1}`);
   }
   assert.equal(resumed.holderFull, true);

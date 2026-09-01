@@ -1,33 +1,34 @@
-// Match feedback timeline (issue #44). Pure arithmetic: every value the match
-// and mismatch animations need, as a function of elapsed milliseconds. No Pixi,
-// no DOM, no clock — effects.ts supplies the time and writes the result onto
-// display objects, which keeps the part worth testing testable headlessly
-// (same split as geometry.ts / depth.ts).
+// Feedback timelines. Pure arithmetic: every value the board and tray effects
+// need, as a function of elapsed milliseconds. No Pixi, no DOM, no clock —
+// effects.ts / tray-fx.ts supply the time and write the result onto display
+// objects, which keeps the part worth testing testable headlessly (same split
+// as geometry.ts / depth.ts).
 //
-// The budget is the design constraint: the ticket allows 400ms end to end, so
-// a fast player is never throttled. 200ms of travel plus 120ms of fade leaves
-// 80ms of headroom, and the particle burst is sized to finish inside the fade
-// rather than extending the sequence.
+// Issue #93 moved the match to the tray: a tapped tile flies to the holder
+// strip, and a completed pair dwells side by side there before clearing with a
+// score popup and a particle burst. The budget stays the issue #44 constraint —
+// travel short enough that a fast player is never throttled — and the burst is
+// sized to finish inside the clear rather than extending the sequence.
 
-/** Travel time from a tile's own centre to the pair's midpoint. */
-export const TRAVEL_MS = 200;
-/** Scale-and-fade out after the collision. */
-export const FADE_MS = 120;
-/** Reduced motion: no travel at all, just a cross-fade of the same two tiles. */
-export const CROSSFADE_MS = 160;
-/** Mismatch shake, matched to the existing red-outline flash in main.ts. */
+/** Travel time from a tile's board position to its holder slot (issue #93). */
+export const TRAY_FLY_MS = 220;
+/** How long a completed pair is shown side by side in the tray. */
+export const PAIR_SHOW_MS = 180;
+/** Scale-and-fade out of the shown pair. */
+export const PAIR_CLEAR_MS = 150;
+/** Rise-and-fade of the +score popup anchored at the tray. */
+export const SCORE_POP_MS = 650;
+/** Blocked-tap shake, matched to the red-outline flash in main.ts. */
 export const SHAKE_MS = 250;
 /** Reveal / re-conceal flip (issue #64). Short enough that peeking around the
  *  board never feels throttled — the peek itself is free and unlimited. */
 export const FLIP_MS = 160;
-/** Impact particles. Sized to end with the fade, not after it. */
-export const PARTICLE_MS = FADE_MS;
+/** Scale the shown pair shrinks to as it clears out of the tray. */
+export const END_SCALE = 0.7;
+/** Pair-clear particles. Sized to end with the clear, not after it. */
+export const PARTICLE_MS = PAIR_CLEAR_MS;
 export const PARTICLE_COUNT = 8;
 
-/** Scale at the moment of impact — a punch, not a pop. */
-export const PUNCH_PEAK = 1.18;
-/** Scale the tile shrinks to as it fades out. */
-export const END_SCALE = 0.7;
 /** Peak shake displacement in board px, at the first swing. */
 export const SHAKE_AMPLITUDE = 3;
 /** Full oscillations across SHAKE_MS. */
@@ -38,16 +39,6 @@ export interface Point {
   readonly y: number;
 }
 
-/** One flying tile at one instant: centre, scale, opacity, white-flash strength. */
-export interface TileFrame {
-  readonly cx: number;
-  readonly cy: number;
-  readonly scale: number;
-  readonly alpha: number;
-  /** 0 = the tile's own colours, 1 = fully whited out. */
-  readonly flash: number;
-}
-
 export interface Particle {
   readonly angle: number;
   /** Board px travelled by the time the burst ends. */
@@ -56,7 +47,7 @@ export interface Particle {
 }
 
 export interface ParticleFrame {
-  /** Offset from the impact point, board px. */
+  /** Offset from the burst centre, px. */
   readonly x: number;
   readonly y: number;
   readonly alpha: number;
@@ -64,60 +55,10 @@ export interface ParticleFrame {
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
-/** Cubic ease-in: the tiles accelerate into the hit instead of coasting. */
-export function easeIn(u: number): number {
-  const c = clamp01(u);
-  return c * c * c;
-}
-
 /** Cubic ease-out — particles leave fast and settle. */
 export function easeOut(u: number): number {
   const c = 1 - clamp01(u);
   return 1 - c * c * c;
-}
-
-/** When the collision lands. Reduced motion has no travel, so it lands at once. */
-export function impactAt(reduced: boolean): number {
-  return reduced ? 0 : TRAVEL_MS;
-}
-
-/** Total length of the sequence, impact included. */
-export function matchDuration(reduced: boolean): number {
-  return reduced ? CROSSFADE_MS : TRAVEL_MS + FADE_MS;
-}
-
-/**
- * One flying tile at `tMs`.
- *
- * `from` is the tile's own centre, `to` the midpoint of the pair — both in
- * board px. Reduced motion pins the position and scale and moves only opacity
- * and flash, which is the ticket's "plain cross-fade, keeping the flash".
- */
-export function matchFrame(from: Point, to: Point, tMs: number, reduced: boolean): TileFrame {
-  if (reduced) {
-    const u = clamp01(tMs / CROSSFADE_MS);
-    return { cx: from.x, cy: from.y, scale: 1, alpha: 1 - u, flash: 1 - u };
-  }
-  if (tMs < TRAVEL_MS) {
-    const u = easeIn(tMs / TRAVEL_MS);
-    return {
-      cx: from.x + (to.x - from.x) * u,
-      cy: from.y + (to.y - from.y) * u,
-      scale: 1,
-      alpha: 1,
-      // A little pre-flash on the last stretch, so the hit is not the first
-      // frame anything happens.
-      flash: u * 0.35,
-    };
-  }
-  const f = clamp01((tMs - TRAVEL_MS) / FADE_MS);
-  return {
-    cx: to.x,
-    cy: to.y,
-    scale: PUNCH_PEAK + (END_SCALE - PUNCH_PEAK) * f,
-    alpha: 1 - f,
-    flash: 1 - f,
-  };
 }
 
 /**
@@ -134,7 +75,7 @@ export function flipScaleX(tMs: number): number {
 }
 
 /**
- * Mismatch shake: a damped sine, in board px along x. Exactly zero at both
+ * Blocked-tap shake: a damped sine, in board px along x. Exactly zero at both
  * ends so a tile is never left off its slot, whatever frame the effect ends on.
  */
 export function shakeOffset(tMs: number): number {
@@ -144,7 +85,7 @@ export function shakeOffset(tMs: number): number {
 }
 
 /**
- * The impact burst, seeded so a given match always throws the same sparks —
+ * The pair-clear burst, seeded so a given match always throws the same sparks —
  * a test can assert the spread, and a replay looks the same twice.
  *
  * Particles are spaced evenly around the circle and then jittered, so the
@@ -166,7 +107,7 @@ export function particleBurst(seed: number): readonly Particle[] {
   }));
 }
 
-/** One particle's offset from the impact point, and its opacity. */
+/** One particle's offset from the burst centre, and its opacity. */
 export function particleFrame(p: Particle, tMs: number): ParticleFrame {
   const u = clamp01(tMs / PARTICLE_MS);
   const d = p.distance * easeOut(u);
