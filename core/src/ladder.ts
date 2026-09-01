@@ -7,15 +7,16 @@
 //
 // Bands are score windows over `difficultyScore`, not the provisional global
 // buckets in difficulty.ts: every shipped layout is a full 144-tile set, and
-// the size-dominant score puts all of them in [0.526, 0.72] (40-seed sweep per
-// layout, 2026-08-31), so the global easy/medium cuts are unreachable here.
-// The window cuts below are drawn from that sweep. Medium-plus is decision
-// 0011's "upper half of the Medium score range": the medium window is
-// [0.555, 0.650) and its midpoint 0.6025 splits base medium (below) from
-// medium-plus (at or above). Windows are disjoint and ordered, so the ladder
-// ordering criterion — a spike never scores below its decade's base levels,
-// no medium-plus level below the medium median — holds by construction and is
-// asserted directly by core/test/ladder.test.ts, the permanent release gate.
+// the size-dominant score puts all of them in [0.576, 0.78] (40-seed sweep per
+// layout, 2026-09-01, on the issue #99 compact portrait geometry — the deeper
+// stacks raised the whole range, so the windows were redrawn from that sweep
+// by decision 0011's own construction). Medium-plus is decision 0011's "upper
+// half of the Medium score range": the medium window is [0.592, 0.650) and
+// its midpoint 0.624 splits base medium (below) from medium-plus (at or
+// above). Windows are disjoint and ordered, so the ladder ordering criterion
+// — a spike never scores below its decade's base levels, no medium-plus level
+// below the medium median — holds by construction and is asserted directly by
+// core/test/ladder.test.ts, the permanent release gate.
 //
 // Full holder-aware calibration (decisions 0008/0009) and concealment
 // re-balance (decision 0010) are deferred; see issue #18.
@@ -28,11 +29,37 @@ export type LadderBand = 'easy' | 'medium' | 'medium-plus' | 'hard';
 
 /** Score windows per band: min inclusive, max exclusive. */
 export const LADDER_WINDOWS: Record<LadderBand, { readonly min: number; readonly max: number }> = {
-  easy: { min: 0, max: 0.555 },
-  medium: { min: 0.555, max: 0.6025 },
-  'medium-plus': { min: 0.6025, max: 0.65 },
+  easy: { min: 0, max: 0.592 },
+  medium: { min: 0.592, max: 0.624 },
+  'medium-plus': { min: 0.624, max: 0.65 },
   hard: { min: 0.65, max: 0.8 },
 };
+
+/**
+ * Layout pools per band (issue #99): the layouts a band's levels draw from —
+ * both in the shipped ladder (build-ladder searches only the level's pool)
+ * and in play (New game deals the next layout from the current band's pool
+ * with a fresh seed; see decision 0015). Assignment follows the 40-seed
+ * sweep: the loosest, shallowest silhouettes serve easy, the densest stacks
+ * serve the hard spikes.
+ */
+export const LADDER_POOLS: Record<LadderBand, readonly string[]> = {
+  easy: ['butterfly', 'windmill'],
+  medium: ['spider', 'cat', 'turtle_classic'],
+  'medium-plus': ['pyramid', 'terrace'],
+  hard: ['fortress', 'moon_gate', 'bridge'],
+};
+
+/**
+ * The layout New game deals next (issue #99): the entry after `currentId` in
+ * the band's pool, wrapping around. A current layout from outside the pool
+ * (an older save) starts the rotation at the pool's first entry.
+ */
+export function nextPoolLayout(band: LadderBand, currentId: string): string {
+  const pool = LADDER_POOLS[band];
+  const index = pool.indexOf(currentId);
+  return pool[(index + 1) % pool.length]!;
+}
 
 export interface LadderPosition {
   readonly band: LadderBand;

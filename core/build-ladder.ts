@@ -14,7 +14,7 @@ import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 
 import { assessDifficulty } from './src/difficulty.js';
 import { generateValidatedLevel } from './src/generator.js';
-import { bandForLevel, LADDER_LENGTH, LADDER_WINDOWS } from './src/ladder.js';
+import { bandForLevel, LADDER_LENGTH, LADDER_POOLS, LADDER_WINDOWS } from './src/ladder.js';
 import type { LadderEntry } from './src/ladder.js';
 import { parseLayout } from './src/layouts.js';
 import type { LayoutFile } from './src/layouts.js';
@@ -37,15 +37,17 @@ interface BuiltLevel extends LadderEntry {
 }
 
 /**
- * Find a (layout, seed) whose score fits the level's window. Layout rotation
- * starts at a level-dependent offset so consecutive levels vary visually even
- * when several layouts can serve the same band.
+ * Find a (layout, seed) whose score fits the level's window, searching only
+ * the band's own pool (issue #99: New game rotates within the pool, so the
+ * ladder's pinned layout must come from it too). Rotation starts at a
+ * level-dependent offset so consecutive levels vary visually.
  */
 function buildLevel(level: number): BuiltLevel {
   const { band, spike } = bandForLevel(level);
   const window = LADDER_WINDOWS[band];
-  for (let l = 0; l < layouts.length; l++) {
-    const layout = layouts[(level + l) % layouts.length]!;
+  const pool = layouts.filter((l) => LADDER_POOLS[band].includes(l.id));
+  for (let l = 0; l < pool.length; l++) {
+    const layout = pool[(level + l) % pool.length]!;
     for (let s = 0; s < SEEDS_PER_LAYOUT; s++) {
       const seed = level * 100_000 + s;
       const generated = generateValidatedLevel(layout, seed);

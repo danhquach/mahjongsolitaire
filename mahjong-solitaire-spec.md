@@ -160,7 +160,7 @@ Naïve random dealing produces unsolvable boards. Use **reverse construction**:
 - Bucket into Easy / Medium / Hard / Expert. The v1 ladder is a **plateau ladder** (decision 0011): 150 levels in three flat bands — 1–20 Easy, 21–60 Medium, 61–150 Medium+ (upper half of the Medium score range) — with every 10th level spiking one band up (Medium in the Easy band, Hard elsewhere). No rising curve and no separate relief levels: the nine base levels of each decade are the relief. Expert does not ship in v1.
 - The scorer's v1 obligation is **ordering, not bucket accuracy**: no misordered pair among the bands in use (a spike never scores below its decade's base levels; no Medium+ level below the Medium median). Full holder-aware calibration (decisions 0008/0009) and concealment re-balance (decision 0010) are deferred to a follow-up ticket, required only if the ladder grows past the plateaus.
 
-**Layouts:** Turtle, Pyramid, Fortress, Spider, Butterfly, Cat, Bridge, plus original layouts. Layouts are data files (JSON), not code.
+**Layouts:** Turtle, Pyramid, Fortress, Spider, Butterfly, Cat, Bridge, plus original layouts. Layouts are data files (JSON), not code. *(Reworked by issue #99 / decision 0015)*: every layout uses a **compact portrait profile** — at most 9 tile columns wide, up to 10 rows tall, 4–5 layers deep — so tiles stay legible on a phone. Each ladder band owns a layout pool (`LADDER_POOLS`), the shipped ladder pins layouts from the level's own pool, and **New game deals the next layout from the current band's pool** with a fresh seed (amending decision 0014); Restart replays the deal on the table, and "Next level" deals the ladder's pinned `(layoutId, seed)`.
 
 ---
 

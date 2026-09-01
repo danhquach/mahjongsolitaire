@@ -34,6 +34,7 @@ import {
   HOLDER_SLOTS,
   bandForLevel,
   concealBucketForBand,
+  nextPoolLayout,
   concealedTileIds,
   generateValidatedLevel,
   parseLadder,
@@ -982,26 +983,33 @@ async function start(): Promise<void> {
    *
    *   * `replay` (Restart): the deal being played, seed and all — a re-rolled
    *     deal restarts as itself, not as the ladder's;
-   *   * `reroll` (New game): a fresh seed for the same level, so the button
-   *     visibly re-deals instead of silently doing nothing (issue #94 — the
-   *     ladder's fixed seed made New game and Restart the same deal);
-   *   * `ladder` (Next level / Play again after a win): the ladder's own seed
-   *     for the level the win advanced to — level variety still comes from
-   *     the ladder, re-rolling is for the level you are on.
+   *   * `reroll` (New game): the next layout from the current band's pool
+   *     with a fresh seed (issue #99, amending decision 0014's same-layout
+   *     re-roll) — the button visibly re-deals a fresh arrangement;
+   *   * `ladder` (Next level / Play again after a win): the ladder's own
+   *     pinned (layoutId, seed) for the level the win advanced to — level
+   *     variety still comes from the ladder.
    *
-   * When the level's layout differs from the loaded one (a win advanced the
-   * ladder), it is fetched and the renderer re-pointed first.
+   * When the wanted layout differs from the loaded one (a win advanced the
+   * ladder, or the pool rotated), it is fetched and the renderer re-pointed
+   * first. `replay` keeps the layout on the table, rotated or not.
    */
   async function startLevel(mode: 'replay' | 'reroll' | 'ladder'): Promise<void> {
     if (dealing) return;
     const next = ladder[progress.level - 1]!;
-    if (next.layoutId !== layout.id) {
+    const wantedLayoutId =
+      mode === 'ladder'
+        ? next.layoutId
+        : mode === 'reroll'
+          ? nextPoolLayout(bandForLevel(progress.level).band, layout.id)
+          : layout.id;
+    if (wantedLayoutId !== layout.id) {
       // The fetch yields the event loop: block input until the new deal is in,
       // or a tap lands on the outgoing board and mutates a game about to be
       // discarded (its save clobbered by the new deal's).
       dealing = true;
       try {
-        layout = await fetchLayout(next.layoutId);
+        layout = await fetchLayout(wantedLayoutId);
       } catch {
         // Offline mid-session: keep the loaded board rather than a blank one.
         announcer.say('Could not load the next level. Check your connection and try again.');

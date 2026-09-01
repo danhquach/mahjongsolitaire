@@ -53,9 +53,15 @@ const url = `http://127.0.0.1:${server.address().port}/`;
 // `hud` / `minTileW` / `minCoverage` are the issue #37 expectations: which edge
 // the measured fit rule must pick, and the board size that choice has to buy.
 // Floors sit ~1px / ~0.02 below the values measured in Chromium on the shipped
-// Turtle layout, so a placement regression fails loudly while antialiasing and
+// layouts, so a placement regression fails loudly while antialiasing and
 // font-metric drift do not. Every viewport here is the transpose of another, so
 // the rotation check below can look its target's expectations up in this table.
+//
+// Re-measured for issue #99 (compact portrait boards + the reserved booster
+// band): portrait tiles grew 23→39.9px on the phone — the ticket's whole point
+// — while landscape shrank (a portrait board letterboxes there; PM-accepted
+// trade), and tablet landscape now picks the side HUD (the tall board buys
+// more from width than from the top edge).
 const VIEWPORTS = [
   { name: 'phone portrait', width: 390, height: 844, dpr: 3 },
   { name: 'phone landscape', width: 844, height: 390, dpr: 3 },
@@ -64,13 +70,12 @@ const VIEWPORTS = [
 ].map((vp) => ({
   ...vp,
   ...{
-    '390x844': { hud: 'top', minTileW: 23, minCoverage: 0.29 },
-    '844x390': { hud: 'side', minTileW: 34, minCoverage: 0.64 },
-    '810x1080': { hud: 'top', minTileW: 51, minCoverage: 0.5 },
-    // Lowered for issue #43 (the holder strip takes its height out of the fit)
-    // and again for issue #66 (slots grew to full tile size — the accepted
-    // trade: measured 59.95px here, floor ~1px below).
-    '1080x810': { hud: 'top', minTileW: 59, minCoverage: 0.79 },
+    '390x844': { hud: 'top', minTileW: 38, minCoverage: 0.81 },
+    '844x390': { hud: 'side', minTileW: 26, minCoverage: 0.37 },
+    // The floor covers every pool layout the session may have on the table
+    // when it rotates in (board aspect now varies per deal — issue #99).
+    '810x1080': { hud: 'top', minTileW: 60, minCoverage: 0.63 },
+    '1080x810': { hud: 'side', minTileW: 58, minCoverage: 0.61 },
   }[`${vp.width}x${vp.height}`],
 }));
 
@@ -124,7 +129,7 @@ let failures = 0;
  * budget is sized to close it rather than left where it was. Deals are played
  * in-page with no round trips, so this costs wall-clock, not flakiness.
  */
-function huntDeadlock(maxDeals) {
+async function huntDeadlock(maxDeals) {
   const slice = window.__slice;
   // Board tiles carry data-tile-id in #a11y-layer. Held tiles are not
   // activatable any more (issue #93): a pair with one half in the holder is
@@ -147,6 +152,9 @@ function huntDeadlock(maxDeals) {
   };
   for (let deal = 0; deal < maxDeals; deal++) {
     document.getElementById('btn-new').click();
+    // Issue #99: New game rotates the layout, so the deal is async while the
+    // file fetches; input is dropped until it lands, so wait it out.
+    while (slice.dealing) await new Promise((r) => setTimeout(r, 10));
     for (let move = 0; slice.game.status() === 'playing' && move < 400; move++) {
       const held = new Set(slice.holder().slots.filter((id) => id !== null));
       const heldFaces = new Set([...held].map((id) => slice.game.board.get(id).face));
@@ -403,11 +411,33 @@ for (const vp of VIEWPORTS) {
   await page.goto(url);
   await page.waitForFunction(() => window.__slice !== undefined);
 
-  // Page coordinates of a tile's top-face center, via the app's own geometry.
+  // Page coordinates of a *visible* point on a tile's top face, via the app's
+  // own geometry. The center alone is not enough since issue #99: a stack 3+
+  // layers taller one column over projects across a neighbour's center, so
+  // the point is sampled the way a player aims — at a spot of the face no
+  // higher tile draws over.
   const tileCenter = (id) =>
     page.evaluate((tileId) => {
-      const r = window.__slice.tileCssRect(tileId);
+      const slice = window.__slice;
+      const r = slice.tileCssRect(tileId);
       const c = document.querySelector('#board canvas').getBoundingClientRect();
+      const z = slice.game.board.get(tileId).slot.z;
+      const higher = slice.game.board
+        .presentTiles()
+        .filter((t) => t.slot.z > z)
+        .map((t) => slice.tileCssRect(t.id));
+      const clear = (x, y) =>
+        !higher.some((h) => x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h);
+      // Sample a grid over the face, center first, and take the first clear
+      // spot; fall back to the center if the face is fully drawn over.
+      const fractions = [0.5, 0.3, 0.7, 0.15, 0.85, 0.05];
+      for (const fy of fractions) {
+        for (const fx of fractions) {
+          const x = r.x + r.w * fx;
+          const y = r.y + r.h * fy;
+          if (clear(x, y)) return { x: c.x + x, y: c.y + y };
+        }
+      }
       return { x: c.x + r.x + r.w / 2, y: c.y + r.y + r.h / 2 };
     }, id);
 
@@ -629,22 +659,35 @@ for (const vp of VIEWPORTS) {
 
     // Back to a clean deal so the playthrough below starts where it expects.
     await page.click('#btn-new');
-    await page.waitForFunction(() => !window.__slice.animating());
+    await page.waitForFunction(() => !window.__slice.dealing && !window.__slice.animating());
   }
 
   // 2. Mis-tap forgiveness: tap 6 CSS px outside a free tile's edge → selected.
   {
     const probe = await page.evaluate(() => {
-      const { game } = window.__slice;
-      // The leftmost free tile (the turtle's left wing) has open space to its left.
-      const t = game
-        .hitCandidates()
-        .filter((c) => c.free)
-        .sort((a, b) => a.slot.x - b.slot.x)[0];
-      const r = window.__slice.tileCssRect(t.id);
+      const slice = window.__slice;
+      const { game } = slice;
       const c = document.querySelector('#board canvas').getBoundingClientRect();
-      return { id: t.id, x: c.x + r.x - 6, y: c.y + r.y + r.h / 2 };
+      const rects = game.board.presentTiles().map((t) => slice.tileCssRect(t.id));
+      const inAny = (x, y) =>
+        rects.some((h) => x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h);
+      // A free tile with truly open space just left of its drawn edge — since
+      // issue #99 the taller stacks project over board-x neighbours, so the
+      // probe point is checked against every drawn face, not inferred from
+      // slot coordinates.
+      const candidates = game
+        .hitCandidates()
+        .filter((x) => x.free)
+        .map((x) => ({ id: x.id, r: slice.tileCssRect(x.id) }))
+        .sort((a, b) => a.r.x - b.r.x);
+      for (const { id, r } of candidates) {
+        const x = r.x - 6;
+        const y = r.y + r.h / 2;
+        if (!inAny(x, y)) return { id, x: c.x + x, y: c.y + y };
+      }
+      return null;
     });
+    check(probe !== null, 'FORGIVENESS PROBE setup (want an open left edge)', probe);
     // Issue #64: peek a face-down leftmost tile first, so the edge tap acts.
     if (await page.evaluate((i) => window.__slice.game.isFaceHidden(i), probe.id)) {
       const cc = await tileCenter(probe.id);
@@ -706,9 +749,10 @@ for (const vp of VIEWPORTS) {
     console.log(`${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: pressed states`);
   }
 
-  // 2a. New game vs Restart (issue #94): New game re-rolls a fresh deal for
-  //     the same level; Restart replays the deal being played — including a
-  //     re-rolled one — and the re-roll survives a force-quit.
+  // 2a. New game vs Restart (issue #94, amended by issue #99): New game deals
+  //     the next layout from the band's pool with a fresh seed; Restart
+  //     replays the deal being played — including a rotated one — and the
+  //     rotation survives a force-quit.
   {
     const before = failures;
     const state = () =>
@@ -733,9 +777,16 @@ for (const vp of VIEWPORTS) {
       changed: rerolled.sig !== dealt.sig,
     });
     check(
-      rerolled.level === dealt.level && rerolled.layoutId === dealt.layoutId,
-      'on the same ladder level and layout',
+      rerolled.level === dealt.level,
+      'on the same ladder level',
       rerolled,
+    );
+    // Issue #99: New game deals the next layout from the band's pool, and
+    // every pool holds at least two layouts, so the layout always changes.
+    check(
+      rerolled.layoutId !== dealt.layoutId,
+      'New game rotates to the next layout in the band pool (issue #99)',
+      { was: dealt.layoutId, now: rerolled.layoutId },
     );
 
     await page.click('#btn-restart');
@@ -932,7 +983,9 @@ for (const vp of VIEWPORTS) {
     // A fresh deal for the end-to-end play-through below. Through the app's own
     // control, not localStorage + reload: the unload handler writes the save on
     // the way out, so a cleared slot would be refilled before the next boot.
+    // Issue #99 makes the deal async (the rotated layout fetches), so wait.
     await page.click('#btn-new');
+    await page.waitForFunction(() => !window.__slice.dealing);
   }
 
   // 2c. The one-way holder and its loss (issue #63 / decision 0009): park until
@@ -975,8 +1028,13 @@ for (const vp of VIEWPORTS) {
           document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.getAttribute('aria-label'),
         target,
       );
-      const c = await tileCenter(target);
-      await page.mouse.click(c.x, c.y);
+      // Activate through the a11y node: the pointer path is already proven by
+      // the first park above, and the #99 stacks overhang enough that a canvas
+      // click at a tile's centre can land on a taller neighbour.
+      await page.evaluate(
+        (id) => document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.click(),
+        target,
+      );
       return { target, label };
     };
 
@@ -1096,6 +1154,7 @@ for (const vp of VIEWPORTS) {
       `${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: one-way holder, loss, resume, restart`,
     );
     await page.click('#btn-new');
+    await page.waitForFunction(() => !window.__slice.dealing);
   }
 
   // 3. Play the generator's solution witness end-to-end with real taps.
@@ -1135,7 +1194,9 @@ for (const vp of VIEWPORTS) {
     // level's layout is fetched before the dialog closes, so wait it out.
     await page.click('#overlay-new');
     await page.waitForFunction(
-      () => !document.getElementById('overlay').classList.contains('visible'),
+      () =>
+        !document.getElementById('overlay').classList.contains('visible') &&
+        !window.__slice.dealing,
     );
     const start = await page.evaluate(() => window.__slice.boosterCharges());
     check(
@@ -1379,6 +1440,21 @@ for (const vp of VIEWPORTS) {
         console.log(
           `${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: deadlock rescued by Shuffle (deal ${stuck.deal + 1}, ${stuck.tilesLeft} tiles left)`,
         );
+      } else if (/Board shuffled\./.test(rescued.said)) {
+        // Third honest outcome: the shuffle went through (solvable faces
+        // exist) but the deadlock is gesture-aware (issue #93) — with three
+        // tiles parked, a board pair cannot transit one vacancy, so the
+        // position stays stuck. The charge was spent on a real shuffle and
+        // the dialog stays up offering the next way out.
+        check(
+          rescued.charges.shuffle === stuck.charges.shuffle - 1,
+          'the still-stuck shuffle spent its charge',
+          { before: stuck.charges, after: rescued.charges },
+        );
+        check(rescued.overlayVisible, 'the dialog stays up on a still-stuck board', rescued);
+        console.log(
+          `${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: shuffle re-rolled a still-stuck position honestly (deal ${stuck.deal + 1}, ${stuck.tilesLeft} tiles left)`,
+        );
       } else {
         const refused = await page.evaluate(() => ({
           shuffleStillOffered: !document.getElementById('overlay-shuffle').hidden,
@@ -1618,6 +1694,7 @@ for (const vp of VIEWPORTS) {
     // Finishing a level must leave nothing to resume into. Dealt fresh, because
     // the shuffle above invalidated this deal's witness.
     await page.click('#btn-new');
+    await page.waitForFunction(() => !window.__slice.dealing);
     const won = await page.evaluate(() => {
       const s = window.__slice;
       const click = (id) => document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.click();

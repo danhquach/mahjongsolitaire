@@ -22,7 +22,9 @@ import {
   bandForLevel,
   concealBucketForBand,
   LADDER_LENGTH,
+  LADDER_POOLS,
   LADDER_WINDOWS,
+  nextPoolLayout,
   parseLadder,
 } from '../src/ladder.js';
 import { parseLayout } from '../src/layouts.js';
@@ -51,6 +53,52 @@ test('band windows are disjoint, ordered, and below the expert cut', () => {
     assert.equal(LADDER_WINDOWS[order[i - 1]!].max, LADDER_WINDOWS[order[i]!].min);
   }
   assert.ok(LADDER_WINDOWS.hard.max <= 0.8, 'expert does not ship in v1');
+});
+
+test('layout pools partition the 10 shipped layouts across the bands (issue #99)', () => {
+  const all = Object.values(LADDER_POOLS).flat();
+  assert.equal(all.length, new Set(all).size, 'no layout serves two bands');
+  assert.deepEqual(
+    [...all].sort(),
+    [
+      'bridge',
+      'butterfly',
+      'cat',
+      'fortress',
+      'moon_gate',
+      'pyramid',
+      'spider',
+      'terrace',
+      'turtle_classic',
+      'windmill',
+    ],
+    'every shipped layout is in exactly one pool',
+  );
+  for (const pool of Object.values(LADDER_POOLS)) {
+    assert.ok(pool.length >= 2, 'every pool can rotate: at least two layouts');
+  }
+});
+
+test('nextPoolLayout rotates the band pool and wraps (issue #99)', () => {
+  const pool = LADDER_POOLS.medium;
+  for (let i = 0; i < pool.length; i++) {
+    assert.equal(nextPoolLayout('medium', pool[i]!), pool[(i + 1) % pool.length]);
+  }
+  // A layout from outside the pool (an older save) restarts the rotation.
+  assert.equal(nextPoolLayout('medium', 'butterfly'), pool[0]);
+});
+
+test('every shipped ladder entry pins a layout from its own band pool (issue #99)', () => {
+  const ladder = parseLadder(
+    JSON.parse(readFileSync(new URL('../../../data/ladder.json', import.meta.url), 'utf8')),
+  );
+  for (const entry of ladder) {
+    const { band } = bandForLevel(entry.level);
+    assert.ok(
+      LADDER_POOLS[band].includes(entry.layoutId),
+      `level ${entry.level}: ${entry.layoutId} is not in the ${band} pool`,
+    );
+  }
 });
 
 test('concealment follows band: easy 0%, medium/medium-plus 8%, hard 15%', () => {

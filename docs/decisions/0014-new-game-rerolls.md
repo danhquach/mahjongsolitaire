@@ -33,3 +33,11 @@ Consequences:
   button players press casually) and removing the button (Restart alone cannot
   offer a fresh board). Reversal is cheap: the mode switch lives in one
   `startLevel(mode)` argument.
+
+## Follow-up (issue #99, 2026-09-01)
+
+Amended by decision 0015: New game now deals the **next layout from the
+current band's pool** with the fresh seed, instead of re-rolling the same
+layout. Everything else here stands — Restart replays the deal on the table
+(rotated or not), "Next level" deals the ladder's pinned `(layoutId, seed)`,
+and the save carries whatever was dealt.

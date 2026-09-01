@@ -6,6 +6,15 @@ commit and build time of the running bundle.
 
 ## 2026-09-01
 
+- All 10 board layouts reworked to a compact portrait shape — at most 9
+  tiles wide, stacked 4–5 layers deep — so tiles stay big and readable
+  on a phone. New game now deals the next layout from the current
+  difficulty band's pool with a fresh arrangement; Restart still replays
+  the board on the table. The 150-level ladder was rebuilt and
+  re-validated on the new shapes; in-flight saves from the old shapes
+  restart the level, progress kept. The booster buttons moved into their
+  own band beside the board — below it in portrait, to its right in
+  landscape — so no tile ever sits under them (#99).
 - Undo now returns the most recently parked tile from the holder to its
   spot on the board — matched pairs are permanent, and score and combo
   are untouched. With nothing parked, Undo costs nothing and says so;
