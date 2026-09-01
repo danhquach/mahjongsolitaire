@@ -196,10 +196,21 @@ async function start(): Promise<void> {
   boardDiv.insertBefore(app.canvas, a11yRoot);
 
   /** Deal the current ladder level on `layout` (which must already be its
-   *  layout). Concealment follows the ladder band (decision 0011). */
-  function dealCurrentLevel(): Game {
-    const level = generateValidatedLevel(layout, entry.seed);
+   *  layout), from `seed` — the ladder's fixed seed by default, or a re-rolled
+   *  one (issue #94). Concealment follows the ladder band (decision 0011). */
+  function dealCurrentLevel(seed: number): Game {
+    const level = generateValidatedLevel(layout, seed);
     return new Game(level, undefined, concealedTileIds(level, concealBucketFor(progress.level)));
+  }
+
+  /** A fresh seed for the same level (issue #94): New game must visibly
+   *  re-deal, so never the seed already on the table. Randomness is fine here
+   *  — determinism only matters *within* a deal, and the save carries whatever
+   *  seed was dealt. */
+  function rerollSeed(current: number): number {
+    let seed = current;
+    while (seed === current) seed = Math.floor(Math.random() * 0x100000000);
+    return seed;
   }
 
   // Spec §7: resume mid-level after a force-quit. A save that cannot be
@@ -208,19 +219,18 @@ async function start(): Promise<void> {
   // concealment band is re-derived from its (layoutId, seed); a save from
   // outside the ladder (an older build's random deal) falls back to the
   // difficulty-derived default, as before.
+  // A save's (layoutId, seed) normally names a ladder entry; a re-rolled deal
+  // (issue #94) does not, but it is always the *current* level's, so its band
+  // — and with it the concealment bucket — comes from the ladder position.
   const savedEntry = saved === null ? undefined : ladderEntryFor(saved.layoutId, saved.seed);
   const resumed =
     saved === null
       ? null
-      : reopen(
-          layout,
-          saved,
-          savedEntry === undefined ? undefined : concealBucketFor(savedEntry.level),
-        );
+      : reopen(layout, saved, concealBucketFor(savedEntry?.level ?? progress.level));
   // A failed resume can leave the save's layout loaded; the fresh deal is the
   // current ladder level's, so re-point at its layout first.
   if (resumed === null && layout.id !== entry.layoutId) layout = await fetchLayout(entry.layoutId);
-  let game = resumed ?? dealCurrentLevel();
+  let game = resumed ?? dealCurrentLevel(entry.seed);
 
   const renderer = new BoardRenderer(app, layout.slots);
   const announcer = new Announcer(el<HTMLElement>('a11y-status'));
@@ -952,13 +962,22 @@ async function start(): Promise<void> {
   }
 
   /**
-   * Deal the current ladder level (issue #79). Restart and New game are the
-   * same deal now: the ladder fixes each level's layout and seed, so variety
-   * comes from advancing, not re-rolling. When the level's layout differs
-   * from the loaded one (a win advanced the ladder), it is fetched and the
-   * renderer re-pointed first.
+   * Deal the current ladder level (issue #79, amended by issue #94). The three
+   * buttons now do three different things:
+   *
+   *   * `replay` (Restart): the deal being played, seed and all — a re-rolled
+   *     deal restarts as itself, not as the ladder's;
+   *   * `reroll` (New game): a fresh seed for the same level, so the button
+   *     visibly re-deals instead of silently doing nothing (issue #94 — the
+   *     ladder's fixed seed made New game and Restart the same deal);
+   *   * `ladder` (Next level / Play again after a win): the ladder's own seed
+   *     for the level the win advanced to — level variety still comes from
+   *     the ladder, re-rolling is for the level you are on.
+   *
+   * When the level's layout differs from the loaded one (a win advanced the
+   * ladder), it is fetched and the renderer re-pointed first.
    */
-  async function startLevel(): Promise<void> {
+  async function startLevel(mode: 'replay' | 'reroll' | 'ladder'): Promise<void> {
     if (dealing) return;
     const next = ladder[progress.level - 1]!;
     if (next.layoutId !== layout.id) {
@@ -979,7 +998,13 @@ async function start(): Promise<void> {
       if (applyHudPlacement()) app.resize();
     }
     entry = next;
-    game = dealCurrentLevel();
+    game = dealCurrentLevel(
+      mode === 'replay'
+        ? game.level.seed
+        : mode === 'reroll'
+          ? rerollSeed(game.level.seed)
+          : entry.seed,
+    );
     flash = [];
     flashToken++;
     animator.clear();
@@ -995,7 +1020,11 @@ async function start(): Promise<void> {
     // Hiding the dialog drops focus to <body>; put it back on the board. Only
     // when the dialog was the source — a header tap should keep its own focus.
     if (fromDialog) a11y.focusActive();
-    announcer.say(`New game dealt. Level ${progress.level}. ${game.tilesLeft} tiles.`);
+    announcer.say(
+      mode === 'replay'
+        ? `Level ${progress.level} restarted. ${game.tilesLeft} tiles.`
+        : `New game dealt. Level ${progress.level}. ${game.tilesLeft} tiles.`,
+    );
   }
 
   app.canvas.addEventListener('pointerdown', (ev) => {
@@ -1027,10 +1056,14 @@ async function start(): Promise<void> {
   boosterUi.shuffle.button.addEventListener('click', () => useBooster('shuffle'));
   overlayShuffle.addEventListener('click', () => useBooster('shuffle'));
   overlayUndo.addEventListener('click', () => useBooster('undo'));
-  el<HTMLButtonElement>('btn-new').addEventListener('click', () => void startLevel());
-  el<HTMLButtonElement>('btn-restart').addEventListener('click', () => void startLevel());
-  overlayNew.addEventListener('click', () => void startLevel());
-  overlayRestart.addEventListener('click', () => void startLevel());
+  el<HTMLButtonElement>('btn-new').addEventListener('click', () => void startLevel('reroll'));
+  el<HTMLButtonElement>('btn-restart').addEventListener('click', () => void startLevel('replay'));
+  // The dialog's primary is "Next level" after a win (the ladder's own deal)
+  // and "New game" everywhere else (a re-roll, issue #94).
+  overlayNew.addEventListener('click', () =>
+    void startLevel(game.status() === 'won' ? 'ladder' : 'reroll'),
+  );
+  overlayRestart.addEventListener('click', () => void startLevel('replay'));
 
   wireSettings();
   el<HTMLElement>('version').textContent = versionLabel(

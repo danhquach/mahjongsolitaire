@@ -664,6 +664,59 @@ for (const vp of VIEWPORTS) {
     await page.waitForFunction(() => !window.__slice.dealing);
   }
 
+  // 2a. New game vs Restart (issue #94): New game re-rolls a fresh deal for
+  //     the same level; Restart replays the deal being played — including a
+  //     re-rolled one — and the re-roll survives a force-quit.
+  {
+    const before = failures;
+    const state = () =>
+      page.evaluate(() => ({
+        sig: window.__slice.game.board
+          .presentTiles()
+          .map((t) => `${t.id}:${t.face}`)
+          .join(','),
+        seed: window.__slice.game.level.seed,
+        level: window.__slice.ladderLevel,
+        layoutId: window.__slice.layoutId,
+      }));
+    const dealt = await state();
+    await page.click('#btn-new');
+    await page.waitForFunction(() => !window.__slice.dealing);
+    const rerolled = await state();
+    check(rerolled.seed !== dealt.seed, 'New game re-rolls the seed (issue #94)', {
+      was: dealt.seed,
+      now: rerolled.seed,
+    });
+    check(rerolled.sig !== dealt.sig, 'and the arrangement visibly changes', {
+      changed: rerolled.sig !== dealt.sig,
+    });
+    check(
+      rerolled.level === dealt.level && rerolled.layoutId === dealt.layoutId,
+      'on the same ladder level and layout',
+      rerolled,
+    );
+
+    await page.click('#btn-restart');
+    await page.waitForFunction(() => !window.__slice.dealing);
+    const restarted = await state();
+    check(
+      restarted.seed === rerolled.seed && restarted.sig === rerolled.sig,
+      'Restart replays the deal being played — the re-rolled one, not the ladder\'s',
+      { rerolled: rerolled.seed, restarted: restarted.seed },
+    );
+
+    // The re-rolled deal is a first-class save: a force-quit resumes it.
+    await page.reload();
+    await page.waitForFunction(() => window.__slice !== undefined);
+    const resumed = await state();
+    check(
+      resumed.seed === rerolled.seed && resumed.sig === rerolled.sig,
+      'a re-rolled deal survives a force-quit',
+      { rerolled: rerolled.seed, resumed: resumed.seed },
+    );
+    console.log(`${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: New game re-rolls, Restart replays`);
+  }
+
   // 2b. The holder (issues #43, #93), driven the way a player drives it: park a
   //     free tile with one tap on the canvas, check the strip shows it and the
   //     tile it was covering is now free, clear it against its partner in a
@@ -850,6 +903,10 @@ for (const vp of VIEWPORTS) {
     // Park a face the holder does not already carry, so the tap parks rather
     // than clearing a pair (issue #93). The tile's accessible name is read
     // *before* the tap — that is the cue that has to arrive before the step.
+    // Only faces with another *free* copy still on the board are parked: each
+    // parked tile then keeps a takeable board–held pair alive, so the level
+    // stays 'playing' (not 'stuck') all the way to the fatal fourth park —
+    // deal-independent, which matters now that New game re-rolls (issue #94).
     const parkOne = async () => {
       const target = await page.evaluate(() => {
         const b = window.__slice.game.board;
@@ -859,13 +916,15 @@ for (const vp of VIEWPORTS) {
             .slots.filter((id) => id !== null)
             .map((id) => b.get(id).face),
         );
+        const free = b.freeTileIds();
         // Face-up only (issue #64): the tap below must park, not peek.
         return (
-          b
-            .freeTileIds()
-            .find(
-              (id) => !parked.has(b.get(id).face) && !window.__slice.game.isFaceHidden(id),
-            ) ?? null
+          free.find(
+            (id) =>
+              !parked.has(b.get(id).face) &&
+              !window.__slice.game.isFaceHidden(id) &&
+              free.some((other) => other !== id && b.get(other).face === b.get(id).face),
+          ) ?? null
         );
       });
       if (target === null) return null;

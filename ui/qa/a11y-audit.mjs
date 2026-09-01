@@ -426,7 +426,10 @@ for (const vp of VIEWPORTS) {
   {
     // Park by keyboard, three times, skipping any face already in the holder
     // (that activation would clear the pair instead — issue #93). The tile's
-    // name is read *before* the Enter: the cue must precede the step.
+    // name is read *before* the Enter: the cue must precede the step. Only
+    // faces with another free copy on the board are parked, so a takeable
+    // board–held pair keeps the level 'playing' up to the fatal park —
+    // deal-independent, which matters now that New game re-rolls (issue #94).
     const parkByKeyboard = async () => {
       const target = await page.evaluate(() => {
         const b = window.__slice.game.board;
@@ -436,10 +439,14 @@ for (const vp of VIEWPORTS) {
             .slots.filter((id) => id !== null)
             .map((id) => b.get(id).face),
         );
+        const free = b.freeTileIds();
         // Face-up only (issue #64): the Enter below must park, not peek.
-        const id = b
-          .freeTileIds()
-          .find((x) => !parked.has(b.get(x).face) && !window.__slice.game.isFaceHidden(x));
+        const id = free.find(
+          (x) =>
+            !parked.has(b.get(x).face) &&
+            !window.__slice.game.isFaceHidden(x) &&
+            free.some((other) => other !== x && b.get(other).face === b.get(x).face),
+        );
         if (id === undefined) return null;
         document.querySelector(`#a11y-layer [data-tile-id="${id}"]`).focus();
         return id;

@@ -6,6 +6,8 @@ commit and build time of the running bundle.
 
 ## 2026-09-01
 
+- New game now re-rolls a fresh arrangement of the current level; Restart
+  keeps replaying the deal being played, re-rolled or not (#94).
 - The holder is now the whole matching gesture (#93): one tap sends a
   revealed free tile to the holder, a concealed tile takes a reveal tap
   first, and pairs assemble and clear inside the holder — fly-in,
