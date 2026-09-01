@@ -107,6 +107,12 @@
         letter-spacing: 0.09em;
         text-transform: uppercase;
         color: #86efac;
+        /* A 20-char name in the level chip (issue #106) truncates rather than
+           stretching the chip on a compact layout. */
+        max-width: 148px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       header .stat-value {
         display: inline-block;
@@ -757,8 +763,10 @@
            Tiles counter is gone: the board already shows what is left, and the
            screen-reader announcements still speak the count. -->
       <header id="app-header">
+        <!-- A named player's chip reads "NAME · LEVEL" (issue #106); a guest's
+             stays plain "Level" — main.ts owns the text via #level-label. -->
         <span class="stat">
-          <span class="stat-label">Level</span>
+          <span class="stat-label" id="level-label">Level</span>
           <strong class="stat-value" id="level">1</strong>
         </span>
         <span class="stat score">
