@@ -65,6 +65,21 @@ test('a selected free tile spells out the park action (issue #62)', () => {
   );
 });
 
+test('with one slot left the label warns that parking loses (issue #63)', () => {
+  // A sighted player has the marked last slot in the strip; this sentence is
+  // that warning for someone who cannot see it, and it has to arrive *before*
+  // the activation that ends the level, not after.
+  assert.equal(
+    tileAriaLabel(t(0, 0, 0, 0, 'bamboo-3'), true, true),
+    'Bamboo 3, available, row 1, column 1, selected, activate again to park it in the last holder slot, which ends the level',
+  );
+  // Not selected: no park on offer, so no warning either.
+  assert.equal(
+    tileAriaLabel(t(0, 0, 0, 0, 'bamboo-3'), false, true),
+    'Bamboo 3, available, row 1, column 1',
+  );
+});
+
 test('tile label rounds half-unit offsets to the nearest whole row/column', () => {
   // Turtle has half-offset slots (odd half-unit coordinates).
   assert.equal(tileAriaLabel(t(2, 1, 3, 0, 'dots-5')), 'Dots 5, available, row 3, column 2');

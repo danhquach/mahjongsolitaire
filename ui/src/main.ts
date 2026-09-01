@@ -20,6 +20,11 @@
 // activating the selected free tile again parks it, and one tap on a board tile
 // that matches something in the holder clears that pair. Deselecting is what
 // moved out of the way — it is now a tap on empty board, or Escape.
+// Issue #63 makes the holder one-way and a full one final (decision 0009), so
+// the HUD gains the two things a hard-fail owes the player: a warning before
+// the fatal park (the last empty slot is marked, and a selected tile's
+// accessible name says what activating it again would cost) and a loss dialog
+// that offers only a restart, because there is nothing else left to offer.
 
 import { Application } from 'pixi.js';
 import { HOLDER_SLOTS, generateValidatedLevel, parseLayout } from '@mahjongsolitaire/core';
@@ -208,7 +213,9 @@ async function start(): Promise<void> {
       flash,
     });
     drawClock();
-    a11y.sync(a11yTiles(), game.selection, (t) => tileCssRect(t.slot));
+    // The last argument is the issue #63 warning: with one slot left, a park
+    // ends the level, so a selected tile's accessible name has to say so.
+    a11y.sync(a11yTiles(), game.selection, (t) => tileCssRect(t.slot), game.holderVacancies === 1);
   }
 
   /** Opt-in count-up readout (spec §6). Hidden entirely while timed mode is
@@ -228,6 +235,10 @@ async function start(): Promise<void> {
    * still saved: spec §4 never hard-fails a deadlock, and the way out is Undo
    * or Shuffle on that exact board. Force-quitting at the deadlock dialog must
    * not throw the undo stack away.
+   *
+   * A *lost* one is saved too, and that is the point (issue #63): reloading a
+   * nearly-full holder must not be an escape hatch, so the loss comes back with
+   * the board and `showStatus` re-opens the dialog on the first frame.
    */
   function persist(): void {
     if (game.status() === 'won') saves.clear();
@@ -263,8 +274,11 @@ async function start(): Promise<void> {
     // Everything below is the once-per-level transition into the end dialog:
     // re-running it would re-announce the result and re-steal focus.
     if (overlayVisible) return;
-    // Spec §4: a deadlock never hard-fails the player — the dialog offers the
-    // boosters that can lift it before it offers a restart.
+    // Spec §4: a *deadlock* never hard-fails the player — the dialog offers the
+    // boosters that can lift it before it offers a restart. A full holder is
+    // the exception decision 0009 introduced, and it is offered nothing: the PM
+    // call is that a full holder is final, so Shuffle and Undo stay hidden
+    // there. Both flags key on 'stuck' alone, which is what does that.
     const canShuffle = status === 'stuck' && charges.has('shuffle');
     const canUndo = status === 'stuck' && charges.has('undo') && game.undoDepth > 0;
     overlayShuffle.hidden = !canShuffle;
@@ -273,6 +287,13 @@ async function start(): Promise<void> {
       overlayTitle.textContent = 'Level complete!';
       overlayText.textContent = `Final score: ${game.score}`;
       announcer.say(`Level complete. Final score ${game.score}.`);
+    } else if (status === 'lost') {
+      overlayTitle.textContent = 'Holder full';
+      overlayText.textContent =
+        'All four holder slots are taken, and a parked tile can only leave by being matched. The level is over — restart it, or start a new game.';
+      announcer.say(
+        `Holder full. The level is over. Score ${game.score}. Restart the level, or start a new game.`,
+      );
     } else {
       const ways = [
         canShuffle ? 'Shuffle re-randomizes the tiles still on the board' : null,
@@ -294,7 +315,20 @@ async function start(): Promise<void> {
     setBackgroundInert(true);
     // Focus the way out, not the way back: Shuffle if it can help, else Undo,
     // and only then the restart the player loses progress to.
-    (canShuffle ? overlayShuffle : canUndo ? overlayUndo : overlayRestart).focus();
+    //
+    const wayOut = canShuffle ? overlayShuffle : canUndo ? overlayUndo : overlayRestart;
+    wayOut.focus();
+    // …and again on the next task, which issue #63 is what surfaced. A dialog
+    // opened from a tap on the board is opened inside the canvas `pointerdown`
+    // handler, and the browser's own `mousedown` follows it and moves focus to
+    // <body> as its default action — so the focus above is taken straight back
+    // off for exactly the player who tapped their way into the dialog. Only
+    // repaired if it was actually lost, and only while the dialog is still open:
+    // an Undo that lifts a deadlock closes it and hands focus back to the board,
+    // which this must not steal.
+    setTimeout(() => {
+      if (overlayVisible && !overlay.contains(document.activeElement)) wayOut.focus();
+    }, 0);
   }
 
   /**
@@ -503,9 +537,14 @@ async function start(): Promise<void> {
         announcer.say('Selection cleared.');
         break;
       case 'held':
+        // Never reached on the park that fills the last slot — that one is a
+        // loss, and showStatus announces it instead (see finishTap). One slot
+        // left is the moment to warn, because the next park is the fatal one.
         announcer.say(
           `${label(outcome.id)} held in slot ${outcome.slot + 1}. ${
-            game.holderFull ? 'Holder full.' : `${game.tilesLeft} tiles left.`
+            game.holderVacancies === 1
+              ? 'One holder slot left. Parking another tile ends the level.'
+              : `${game.tilesLeft} tiles left.`
           }`,
         );
         break;
@@ -530,16 +569,14 @@ async function start(): Promise<void> {
     return `two ${label(pair[0])} tiles, ${at(pair[0])} and ${at(pair[1])}`;
   }
 
-  /** What an undone move gives back — a pair, a parked tile, or a returned one
-   *  (issue #43 makes all three undoable). */
+  /** What an undone move gives back — a pair or a parked tile (issue #43 makes
+   *  both undoable; decision 0009 leaves no third kind). */
   function describeUndo(move: MoveRecord): string {
     switch (move.kind) {
       case 'match':
         return `${label(move.a)} pair restored. ${game.tilesLeft} tiles left. Score ${game.score}.`;
       case 'hold':
         return `${label(move.tile)} taken back out of the holder.`;
-      case 'unhold':
-        return `${label(move.tile)} put back in the holder.`;
     }
   }
 
@@ -833,15 +870,17 @@ async function start(): Promise<void> {
     get hintPair() {
       return hintPair;
     },
-    /** Holder state (issue #43 / #62 QA). */
+    /** Holder state (issues #43 / #62 / #63 QA). */
     holder(): {
       slots: readonly (TileId | null)[];
       full: boolean;
+      vacancies: number;
       holdsUsed: number;
     } {
       return {
         slots: game.holderSlots(),
         full: game.holderFull,
+        vacancies: game.holderVacancies,
         holdsUsed: game.holdsUsed,
       };
     },

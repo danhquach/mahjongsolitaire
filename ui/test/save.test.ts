@@ -245,37 +245,6 @@ function heldSave(): SaveState {
   return captureSave(game, { shuffles: 0, elapsedMs: 1000 });
 }
 
-/**
- * A record carrying a hold + unhold pair, appended by hand.
- *
- * Play cannot produce one any more: issue #62 retired the Return control, so
- * `unhold` is a move type nothing writes. But `SAVE_VERSION` did not change, and
- * a v2 record written by the issue #43 build *can* carry one — so parseSave
- * still has to judge it, and this is what keeps that branch honest until #63
- * removes the type outright.
- *
- * Parking a tile that is on the board and taking it straight back is a no-op
- * walked backwards, so appending the pair leaves an otherwise-honest record
- * honest — which is exactly what makes it a fair base for the rejection cases.
- */
-function returnedSaveRecord(): Record<string, unknown> {
-  const game = new Game(generateValidatedLevel(TURTLE, SAMPLE_SEED));
-  const [a, b] = game.level.solution[0]!;
-  park(game, a, 100);
-  game.tap(free(b), 120);
-  const spare = game.board.freeTileIds()[0]!;
-  const slotIndex = game.holderSlots().indexOf(null);
-  const raw = JSON.parse(
-    JSON.stringify(captureSave(game, { shuffles: 0, elapsedMs: 1000 })),
-  ) as Record<string, unknown>;
-  const base = { atMs: 500, prevSelection: null, prevScores: game.snapshot().stack.scores };
-  movesOf(raw).push(
-    { ...base, kind: 'hold', tile: spare, slotIndex },
-    { ...base, kind: 'unhold', tile: spare, slotIndex },
-  );
-  return raw;
-}
-
 const snap = (save: Record<string, unknown>): Record<string, unknown> =>
   save['snapshot'] as Record<string, unknown>;
 const stack = (save: Record<string, unknown>): Record<string, unknown> =>
@@ -390,33 +359,6 @@ test('parseSave rejects a holder the rest of the record does not agree with', ()
       snap(s)['removed'] = [];
     },
   };
-  // The `unhold` cases need a base that carries one — see returnedSaveRecord.
-  const returnCases: Record<string, (save: Record<string, unknown>) => void> = {
-    'a return naming a slot the tile was not in': (s) => {
-      const unhold = movesOf(s).find((m) => m['kind'] === 'unhold')!;
-      unhold['slotIndex'] = ((unhold['slotIndex'] as number) + 1) % HOLDER_SLOTS;
-    },
-    'a return of a tile that is already held': (s) => {
-      const unhold = movesOf(s).find((m) => m['kind'] === 'unhold')!;
-      unhold['tile'] = holderOf(s).find((id) => id !== null)!;
-    },
-    'a return naming a slot out of range': (s) => {
-      const unhold = movesOf(s).find((m) => m['kind'] === 'unhold')!;
-      unhold['slotIndex'] = 99;
-    },
-  };
-  const returned = returnedSaveRecord();
-  const returnBase = parseSave(returned);
-  assert.notEqual(returnBase, null, 'the base return record is honest');
-  assert.ok(
-    returnBase!.snapshot.stack.moves.some((m) => m.kind === 'unhold'),
-    'and it really does carry a return',
-  );
-  for (const [name, mutate] of Object.entries(returnCases)) {
-    const raw = JSON.parse(JSON.stringify(returned)) as Record<string, unknown>;
-    mutate(raw);
-    assert.equal(parseSave(raw), null, `should reject: ${name}`);
-  }
   const base = heldSave();
   assert.notEqual(parseSave(JSON.parse(JSON.stringify(base))), null, 'the base save is honest');
   assert.ok(
@@ -428,9 +370,28 @@ test('parseSave rejects a holder the rest of the record does not agree with', ()
   }
 });
 
+test('issue #63: a v2 record is refused outright, `unhold` and all', () => {
+  // Decision 0009 deleted the return, so nothing in this build can replay an
+  // `unhold` record — and silently dropping one would leave an undo stack that
+  // no longer walks back to a pristine deal. The version bump is the whole
+  // answer: a v2 record reads as absent and the player gets a fresh deal.
+  const v2 = JSON.parse(JSON.stringify(sampleSave())) as Record<string, unknown>;
+  v2['version'] = 2;
+  assert.equal(parseSave(v2), null, 'a v2 record is not a v3 record');
+
+  // …and the move-kind check behind it, in case a record ever claims v3 while
+  // carrying the old shape.
+  const forged = JSON.parse(JSON.stringify(heldSave())) as Record<string, unknown>;
+  const hold = movesOf(forged).find((m) => m['kind'] === 'hold');
+  assert.notEqual(hold, undefined, 'the base save has a hold to re-label');
+  hold!['kind'] = 'unhold';
+  assert.equal(parseSave(forged), null, 'an unhold move is not a move this build knows');
+});
+
 test('a short holder array is padded, not honoured as a smaller holder', () => {
   // Board takes its capacity from the array it is given, so a hand-edited
-  // record with fewer entries would shrink the holder for the rest of the level.
+  // record with fewer entries would shrink the holder for the rest of the level
+  // — which under decision 0009 would also move the level's loss line.
   const raw = JSON.parse(JSON.stringify(sampleSave())) as Record<string, unknown>;
   (raw['snapshot'] as Record<string, unknown>)['holder'] = [null, null];
   const parsed = parseSave(raw);
@@ -439,6 +400,7 @@ test('a short holder array is padded, not honoured as a smaller holder', () => {
   const resumed = reopen(TURTLE, parsed!)!;
   assert.notEqual(resumed, null);
   assert.equal(resumed.holderSlots().length, HOLDER_SLOTS);
+  assert.equal(resumed.holderVacancies, HOLDER_SLOTS);
   // And all four slots are usable, not two. Each park needs a face the holder
   // does not already carry, or the first tap clears the pair instead (#62), and
   // a clock past the save's own last match, which the ScoreKeeper enforces.
@@ -457,19 +419,33 @@ test('a short holder array is padded, not honoured as a smaller holder', () => {
     assert.equal(resumed.tap(free(target), (t += 10)).kind, 'held', `slot ${i + 1}`);
   }
   assert.equal(resumed.holderFull, true);
+  assert.equal(resumed.status(), 'lost', 'the fourth one loses, as on a full-length holder');
 });
 
-test('a v2 save carrying a return still resumes and undoes (issue #62)', () => {
-  // Nothing writes an `unhold` record any more, but a save from the issue #43
-  // build carries one and has to keep working until #63 changes the format.
-  const parsed = parseSave(returnedSaveRecord());
-  assert.notEqual(parsed, null);
-  const resumed = reopen(TURTLE, parsed!);
-  assert.notEqual(resumed, null);
-  while (resumed!.undoDepth > 0) assert.notEqual(resumed!.undo(), null);
-  assert.deepEqual(resumed!.holderSlots(), [null, null, null, null]);
-  assert.equal(resumed!.tilesLeft, resumed!.level.tiles.length);
-  assert.equal(resumed!.score, 0);
+test('a lost level still saves, so a reload is not an escape hatch (issue #63)', () => {
+  // The holder is one-way and a full one ends the level; reopening the tab must
+  // bring the loss back rather than a playable board.
+  const game = new Game(generateValidatedLevel(TURTLE, SAMPLE_SEED));
+  let t = 0;
+  while (!game.holderFull) {
+    const parkedFaces = new Set(
+      game
+        .holderSlots()
+        .filter((id): id is TileId => id !== null)
+        .map((id) => game.board.get(id).face),
+    );
+    const target = game.board
+      .freeTileIds()
+      .find((id) => !parkedFaces.has(game.board.get(id).face))!;
+    park(game, target, (t += 10));
+  }
+  assert.equal(game.status(), 'lost');
+
+  const resumed = forceQuit(game, { shuffles: 0, elapsedMs: 5000 });
+  assert.notEqual(resumed, null, 'a lost level is saved, not dropped');
+  assert.equal(resumed!.status(), 'lost', 'and it comes back lost');
+  assert.deepEqual(resumed!.holderSlots(), game.holderSlots());
+  assert.equal(resumed!.stateHash(), game.stateHash());
 });
 
 test('a resumed game can undo all the way back through its holds', () => {

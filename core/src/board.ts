@@ -8,6 +8,12 @@
 // and always matchable — it just no longer occupies its slot, so it blocks
 // nothing. Three states, therefore, not two: on the board, held, removed.
 //
+// Issue #63 makes the holder one-way (decision 0009, superseding 0008): the
+// only way out of a slot is to match the tile in it, and filling the fourth
+// slot loses the level. That is a rules change, not a model change — `unhold`
+// stays here as the mechanism undo rewinds a hold with, and it is no longer a
+// move a player can make. Read it as "take this hold back", not "return a tile".
+//
 // The holder lives here rather than beside the Board because it is occupancy
 // state: holding vacates a slot and unholding fills it again, and one owner of
 // both halves is what makes those two operations exact inverses. Callers that
@@ -235,9 +241,18 @@ export class Board {
     return [...this.heldIds].sort((a, b) => a - b);
   }
 
-  /** Every slot taken. Hold is refused here — it never ends the level. */
+  /** Every slot taken. Under decision 0009 this is a *lost* level, not a
+   *  refused hold — the rule lives in the game controller, but this is the
+   *  predicate it reads. */
   holderFull(): boolean {
     return !this.holder.includes(null);
+  }
+
+  /** Empty holder slots. One left means the next park ends the level
+   *  (decision 0009), which is what the warning in the UI is keyed on and what
+   *  stops the deadlock search from calling that park a way out. */
+  holderVacancies(): number {
+    return this.holder.filter((id) => id === null).length;
   }
 
   /**
@@ -257,9 +272,9 @@ export class Board {
 
   /**
    * Park a free tile in the first empty holder slot; returns that slot's index.
-   * Throws — changing nothing — on a tile that is not free or a full holder;
-   * callers check `holderFull()` first, because a full holder disables Hold
-   * rather than ending the level (issue #43 rule 5).
+   * Throws — changing nothing — on a tile that is not free or a full holder.
+   * A full holder is unreachable in play under decision 0009: the park that
+   * fills the last slot ends the level, so nothing gets to ask for a fifth.
    */
   hold(id: TileId): number {
     if (!this.isFree(id)) throw new RangeError(`tile ${id} is not free`);
@@ -291,10 +306,13 @@ export class Board {
   }
 
   /**
-   * Return a held tile to its own slot (issue #43 rule 4). Always legal, and
-   * that is a property of the model rather than a hope: tiles only ever *leave*
-   * the lattice, so the slot a held tile vacated cannot have been taken or
-   * covered since — `occupy` is the assertion that says so.
+   * Put a held tile back on its own slot. Always legal, and that is a property
+   * of the model rather than a hope: tiles only ever *leave* the lattice, so
+   * the slot a held tile vacated cannot have been taken or covered since —
+   * `occupy` is the assertion that says so.
+   *
+   * Not a player move since decision 0009 — the holder is one-way. This is the
+   * mechanism `MoveStack.undo` rewinds a hold with, and nothing else.
    */
   unhold(id: TileId): void {
     const t = this.getMutable(id);

@@ -85,13 +85,21 @@ A tile is **free** (selectable) iff:
 
 Vertical adjacency does not block.
 
-**Holder** *(added by decision 0008, PM 2026-08-31 — issue #43)*: a tile may also
-be parked in one of 4 off-board **holder slots**. A held tile is still in play
-and is always **matchable** (it is off the lattice, so nothing can block it), but
-it occupies no slot, so whatever it was covering becomes free. Only a free tile
-can be held, a held tile can always be returned to its own slot, and a full
-holder refuses the move rather than ending the level. Tiles therefore have three
+**Holder** *(added by decision 0008, PM 2026-08-31 — issue #43; amended by
+decision 0009, PM 2026-08-31 — issue #63)*: a tile may also be parked in one of 4
+off-board **holder slots**. A held tile is still in play and is always
+**matchable** (it is off the lattice, so nothing can block it), but it occupies
+no slot, so whatever it was covering becomes free. Tiles therefore have three
 states: on the board, held, removed.
+
+The holder is **one-way** (decision 0009, superseding 0008):
+- only a **free** tile can be parked;
+- a parked tile **cannot be taken back**. The only way to free a slot is to
+  match the tile in it;
+- **filling the fourth slot loses the level**, the moment it fills — see §3.5.
+
+Undo still rewinds a hold, because undo rewinds *any* move; that is the move
+never having happened, not the player returning a tile.
 
 ### 3.3 Matching
 - Tap tile A (selected, highlighted), tap tile B.
@@ -118,7 +126,10 @@ Standard 144: 36 Dots, 36 Bamboo, 36 Characters, 16 Winds, 12 Dragons, 4 Flowers
 
 ### 3.5 Win / loss
 - **Win:** all tiles removed. Held tiles count as in play — an empty board with a tile still parked is not a win (decision 0008).
-- **Deadlock:** no matching pair is reachable → offer Shuffle (free the first time per level, then rewarded-ad/booster). Never hard-fail the player. *Reachable* includes what the holder can open up (decision 0008): parking a free tile can free the tile under it, so a board with no pair on it is only a deadlock once no sequence of holds within the holder's remaining capacity exposes one.
+- **Loss** *(added by decision 0009, PM 2026-08-31 — issue #63)*: **the holder is full.** It fires the moment the fourth slot fills, whatever else is on the board — a playable pair in plain sight does not save it. The level is over: **no Shuffle, no Undo, no continue.** The dialog offers Restart level and New game, and nothing else. This is the one place v1 hard-fails the player, and it is deliberate: the holder is a resource you can spend yourself out of, which is what makes spending it a decision.
+  - The player is warned before the step, not after it: the last empty slot is marked in the strip, the holder group's accessible name says one slot is left, and a selected tile's accessible name says that activating it again would park into the last slot and end the level.
+  - The loss survives a force-quit. A save is written for a lost level exactly as for a deadlocked one, so reloading is not an escape hatch from a nearly-full holder.
+- **Deadlock:** no matching pair is reachable → offer Shuffle (free the first time per level, then rewarded-ad/booster). Never hard-fail the player *here* — the deadlock dialog keeps its boosters; the loss above is a different state. *Reachable* includes what the holder can open up (decision 0008): parking a free tile can free the tile under it, so a board with no pair on it is only a deadlock once no sequence of holds exposes one. Since decision 0009 that search **stops one slot short**: the park that would fill the holder ends the level, so it is not a way out of a deadlock.
 - No timer by default. Timed mode is an opt-in setting.
 
 ---
@@ -155,7 +166,7 @@ Naïve random dealing produces unsolvable boards. Use **reverse construction**:
 | **Hint** | Highlights one valid free pair; cycles through pairs on repeat taps | Costs 1 charge; no penalty to score in casual mode |
 | **Undo** | Restores the last removed pair (full move stack, unlimited depth) | 1 charge per undo; must restore selection state and score |
 | **Shuffle** | Re-randomizes faces of the tiles still *on the board*, preserving slot occupancy | Must re-run solvability check; regenerate if unsolvable. Held tiles keep their faces (decision 0008) |
-| **Hold** | *Retired as a rail control by issue #62* — parking is a board gesture (§3.3): activate the selected free tile again | **Not a charged booster** (decision 0008): free and always available. Refused only when the holder is full. Hold and holder-match are undoable moves |
+| **Hold** | *Retired as a rail control by issue #62* — parking is a board gesture (§3.3): activate the selected free tile again | **Not a charged booster** (decision 0008): free and always available, and one-way (decision 0009) — the park that fills the fourth slot loses the level (§3.5). Hold and holder-match are undoable moves; there is no return move |
 
 Starting grant: 5 of each of the three charged boosters; the holder has no balance. Replenishment: daily login grant, level milestones, rewarded video, IAP bundle.
 
@@ -266,13 +277,13 @@ Key metrics: D1/D7/D30 retention, levels/session, abandon rate by level (difficu
 - Match rules: identical-face match for all tiles (decision 0005 — no wildcard groups), self-match rejection, non-free rejection.
 - Generator: for each layout × 10,000 seeds → assert solvable, assert tile count even per face, assert every slot filled.
 - Solver: known-solvable and known-deadlocked fixtures.
-- Undo: property test — `apply(moves) → undo(n) → apply(same n)` yields identical state hash, on a move list containing holds and returns (decision 0008).
+- Undo: property test — `apply(moves) → undo(n) → apply(same n)` yields identical state hash, on a move list containing holds (decision 0009 removed returns).
 - Shuffle: post-shuffle board is always solvable; slot occupancy unchanged; held tiles keep their faces and are still counted for parity.
-- Holder: property test — no sequence of holds can turn a solvable position unwinnable; a full holder refuses Hold rather than ending the level; solver and hint never report "no moves" while a holder pair exists.
+- Holder: property test — holding never makes the *position* less winnable (which is what keeps `solve` sound while ignoring holds), but a sequence of holds **can** lose the level, and there is a witness (decision 0009 reverses 0008's safety property, so it is tested as false rather than deleted); a full holder is a loss, not a refused hold; the deadlock search stops one slot short of the park that would fill the holder; solver and hint never report "no moves" while a holder pair exists.
 - Combo/scoring boundary tests at the 5s window edges.
 
 ### 11.2 Integration
-- Save/restore across force-quit at every move index of a sample level, including a play-through that uses the holder (holder contents and hold count restored exactly).
+- Save/restore across force-quit at every move index of a sample level, including a play-through that uses the holder (holder contents and hold count restored exactly), and a lost level, which must resume *lost* (decision 0009 — a reload is not an escape hatch from a full holder).
 - Booster charge accounting vs. rewarded-ad callbacks (including ad-failed and ad-abandoned paths).
 - IAP restore, including Remove-Ads on a fresh install.
 - Daily Challenge determinism across devices, timezones, and DST boundaries.

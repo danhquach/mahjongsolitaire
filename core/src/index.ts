@@ -25,7 +25,6 @@ export type {
   MoveBase,
   MoveRecord,
   MoveStackState,
-  UnholdMove,
 } from './moves.js';
 export { ScoreKeeper, BASE_PAIR_POINTS, COMBO_WINDOW_MS } from './scoring.js';
 export type { MatchScore, ScoreSnapshot } from './scoring.js';

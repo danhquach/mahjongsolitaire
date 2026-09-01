@@ -12,6 +12,11 @@
 // top-layer face, border and the suit ink from faces.ts), so it reads as the
 // same material as the tile that was just on the board — the same glyph and the
 // same corner tag, which is what makes it matchable at a glance.
+//
+// Issue #63 gives the strip a second job. The holder is one-way and filling it
+// ends the level (decision 0009), so the last empty slot is marked `.last` and
+// the group says so — a hard-fail the player can walk into needs to be visible
+// before they take the step, not explained afterwards in a dialog.
 
 import type { TileId } from '@mahjongsolitaire/core';
 import { BASE_BORDER, BASE_FACE } from './depth.js';
@@ -75,21 +80,31 @@ export class HolderStrip {
   sync(view: HolderView): void {
     this.held = [...this.slotNodes.keys()].map((i) => view.slots[i] ?? null);
     const used = this.held.filter((id) => id !== null).length;
+    const lastFree = this.slotNodes.length - used === 1 ? this.held.indexOf(null) : -1;
     this.root.setAttribute(
       'aria-label',
-      `Holder, ${used} of ${this.slotNodes.length} slots used`,
+      `Holder, ${used} of ${this.slotNodes.length} slots used${
+        lastFree === -1 ? '' : ', one slot left — parking another tile ends the level'
+      }`,
     );
     this.slotNodes.forEach((node, i) => {
       const id = this.held[i] ?? null;
+      // The warning cue: only ever on the one empty slot that would be filled.
+      node.classList.toggle('last', i === lastFree);
       const glyph = node.querySelector<HTMLElement>('.glyph')!;
       const tag = node.querySelector<HTMLElement>('.tag')!;
       if (id === null) {
         node.classList.remove('filled', 'selected', 'hinted', 'flashed');
+        node.setAttribute(
+          'aria-label',
+          i === lastFree
+            ? `Holder slot ${i + 1}, empty — the last one; filling it ends the level`
+            : `Holder slot ${i + 1}, empty`,
+        );
         // Nothing to activate and nothing to explain — unlike a spent booster,
         // an empty slot has no message, so it stays out of the tab order.
         node.disabled = true;
         node.removeAttribute('aria-pressed');
-        node.setAttribute('aria-label', `Holder slot ${i + 1}, empty`);
         delete node.dataset['tileId'];
         glyph.textContent = '';
         tag.textContent = '';

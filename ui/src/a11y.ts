@@ -53,12 +53,22 @@ export function traversalOrder(tiles: readonly A11yTile[]): A11yTile[] {
  * trying it; a screen-reader player has to be told, so this is the explicit
  * park action the ticket asks for — reachable with two ordinary activations
  * and no timing window, which keeps spec §7's "no double-tap" rule intact.
+ *
+ * `parkEndsLevel` is the warning half of that, and it is not optional politeness
+ * (issue #63): with one holder slot left, the very same second activation loses
+ * the level. A sighted player has the marked last slot in the strip to look at;
+ * this sentence is that cue, for someone who cannot.
  */
-export function tileAriaLabel(tile: A11yTile, selected = false): string {
+export function tileAriaLabel(tile: A11yTile, selected = false, parkEndsLevel = false): string {
   const { label } = faceStyle(tile.face);
   const state = tile.free ? 'available' : 'blocked';
   const { row, col } = slotPosition(tile.slot);
-  const park = selected && tile.free ? ', selected, activate again to park it in the holder' : '';
+  const park =
+    selected && tile.free
+      ? parkEndsLevel
+        ? ', selected, activate again to park it in the last holder slot, which ends the level'
+        : ', selected, activate again to park it in the holder'
+      : '';
   return `${label}, ${state}, row ${row}, column ${col}${park}`;
 }
 
@@ -183,7 +193,13 @@ export class A11yLayer {
    * Mirror the current board state. Nodes for removed tiles are deleted and
    * survivors are updated in place, so focus is never dropped by a redraw.
    */
-  sync(tiles: readonly A11yTile[], selection: TileId | null, cssRect: CssRectOf): void {
+  sync(
+    tiles: readonly A11yTile[],
+    selection: TileId | null,
+    cssRect: CssRectOf,
+    /** One holder slot left, so a park would end the level (issue #63). */
+    parkEndsLevel = false,
+  ): void {
     this.order = traversalOrder(tiles);
     const hadFocus = this.root.contains(document.activeElement);
 
@@ -221,7 +237,7 @@ export class A11yLayer {
       node.style.top = `${r.y}px`;
       node.style.width = `${r.w}px`;
       node.style.height = `${r.h}px`;
-      node.setAttribute('aria-label', tileAriaLabel(t, selection === t.id));
+      node.setAttribute('aria-label', tileAriaLabel(t, selection === t.id, parkEndsLevel));
       node.setAttribute('aria-pressed', String(selection === t.id));
       node.setAttribute('aria-disabled', String(!t.free));
     }
