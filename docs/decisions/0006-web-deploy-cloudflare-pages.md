@@ -70,10 +70,16 @@ This token is the only credential in the repo and it is long-lived. Roll it (ste
 the secret) if it is ever pasted outside the secret store, if CI logs are shared with anyone
 outside the project, or on any suspected compromise; revoke the old one in the same screen.
 
-If the dashboard's own Git integration was connected while creating the Worker, it may also try
-to build on push and fail, since it has no build configuration. That is noisy but harmless: a
-failed build publishes nothing, so the last deploy from CI stays live. Disconnecting it in the
-Worker's settings silences it, and does not affect `wrangler deploy`.
+The dashboard's own Git integration was connected while creating the Worker, so it also tried to
+build on every push — including every branch push, since "builds for non-production branches" was
+enabled — and failed every time (it did carry a build configuration, contrary to what this
+document previously assumed; the build log lives only in the dashboard, so the exact failure
+cause was never pulled). A failed build publishes
+nothing — the last deploy from CI stays live — but it is **not harmless** (#61): it reports a red
+`Workers Builds: lantern-tiles` check on the head commit of every branch, which makes every PR
+permanently one-check red and trains reviewers to merge over red. Disconnecting the Git
+integration in the Worker's settings (Settings → Build → Git repository) is a required setup
+step, not optional cleanup; it does not affect `wrangler deploy`. Done 2026-08-31 (#61).
 
 ## Why nothing is interpolated into the deploy command
 
@@ -99,4 +105,5 @@ To rename the Worker, change `wrangler.jsonc` — the workflow does not mention 
   flipping to a preserved preview.
 - The Cloudflare GitHub App keeps read access to this private repo for as long as the project is
   Git-connected, even though deployment no longer flows through it. Removing the connection is
-  the way to revoke that; it does not affect the CLI-driven deploys.
+  the way to revoke that; it does not affect the CLI-driven deploys. Done 2026-08-31 (#61): the
+  Git integration was disconnected from the Worker's settings.
