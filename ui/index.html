@@ -265,6 +265,31 @@
         border-color: #f59e0b;
         border-width: 3px;
       }
+      /* Pressed state (issue #95): every real control darkens and sinks while
+         the pointer or Space key is down, and releases back. The board's tile
+         proxies (.tile-node — invisible, the canvas carries their visuals) and
+         the holder's informational slots are excluded; disabled buttons never
+         press. Reduced motion — the OS preference via the media query below,
+         the in-app toggle via [data-motion='reduced'] (main.ts) — drops the
+         transition so the swap is instant, which the ticket allows. */
+      button:not(.tile-node):not(.slot) {
+        transition:
+          transform 60ms ease,
+          filter 60ms ease;
+      }
+      button:active:not(:disabled):not(.tile-node):not(.slot) {
+        transform: translateY(1px) scale(0.97);
+        filter: brightness(0.85);
+      }
+      @media (prefers-reduced-motion: reduce) {
+        button:not(.tile-node):not(.slot) {
+          transition: none;
+        }
+      }
+      #app[data-motion='reduced'] button:not(.tile-node):not(.slot) {
+        transition: none;
+      }
+
       /* The hint cue, in the board's colour (render.ts). */
       #holder .slot.hinted {
         outline: 3px solid #2563eb;

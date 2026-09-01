@@ -530,6 +530,14 @@ async function start(): Promise<void> {
     for (const { input, size } of sizeInputs) input.checked = current.tileSize === size;
   }
 
+  /** Mirror the in-app Reduced motion toggle onto the DOM (issue #95): the
+   *  pressed-state transition is pure CSS, and CSS cannot read settings.ts —
+   *  the OS preference has its own media query. */
+  function applyMotionPreference(): void {
+    if (settings.value.reducedMotion) appRoot.dataset['motion'] = 'reduced';
+    else delete appRoot.dataset['motion'];
+  }
+
   /** Tile size is a fraction of the viewport fit (settings.ts) — re-fit and
    *  redraw, which also re-places every a11y node over its new rect. */
   function applyTileSize(): void {
@@ -631,6 +639,8 @@ async function start(): Promise<void> {
       input.addEventListener('change', () => {
         settings.set(key, input.checked);
         if (key === 'timedMode') drawClock();
+        // The pressed-state CSS reads the toggle from the DOM (issue #95).
+        if (key === 'reducedMotion') applyMotionPreference();
         // The only toggle the board itself reads — repaint so the change is
         // visible while the settings screen is still open (issue #45).
         if (key === 'highlightFree') redraw();
@@ -1066,6 +1076,7 @@ async function start(): Promise<void> {
   overlayRestart.addEventListener('click', () => void startLevel('replay'));
 
   wireSettings();
+  applyMotionPreference();
   el<HTMLElement>('version').textContent = versionLabel(
     __APP_VERSION__,
     __BUILD_COMMIT__,

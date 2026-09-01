@@ -198,6 +198,7 @@ Starting grant: 5 of each of the three charged boosters; the holder has no balan
 - No double-tap, long-press, drag, or pinch requirements for core play. Optional pinch-zoom on tablets.
 - Mis-tap forgiveness: nearest-free-tile resolution within 8dp of a tap point.
 - Audio and haptics independently toggleable; both default ON but gentle.
+- Every interactive control shows a pressed state while activated — pointer or keyboard — and releases back (issue #95). Visual only, no haptic; under reduced motion the state swap is instant.
 - Ads master toggle in settings; **default OFF** (see §8). Turning it on enables banner/interstitial/rewarded under the §8 rules; turning it off disables all ads immediately.
 - No countdowns, no lives, no energy gates.
 - Auto-save on every move; resume mid-level after force-quit.

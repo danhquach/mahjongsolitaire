@@ -664,6 +664,48 @@ for (const vp of VIEWPORTS) {
     await page.waitForFunction(() => !window.__slice.dealing);
   }
 
+  // 1d. Pressed states (issue #95): a held control visibly presses and
+  //     releases back, and reduced motion drops the transition (instant swap).
+  {
+    const before = failures;
+    const box = await (await page.$('#btn-restart')).boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    const pressed = await page.evaluate(() => {
+      const n = document.getElementById('btn-restart');
+      const cs = getComputedStyle(n);
+      return { active: n.matches(':active'), transform: cs.transform, filter: cs.filter };
+    });
+    await page.mouse.up(); // completes the click: a harmless restart
+    await page.waitForFunction(() => !window.__slice.dealing);
+    const released = await page.evaluate(() => {
+      const cs = getComputedStyle(document.getElementById('btn-restart'));
+      return { transform: cs.transform, filter: cs.filter };
+    });
+    check(
+      pressed.active && pressed.transform !== 'none' && pressed.filter !== 'none',
+      'a held button shows a pressed state (issue #95)',
+      pressed,
+    );
+    check(
+      released.transform === 'none' && released.filter === 'none',
+      'and releases back to normal',
+      released,
+    );
+    // Reduced motion (OS preference): the state swap stays, the transition goes.
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const reducedTransition = await page.evaluate(
+      () => getComputedStyle(document.getElementById('btn-restart')).transitionDuration,
+    );
+    await page.emulateMedia({ reducedMotion: null });
+    check(
+      reducedTransition.split(',').every((d) => parseFloat(d) === 0),
+      'reduced motion swaps instantly (no transition)',
+      { reducedTransition },
+    );
+    console.log(`${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: pressed states`);
+  }
+
   // 2a. New game vs Restart (issue #94): New game re-rolls a fresh deal for
   //     the same level; Restart replays the deal being played — including a
   //     re-rolled one — and the re-roll survives a force-quit.

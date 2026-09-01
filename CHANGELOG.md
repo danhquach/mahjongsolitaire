@@ -6,6 +6,9 @@ commit and build time of the running bundle.
 
 ## 2026-09-01
 
+- Buttons press: every control outside the board darkens and sinks while
+  held — touch, mouse or Space — and releases back; instant swap under
+  reduced motion (#95).
 - New game now re-rolls a fresh arrangement of the current level; Restart
   keeps replaying the deal being played, re-rolled or not (#94).
 - The holder is now the whole matching gesture (#93): one tap sends a
