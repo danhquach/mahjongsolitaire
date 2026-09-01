@@ -8,10 +8,13 @@
 // rather than a second mirror layer over a second canvas (compare a11y.ts,
 // which exists only because the board *is* a canvas).
 //
-// A parked tile is painted from the same palette the renderer uses (depth.ts's
-// top-layer face, border and the suit ink from faces.ts), so it reads as the
-// same material as the tile that was just on the board — the same glyph and the
-// same corner tag, which is what makes it matchable at a glance.
+// A parked tile *is* the tile (issue #66): the slot shows the renderer's own
+// picture of it — face, border, side depth, pips or glyph, corner tag — at the
+// board's current on-screen tile size, supplied per redraw as `tileImage` /
+// `tileSize` in the view. Parking moves a tile; it must not shrink or flatten
+// it. The slot buttons themselves stay at the spec §7 48dp minimum in both
+// axes (CSS min-width/min-height), with the tile picture centred inside when
+// the board's tiles are smaller than that.
 //
 // Issue #63 gives the strip a second job. The holder is one-way and filling it
 // ends the level (decision 0009), so the last empty slot is marked `.last` and
@@ -19,19 +22,18 @@
 // before they take the step, not explained afterwards in a dialog.
 
 import type { TileId } from '@mahjongsolitaire/core';
-import { BASE_BORDER, BASE_FACE } from './depth.js';
 import { faceStyle } from './faces.js';
-
-/** CSS hex for a Pixi-style 0xRRGGBB colour. */
-function css(color: number): string {
-  return `#${color.toString(16).padStart(6, '0')}`;
-}
 
 export interface HolderView {
   /** Slot occupancy, one entry per slot and null where empty. */
   readonly slots: readonly (TileId | null)[];
   /** FaceId of a held tile. */
   readonly faceOf: (id: TileId) => string;
+  /** The renderer's picture of a face's tile, as a data URL (issue #66). */
+  readonly tileImage: (face: string) => string;
+  /** On-screen size of a board tile, side depth included, CSS px (issue #66).
+   *  Slots track it so a parked tile and a board tile always read the same. */
+  readonly tileSize: { readonly w: number; readonly h: number };
   readonly selection: TileId | null;
   /** Tiles to outline in red this frame (mismatch feedback), as on the board. */
   readonly flash: readonly TileId[];
@@ -61,8 +63,10 @@ export class HolderStrip {
       node.type = 'button';
       node.className = 'slot';
       node.dataset['slot'] = String(i);
-      node.appendChild(Object.assign(document.createElement('span'), { className: 'glyph' }));
-      node.appendChild(Object.assign(document.createElement('span'), { className: 'tag' }));
+      // The tile picture (issue #66) — a child rather than the button's own
+      // background, so the 48dp button box and the tile-sized visual can
+      // differ when the board's tiles are smaller than the touch target.
+      node.appendChild(Object.assign(document.createElement('span'), { className: 'tile' }));
       node.addEventListener('click', () => {
         const id = this.heldIn(i);
         if (id !== null) onActivate(id);
@@ -87,12 +91,19 @@ export class HolderStrip {
         lastFree === -1 ? '' : ', one slot left — parking another tile ends the level'
       }`,
     );
+    // Whole CSS px: the strip's height feeds back into the board's fit, so a
+    // fractional size that re-rounds differently every pass would never settle.
+    const w = Math.max(1, Math.round(view.tileSize.w));
+    const h = Math.max(1, Math.round(view.tileSize.h));
     this.slotNodes.forEach((node, i) => {
       const id = this.held[i] ?? null;
       // The warning cue: only ever on the one empty slot that would be filled.
       node.classList.toggle('last', i === lastFree);
-      const glyph = node.querySelector<HTMLElement>('.glyph')!;
-      const tag = node.querySelector<HTMLElement>('.tag')!;
+      const tile = node.querySelector<HTMLElement>('.tile')!;
+      // Written only on change (both branches share the box), so the resize →
+      // fit → resize feedback closes after one pass instead of thrashing.
+      if (tile.style.width !== `${w}px`) tile.style.width = `${w}px`;
+      if (tile.style.height !== `${h}px`) tile.style.height = `${h}px`;
       if (id === null) {
         node.classList.remove('filled', 'selected', 'hinted', 'flashed');
         node.setAttribute(
@@ -106,11 +117,8 @@ export class HolderStrip {
         node.disabled = true;
         node.removeAttribute('aria-pressed');
         delete node.dataset['tileId'];
-        glyph.textContent = '';
-        tag.textContent = '';
-        // Back to the dashed-outline look in the stylesheet: an inline colour
-        // from the tile that used to sit here would outlive it.
-        node.removeAttribute('style');
+        // Back to the dashed-outline placeholder from the stylesheet.
+        tile.style.backgroundImage = '';
         return;
       }
       const style = faceStyle(view.faceOf(id));
@@ -124,11 +132,10 @@ export class HolderStrip {
       // Same hook the board's a11y nodes carry, so scripted QA can reach a tile
       // by id without caring which layer it is currently in.
       node.dataset['tileId'] = String(id);
-      glyph.textContent = style.glyph;
-      tag.textContent = style.tag;
-      node.style.color = css(style.color);
-      node.style.background = css(BASE_FACE);
-      node.style.borderColor = css(BASE_BORDER);
+      // The renderer's own picture of this tile (issue #66) — same material,
+      // same size as it had on the board a moment ago.
+      const image = `url("${view.tileImage(view.faceOf(id))}")`;
+      if (tile.style.backgroundImage !== image) tile.style.backgroundImage = image;
     });
   }
 

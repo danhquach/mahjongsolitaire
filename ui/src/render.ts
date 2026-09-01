@@ -45,6 +45,9 @@ const FACE_SELECTED = 0xfff0c2;
 const FACE_HINT = 0xdbeafe;
 /** Corner radius of the tile silhouette, shared by face, sides, and shadow. */
 const TILE_RADIUS = 6;
+/** Bake resolution for the holder strip's tile pictures (issue #66): 4× board
+ *  px covers a 2×-fit board on a 2× display with headroom to spare. */
+const TILE_IMAGE_RESOLUTION = 4;
 
 // --- face-down back (issue #64) ----------------------------------------------
 //
@@ -177,6 +180,8 @@ export class BoardRenderer {
   private readonly effectsLayer = new Container();
   /** This frame's tile containers, by id — the shake target (issue #44). */
   private readonly tileNodes = new Map<TileId, Container>();
+  /** Data-URL cache for the holder strip's tile pictures (issue #66). */
+  private readonly tileImages = new Map<string, string>();
   private readonly bounds: Rect;
   /** Topmost layer of the loaded layout — the depth ladder's bright end. */
   private readonly topZ: number;
@@ -451,6 +456,41 @@ export class BoardRenderer {
   /** Layer the match animation paints into — above every tile (issue #44). */
   get effects(): Container {
     return this.effectsLayer;
+  }
+
+  /**
+   * A parked tile's picture for the holder strip (issue #66): the exact tile
+   * the renderer would paint on the board's top layer — face, border, side
+   * depth, pips or glyph, corner tag — extracted once per face and cached as a
+   * data URL. The strip is DOM (its accessibility story), so this is how a
+   * slot gets painted from the same material as the board instead of a flat
+   * stand-in: art changes flow into the strip with no second implementation.
+   *
+   * Baked at a fixed high resolution rather than the current view scale, so
+   * one cache entry serves every viewport and tile-size setting; the strip
+   * scales it down with background-size, exactly as the board layer scales
+   * its own geometry.
+   */
+  tileImage(face: string): string {
+    const cached = this.tileImages.get(face);
+    if (cached) return cached;
+    const slot = { x: 0, y: 0, z: this.topZ };
+    const node = this.buildTile(
+      { id: -1, slot, face, removed: false },
+      { selected: false, flashed: false, hinted: false, dimmed: false },
+    );
+    const r = tileRect(slot);
+    const canvas = this.app.renderer.extract.canvas({
+      target: node,
+      resolution: TILE_IMAGE_RESOLUTION,
+      // The tile plus its side extrusion, shadow cropped away — a slot sits on
+      // the HUD, not on the felt the shadow was baked for.
+      frame: new Rectangle(r.x, r.y, TILE_W + SIDE_DEPTH, TILE_H + SIDE_DEPTH),
+    });
+    node.destroy({ children: true });
+    const url = canvas.toDataURL?.('image/png') ?? '';
+    this.tileImages.set(face, url);
+    return url;
   }
 
   /** This frame's container for a tile, for effects that nudge it in place.

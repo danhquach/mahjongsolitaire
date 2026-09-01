@@ -41,7 +41,7 @@ import type { Cue } from './feedback.js';
 import { faceStyle } from './faces.js';
 import { Game } from './game.js';
 import { HolderStrip } from './holder.js';
-import { TILE_H, TILE_W, tileRect } from './geometry.js';
+import { SIDE_DEPTH, TILE_H, TILE_W, tileRect } from './geometry.js';
 import type { Rect } from './geometry.js';
 import { hitTest } from './hit-test.js';
 import { HUD_PLACEMENTS, chooseHudPlacement } from './hud-fit.js';
@@ -214,6 +214,13 @@ async function start(): Promise<void> {
     holder.sync({
       slots: game.holderSlots(),
       faceOf: (id) => game.board.get(id).face,
+      // A parked tile is the tile (issue #66): the renderer's own picture of
+      // it, at the board's current on-screen tile size (side depth included).
+      tileImage: (face) => renderer.tileImage(face),
+      tileSize: {
+        w: (TILE_W + SIDE_DEPTH) * renderer.scale,
+        h: (TILE_H + SIDE_DEPTH) * renderer.scale,
+      },
       selection: game.selection,
       hint: hintPair,
       flash,
