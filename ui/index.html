@@ -82,8 +82,57 @@
         font-size: 16px;
         padding: 8px 6px;
       }
+      /* The icon buttons keep their square shape in the side column — the
+         rule above is for text buttons and would restore padding. */
+      #app[data-hud='side'] > header .hud-actions button {
+        padding: 0;
+      }
+      /* Stat chips (HUD rework, 2026-09-01): a quiet uppercase label over a
+         big tabular number, on a faint card so the pair reads as one gauge.
+         The score is the exciting one — gold, with a glow and a pop keyed by
+         main.ts on every gain (reduced motion drops the pop below). */
       header .stat {
-        min-width: 90px;
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        min-width: 76px;
+        padding: 3px 12px 5px;
+        border: 1px solid #2e7d4f;
+        border-radius: 10px;
+        background: rgba(240, 253, 244, 0.08);
+      }
+      header .stat-label {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        color: #86efac;
+      }
+      header .stat-value {
+        display: inline-block;
+        font-size: 22px;
+        line-height: 1.15;
+        font-variant-numeric: tabular-nums;
+      }
+      header .stat.score .stat-value {
+        color: #fcd34d;
+        text-shadow: 0 0 10px rgba(252, 211, 77, 0.35);
+      }
+      @keyframes score-pop {
+        35% {
+          transform: scale(1.25);
+        }
+      }
+      header .stat-value.bump {
+        animation: score-pop 300ms ease;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        header .stat-value.bump {
+          animation: none;
+        }
+      }
+      #app[data-motion='reduced'] header .stat-value.bump {
+        animation: none;
       }
       #app[data-hud='side'] header .stat {
         min-width: 0;
@@ -97,6 +146,38 @@
         border: 1px solid #bbf7d0;
         background: #166534;
         color: #f0fdf4;
+      }
+      /* New game / Restart as icon buttons (HUD rework): same material as the
+         booster rail, pushed to the header's far edge so the chips lead. */
+      .hud-actions {
+        display: flex;
+        gap: 8px;
+        margin-left: auto;
+      }
+      #app[data-hud='side'] .hud-actions {
+        margin-left: 0;
+        justify-content: center;
+      }
+      .hud-actions button {
+        display: grid;
+        place-items: center;
+        width: 48px; /* spec §7: 48dp minimum */
+        height: 48px;
+        padding: 0;
+        border-radius: 10px;
+      }
+      .hud-actions svg {
+        width: 26px;
+        height: 26px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2.6;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .hud-actions svg .solid {
+        fill: currentColor;
+        stroke: none;
       }
       /* --- Boosters (issue #13) --------------------------------------------
          A vertical rail in the bottom-right corner of the board: thumb-reach on
@@ -665,15 +746,55 @@
          here instead would paint the header on the wrong edge and then move it
          on every phone in landscape — the one viewport that picks the rail. -->
     <div id="app">
+      <!-- The HUD (reworked 2026-09-01, PM request): Level and Score as stat
+           chips — small caps label over a big number, the score in gold with a
+           pop on every gain — and the two deal actions as icon buttons. The
+           Tiles counter is gone: the board already shows what is left, and the
+           screen-reader announcements still speak the count. -->
       <header id="app-header">
-        <span class="stat">Level <strong id="level">1</strong></span>
-        <span class="stat">Score <strong id="score">0</strong></span>
-        <span class="stat">Tiles <strong id="tiles-left">144</strong></span>
+        <span class="stat">
+          <span class="stat-label">Level</span>
+          <strong class="stat-value" id="level">1</strong>
+        </span>
+        <span class="stat score">
+          <span class="stat-label">Score</span>
+          <strong class="stat-value" id="score">0</strong>
+        </span>
         <!-- Timed mode is opt-in (spec §6), so the readout is hidden until the
              player asks for it in settings. It counts up; nothing runs out. -->
-        <span class="stat" id="time-stat" hidden>Time <strong id="elapsed">0:00</strong></span>
-        <button id="btn-new" type="button">New game</button>
-        <button id="btn-restart" type="button">Restart</button>
+        <span class="stat" id="time-stat" hidden>
+          <span class="stat-label">Time</span>
+          <strong class="stat-value" id="elapsed">0:00</strong>
+        </span>
+        <span class="hud-actions">
+          <!-- Icon-only, like the booster rail: the accessible name is the
+               aria-label, `title` gives sighted players the tooltip. -->
+          <button
+            id="btn-new"
+            type="button"
+            data-action="New game"
+            title="New game"
+            aria-label="New game"
+          >
+            <!-- A fresh deal: a plus. -->
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 5.2v13.6M5.2 12h13.6" />
+            </svg>
+          </button>
+          <button
+            id="btn-restart"
+            type="button"
+            data-action="Restart"
+            title="Restart level"
+            aria-label="Restart level"
+          >
+            <!-- Replay the same deal: a circular arrow. -->
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 4.8a7.2 7.2 0 1 0 7.2 7.2" />
+              <path class="solid" d="M12.2 1.2v7.2l6-3.6z" />
+            </svg>
+          </button>
+        </span>
       </header>
       <!-- Holder (issue #43) + board share a column, so the strip is above the
            board whichever edge the HUD took (issue #37). The strip is a flex
