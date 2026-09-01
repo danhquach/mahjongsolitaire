@@ -63,8 +63,15 @@ const CHAR_NUMERALS = ['一', '二', '三', '四', '五', '六', '七', '八', '
 // dark enough to hold 4.5:1 against it on every layer (ui/test/depth.test.ts
 // proves the sweep). Dots navy and Bamboo pine replaced a bright blue and a
 // mid green with the redraw — both raised the figure/ground floor.
+//
+// Issue #83: every group's ink keeps clear hue-or-lightness distance from
+// every other group's, so color can pre-filter a board scan before the glyph
+// resolves. Dots moved from navy (0x22406e) to royal blue — clearly saturated
+// beside Winds' slate, which now reads as the neutral gray. Deliberate shares
+// (Spring = Bamboo pine, Summer = Characters red, decision 0012) stay — only
+// accidental near-misses moved.
 const SUIT_COLOR = {
-  dots: 0x22406e, // navy
+  dots: 0x1e40af, // royal blue (8.1:1 on the tile face)
   bamboo: 0x1a6b52, // pine
   char: 0xb91c1c, // red
   wind: 0x334155, // slate
@@ -104,7 +111,10 @@ const SEASON_STYLE: Record<
   fall: {
     glyph: '❧',
     tag: '3',
-    color: 0xc2410c, // orange (freed by the Flower removal)
+    // Issue #83: russet, not orange — the orange (0xc2410c) was a hue
+    // neighbour of Characters' red one row away; russet keeps the autumn
+    // read while opening clear hue distance (6.6:1 on the tile face).
+    color: 0x92400e,
     rotation: 0.42, // ~24°: the leaf tips over
     scatter: [
       { glyph: '❧', x: 0.2, y: 0.14, rotation: 0.9 },
