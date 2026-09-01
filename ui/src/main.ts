@@ -56,6 +56,7 @@ import type { Cue } from './feedback.js';
 import { faceStyle } from './faces.js';
 import { Game } from './game.js';
 import { HolderStrip } from './holder.js';
+import { BOARD_FELT } from './depth.js';
 import { SIDE_DEPTH, TILE_H, TILE_W, tileRect } from './geometry.js';
 import type { Rect } from './geometry.js';
 import { hitTest } from './hit-test.js';
@@ -179,7 +180,7 @@ async function start(): Promise<void> {
   const app = new Application();
   await app.init({
     resizeTo: boardDiv,
-    background: 0x14532d,
+    background: BOARD_FELT,
     resolution: window.devicePixelRatio || 1,
     autoDensity: true,
     antialias: true,

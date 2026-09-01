@@ -64,12 +64,19 @@ const TILE_IMAGE_RESOLUTION = 4;
 //
 // A concealed tile is the same tile — same silhouette, sides, shadow, border,
 // highlight outlines — with the face painted as a card back instead of a suit:
-// a deep felt green with a lighter inset keyline, no glyph, no pips, no tag.
-// Both colours run through the same per-layer darkening as a face does
-// (LAYER_FACE_STEP via depthSteps), so a face-down tile recedes with its layer
-// exactly like its neighbours.
-const BACK_FACE = 0x2e6b4f;
-const BACK_KEYLINE = 0x9fc4ae;
+// no glyph, no pips, no tag. Both colours run through the same per-layer
+// darkening as a face does (LAYER_FACE_STEP via depthSteps), so a face-down
+// tile recedes with its layer exactly like its neighbours.
+//
+// Issue #82: the back is the *strong* variant of the felt's green — the felt
+// takes the soft one (see BOARD_FELT) — so a concealed tile can never read as
+// empty table. The original 0x2e6b4f back sat at 1.45:1 against the felt
+// (1.08:1 at the deepest dimmed layer); this one holds ≥ 3:1 against the felt
+// on every undimmed layer (4.4:1 on top, 3.2:1 four layers down), enforced by
+// ui/test/depth.test.ts. The keyline flipped dark for the same reason: the
+// old pale line washed out on a light back (4.8:1 now, ≥ 4:1 at depth).
+export const BACK_FACE = 0x62c98a;
+export const BACK_KEYLINE = 0x1b4d30;
 /** Inset of the keyline from the face edge, board px. */
 const BACK_INSET = 7;
 const BACK_KEYLINE_WIDTH = 2;

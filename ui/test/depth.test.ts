@@ -17,23 +17,25 @@ import { STANDARD_144 } from '@mahjongsolitaire/core';
 import {
   BASE_BORDER,
   BASE_FACE,
+  BOARD_FELT,
   BORDER_WIDTH,
+  contrastRatio,
+  depthSteps,
   DIMMED_STEPS,
   LAYER_FACE_STEP,
   LAYER_INK_STEP,
+  relativeLuminance,
+  scaleColor,
   SHADOW_DX,
   SHADOW_DY,
   SHADOW_PAD,
   SHADOW_RINGS,
   SHADOW_UP_LEFT_RATIO,
   SIDE_BAND_FACTORS,
-  contrastRatio,
-  depthSteps,
-  relativeLuminance,
-  scaleColor,
   tileShade,
 } from '../src/depth.js';
 import { faceStyle } from '../src/faces.js';
+import { BACK_FACE, BACK_KEYLINE } from '../src/render.js';
 import { SIDE_DEPTH, TILE_H, TILE_W } from '../src/geometry.js';
 
 /** Spec §7 / issue #12: text and pips against their own tile face. */
@@ -84,6 +86,33 @@ test('every ink holds 4.5:1 against its own face, on every layer, dimmed or not'
     worst.ratio >= MIN_TEXT_CONTRAST,
     `worst ink contrast ${worst.ratio.toFixed(2)}:1 at ${worst.where}`,
   );
+});
+
+test('issue #82: the face-down back never sinks into the felt, on any undimmed layer', () => {
+  // The soft-background / strong-tile rule: the felt is the muted variant, the
+  // back the saturated one, and the pair must hold WCAG 1.4.11's non-text 3:1
+  // on every layer a shipped layout reaches. Dimmed shades are exempt — the
+  // "Highlight free tiles" aid dims blocked tiles on purpose.
+  let worst = { ratio: Infinity, where: '' };
+  for (const { z, topZ, dimmed } of everyShade()) {
+    if (dimmed) continue;
+    const factor = 1 - LAYER_FACE_STEP * depthSteps(z, topZ);
+    const ratio = contrastRatio(scaleColor(BACK_FACE, factor), BOARD_FELT);
+    if (ratio < worst.ratio) worst = { ratio, where: `z=${z} topZ=${topZ}` };
+  }
+  assert.ok(
+    worst.ratio >= MIN_NON_TEXT_CONTRAST,
+    `worst back-vs-felt contrast ${worst.ratio.toFixed(2)}:1 at ${worst.where}`,
+  );
+});
+
+test('issue #82: the back keyline holds 3:1 on the back, on every layer, dimmed or not', () => {
+  let worst = Infinity;
+  for (const { z, topZ, dimmed } of everyShade()) {
+    const factor = 1 - LAYER_FACE_STEP * depthSteps(z, topZ, dimmed);
+    worst = Math.min(worst, contrastRatio(scaleColor(BACK_FACE, factor), scaleColor(BACK_KEYLINE, factor)));
+  }
+  assert.ok(worst >= MIN_NON_TEXT_CONTRAST, `worst keyline contrast ${worst.toFixed(2)}:1`);
 });
 
 test('receding never tightens the contrast budget: the worst case only improves', () => {
