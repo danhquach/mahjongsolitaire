@@ -5,3 +5,4 @@
 # the machine that wrote them, so committing them would publish a local username.
 .claude/agent-memory/
 **/.claude/agent-memory/
+.DS_Store

@@ -505,20 +505,23 @@ async function start(): Promise<void> {
    */
   function playMatchAnimation(a: TileId, b: TileId, heldBefore: ReadonlySet<TileId>): void {
     // A tile matched out of the holder has no board position to fly from — the
-    // strip is HUD, not board space — so a holder match is not flown at all.
-    // The slot emptying is its own feedback; the impact haptic still fires here
-    // rather than waiting for a collision that never happens (issue #43).
-    if (heldBefore.has(a) || heldBefore.has(b)) {
-      feedback.haptic('match');
-      return;
-    }
+    // strip is HUD, not board space — so only the board-side tiles fly. A
+    // holder match still gets the full effect on its one board tile (issue
+    // #73): two copies of it collapse on its own centre, so the punch, flash
+    // and burst play in place. The slot emptying is the holder's own feedback.
+    const onBoard = [a, b].filter((id) => !heldBefore.has(id));
     const flying: FlyingTile[] = [];
-    for (const id of [a, b]) {
+    for (const id of onBoard.length === 1 ? [onBoard[0]!, onBoard[0]!] : onBoard) {
       const display = renderer.detachedTile(game, id);
       if (display) flying.push({ display, center: tileCenter(id) });
     }
-    // Nothing sensible to fly; the board itself is already correct.
-    if (flying.length !== 2) return;
+    // Nothing sensible to fly (both tiles held, or no copies): the board is
+    // already correct — fire the impact haptic rather than waiting for a
+    // collision that never happens (issue #43).
+    if (flying.length !== 2) {
+      feedback.haptic('match');
+      return;
+    }
     animator.playMatch(flying[0]!, flying[1]!, () => feedback.haptic('match'));
   }
 
