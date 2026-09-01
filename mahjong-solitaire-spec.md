@@ -118,11 +118,11 @@ never having happened, not the player returning a tile.
   a keyboard or screen-reader player reaches it with two ordinary activations,
   and a selected tile's accessible name says so.
 
-**Match rule** *(amended by decision 0005, PM 2026-08-30 — wildcard groups removed)*:
-- **Identical face match for ALL tiles**, Flowers and Seasons included (Dots, Bamboo, Characters 1–9 ×4, Winds ×4, Dragons ×3, Flowers ×2 per face, Seasons ×2 per face).
+**Match rule** *(amended by decision 0005, PM 2026-08-30 — wildcard groups removed; face set amended by decision 0012, PM 2026-08-31)*:
+- **Identical face match for ALL tiles**, Seasons included (Dots, Bamboo, Characters 1–9 ×4, Winds ×4, Dragons ×3, Seasons ×2 per face).
 
 ### 3.4 Tile set
-Standard 144: 36 Dots, 36 Bamboo, 36 Characters, 16 Winds, 12 Dragons, 4 Flowers, 4 Seasons. Flowers and Seasons ship as two identical copies of two faces each (`flower-1` ×2, `flower-2` ×2; `season-1` ×2, `season-2` ×2 — decision 0005) so every tile has an identical partner. Layouts may use fewer tiles but always an even count per face.
+Standard 144: 36 Dots, 36 Bamboo, 36 Characters, 16 Winds, 12 Dragons, 8 Seasons. The Flower suit is removed (decision 0012); the Seasons are the four real seasons as two identical copies each (`season-spring|summer|fall|winter` ×2 — decisions 0005/0012) so every tile has an identical partner. Layouts may use fewer tiles but always an even count per face.
 
 ### 3.5 Win / loss
 - **Win:** all tiles removed. Held tiles count as in play — an empty board with a tile still parked is not a win (decision 0008).

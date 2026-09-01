@@ -2,6 +2,12 @@
 
 **Status:** APPROVED (PM, 2026-08-30) · **Date:** 2026-08-30 · **Issue:** #7 (surfaced during generator review) · **Spec:** §3.3–3.4 amended
 
+> **Amended by decision 0012 (2026-08-31, issue #75):** the Flower suit is
+> removed and the Seasons become the four real seasons —
+> `season-spring|summer|fall|winter` ×2 each (8 tiles; 144 total unchanged).
+> The identical-only match rule below stands; the `flower-*`/`season-1|2`
+> face ids in the examples are the pre-0012 ones.
+
 ## Decision
 
 The match rule is **identical face for all tiles**. The classic Flower/Season

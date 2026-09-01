@@ -51,6 +51,27 @@ export const PIP_AREA: Rect = {
   h: TILE_H - (TAG_BOX.y + TAG_BOX.h + TAG_CLEARANCE) - BOTTOM_MARGIN,
 };
 
+// --- composed season faces (issue #75, decision 0012) --------------------------
+// The Seasons draw text, not pips, but their layout lives here with the rest of
+// the face geometry so ui/test/faces.test.ts can bound it the way pips.test.ts
+// bounds the pip art — this file's header is the story of what happens when
+// face art is sized inline in the renderer with nothing checking containment.
+
+/** Main pictogram type size. */
+export const SEASON_GLYPH_SIZE = TILE_H * 0.32;
+/** Scatter companion type size. */
+export const SEASON_SCATTER_SIZE = TILE_H * 0.13;
+/** Season name type size. Floor-tested against TAG_FONT_SIZE: the corner tag
+ *  is the established smallest-legible reference, and a whole word carries
+ *  more shape than a lone digit, so it may run somewhat smaller — never less
+ *  than 70% of it (QA-confirmed legible at the smallest rendered tile). */
+export const SEASON_NAME_SIZE = TILE_H * 0.14;
+/** Pictogram centre in unit pip-area coordinates — above centre so the name
+ *  band underneath stays clear of it. */
+export const SEASON_GLYPH_POS = { x: 0.5, y: 0.36 } as const;
+/** Name-text centre in unit pip-area coordinates. */
+export const SEASON_NAME_POS = { x: 0.5, y: 0.88 } as const;
+
 /** Pip diameter as a fraction of the room it has — just short of touching. */
 const RING_FILL = 0.92;
 /** Ceiling on a ring's radius, for ranks with acres of room (ranks 1 and 2). */
