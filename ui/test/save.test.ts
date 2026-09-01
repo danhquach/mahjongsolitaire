@@ -216,10 +216,13 @@ test('resume restores a mid-pair holder, and the undo stack behind it', () => {
   const resumed = forceQuit(game)!;
   assert.deepEqual(resumed.holderSlots(), game.holderSlots());
   assert.equal(resumed.undoDepth, game.undoDepth);
-  // Unlimited undo depth (spec §5) survives the quit, all the way back.
-  while (resumed.undo());
-  assert.equal(resumed.tilesLeft, level.tiles.length);
-  assert.equal(resumed.score, 0);
+  // The parked tile is still returnable after the quit (issue #100); the
+  // matches stay played, and so does their score.
+  const scoreBefore = resumed.score;
+  assert.equal(resumed.undo()?.kind, 'hold');
+  assert.equal(resumed.undo(), null, 'matches are permanent');
+  assert.equal(resumed.tilesLeft, level.tiles.length - 10, 'the 5 pairs stay gone');
+  assert.equal(resumed.score, scoreBefore);
 });
 
 test('resume reproduces shuffled faces, including undo across a shuffle', () => {
@@ -229,9 +232,11 @@ test('resume reproduces shuffled faces, including undo across a shuffle', () => 
     game.tap(free(a), 0);
     game.tap(free(b), 0);
   }
+  // Park a tile before the shuffle, then return it after: the returned tile
+  // predates the shuffle, which is exactly the case a move-list replay cannot
+  // reproduce (see save.ts).
+  game.tap(free(game.board.freeTileIds()[0]!), 0);
   assert.equal(game.shuffle(0xbeef), true);
-  // Undo *after* a shuffle is exactly the case a move-list replay cannot
-  // reproduce (see save.ts): the restored pair predates the shuffle.
   assert.notEqual(game.undo(), null);
 
   const resumed = forceQuit(game, { shuffles: 1, elapsedMs: 0 })!;
@@ -484,17 +489,18 @@ test('a lost level still saves, so a reload is not an escape hatch (issue #63)',
   assert.equal(resumed!.stateHash(), game.stateHash());
 });
 
-test('a resumed game can undo all the way back through its holds', () => {
+test('a resumed game can return every tile still parked', () => {
   // The whole point of validating the undo chain: what parses must also play.
   const resumed = forceQuit(new Game(generateValidatedLevel(TURTLE, SAMPLE_SEED)));
   assert.notEqual(resumed, null);
   const fromHolder = reopen(TURTLE, heldSave())!;
   assert.notEqual(fromHolder, null);
   assert.ok(fromHolder.holdsUsed > 0);
+  const tilesBefore = fromHolder.tilesLeft;
   while (fromHolder.undoDepth > 0) assert.notEqual(fromHolder.undo(), null);
+  assert.equal(fromHolder.undo(), null, 'matches stay permanent');
   assert.deepEqual(fromHolder.holderSlots(), [null, null, null, null]);
-  assert.equal(fromHolder.tilesLeft, fromHolder.level.tiles.length);
-  assert.equal(fromHolder.score, 0);
+  assert.equal(fromHolder.tilesLeft, tilesBefore, 'returns move tiles, never revive them');
 });
 
 test('unreadable storage reads as no save, and a blocked write is not fatal', () => {

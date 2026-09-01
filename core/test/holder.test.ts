@@ -378,11 +378,10 @@ test('shuffle permutes the board around a held tile, which keeps its own face', 
 
 // --- move stack: hold / holder-match ------------------------------------------
 
-test('hold is a move: it is recorded, and undo puts the tile back', () => {
+test('hold is a move: it is recorded, and undo returns the tile', () => {
   const board = coveredBoard();
   const stack = new MoveStack(board);
-  stack.select(1);
-  const before = stack.stateHash(); // selection included: undo restores it too
+  const before = stack.stateHash();
   assert.equal(stack.hold(1, 1000), 0);
   assert.equal(stack.depth, 1);
   assert.equal(stack.holdsUsed, 1);
@@ -393,13 +392,13 @@ test('hold is a move: it is recorded, and undo puts the tile back', () => {
   assert.equal(undone?.kind, 'hold');
   assert.deepEqual(board.holderSlots(), [null, null, null, null]);
   assert.equal(stack.holdsUsed, 0);
-  assert.equal(stack.selection, 1); // the selection it was taken from
   assert.equal(stack.stateHash(), before);
 });
 
-test('the holder is one-way: undo is the only thing that empties a slot', () => {
-  // Decision 0009. There is no `unhold` on the stack any more — the only two
-  // ways a slot comes free are a match and taking the hold itself back.
+test('the holder is one-way in play: a slot frees only by match or Undo', () => {
+  // Decision 0009 as amended by issue #100. There is no `unhold` move on the
+  // stack — a slot comes free by matching the tile in it, or by the Undo
+  // booster returning the newest parked tile.
   const board = coveredBoard();
   const stack = new MoveStack(board);
   assert.equal('unhold' in stack, false, 'no return move exists on the stack');
@@ -417,41 +416,34 @@ test('the holder is one-way: undo is the only thing that empties a slot', () => 
   assert.equal(stack.holdsUsed, 1, 'and the undone hold stops counting');
 });
 
-test('undoing a holder match puts each tile back in the slot it came from', () => {
+test('a holder match is permanent: undo has nothing left to return', () => {
   const board = coveredBoard();
   const stack = new MoveStack(board);
   stack.hold(1, 1000); // slot 0
   stack.hold(3, 2000); // slot 1
-  const held = stack.stateHash();
 
-  stack.play(1, 3, 3000); // holder to holder
+  stack.play(1, 3, 3000); // holder to holder — both slots free again, for good
   assert.deepEqual(board.holderSlots(), [null, null, null, null]);
   assert.equal(board.get(1).removed, true);
 
-  const undone = stack.undo();
-  assert.equal(undone?.kind, 'match');
-  assert.deepEqual(board.holderSlots(), [1, 3, null, null]);
-  assert.equal(board.isHeld(1), true);
-  assert.equal(board.isHeld(3), true);
-  assert.equal(stack.stateHash(), held);
+  assert.equal(stack.undo(), null, 'matched out of the holder means gone');
+  assert.equal(board.get(1).removed, true);
+  assert.equal(board.get(3).removed, true);
 });
 
-test('undoing a mixed match returns one tile to the board and one to the holder', () => {
+test('undo after a mixed match returns only the tile still parked', () => {
   const board = coveredBoard();
   const stack = new MoveStack(board);
   stack.hold(1, 1000); // frees tile 0
-  const held = stack.stateHash();
-  stack.play(0, 2, 2000); // both board tiles
-  stack.undo();
-  assert.equal(stack.stateHash(), held);
+  stack.play(0, 2, 2000); // both board tiles, played after the park
+  const scoreAfter = stack.score;
 
-  // Now the other way round: the held tile is half of the pair.
-  stack.hold(3, 3000);
-  const twoHeld = stack.stateHash();
-  stack.play(3, 1, 4000);
-  stack.undo();
-  assert.equal(stack.stateHash(), twoHeld);
-  assert.deepEqual(board.holderSlots(), [1, 3, null, null]);
+  const undone = stack.undo();
+  assert.equal(undone?.tile, 1, 'the parked tile comes back');
+  assert.equal(board.isHeld(1), false);
+  assert.equal(board.get(0).removed, true, 'the match played after it stays');
+  assert.equal(board.get(2).removed, true);
+  assert.equal(stack.score, scoreAfter, 'and its score stays too');
 });
 
 test('a full holder makes hold a no-op rather than an error — the level is over', () => {
@@ -496,10 +488,10 @@ test('holder contents survive a state round-trip, undo depth included', () => {
   assert.equal(reopened.stateHash(), live);
   assert.equal(reopened.holdsUsed, 1);
 
-  // …and it can be unwound all the way back from there.
+  // …and the parked tile is still returnable from there; the match stays.
   while (reopened.undo());
   assert.equal(reopenedBoard.holderSlots().every((s) => s === null), true);
-  assert.equal(reopenedBoard.presentTiles().length, 4);
+  assert.equal(reopenedBoard.presentTiles().length, 2, 'the match is permanent');
 });
 
 test('a held tile is a selectable, restorable selection', () => {
@@ -513,9 +505,9 @@ test('a held tile is a selectable, restorable selection', () => {
   assert.equal(reopened.selection, 1);
 });
 
-// --- acceptance: determinism across a move list containing holds --------------
+// --- acceptance: undo across a move list containing holds ---------------------
 
-test('property: a move list with holds replays to an identical state hash', () => {
+test('property: undo returns parked tiles newest-first, skipping matched-out parks', () => {
   const rng = mulberry32(0x43043043);
   for (const layout of SEED_LAYOUTS) {
     for (const seed of [3, 77, 4242]) {
@@ -523,45 +515,45 @@ test('property: a move list with holds replays to an identical state hash', () =
       const board = new Board(level.tiles);
       const stack = new MoveStack(board);
 
-      // A random script of holds and matches — every move type there now is
-      // (decision 0009 removed the return), in an order a player could produce.
-      // Holds stop one slot short, because filling the holder ends the level and
-      // a lost level has no further moves to replay.
-      type Step = ['hold', TileId] | ['match', TileId, TileId];
-      const script: Step[] = [];
+      // A random script of holds and matches, in an order a player could
+      // produce. Holds stop one slot short, because filling the holder ends
+      // the level and a lost level has no further moves.
+      const holdsInOrder: TileId[] = [];
       let clock = 0;
-      const apply = (step: Step): void => {
-        clock += 1000;
-        if (step[0] === 'hold') stack.hold(step[1], clock);
-        else stack.play(step[1], step[2]!, clock);
-      };
-
       for (let i = 0; i < 24; i++) {
         const free = board.freeTileIds();
         const pairs = legalPairs(board);
         const roll = rng();
-        let step: Step | null = null;
+        clock += 1000;
         if (roll < 0.45 && board.holderVacancies() > 1 && free.length > 0) {
-          step = ['hold', free[Math.floor(rng() * free.length)]!];
+          const tile = free[Math.floor(rng() * free.length)]!;
+          stack.hold(tile, clock);
+          holdsInOrder.push(tile);
         } else if (pairs.length > 0) {
           const pair = pairs[Math.floor(rng() * pairs.length)]!;
-          step = ['match', pair[0], pair[1]];
-        }
-        if (step === null) break;
-        script.push(step);
-        apply(step);
+          stack.play(pair[0], pair[1], clock);
+        } else break;
       }
-      assert.ok(script.some((s) => s[0] === 'hold'), 'script should contain a hold');
+      assert.ok(holdsInOrder.length > 0, 'script should contain a hold');
 
-      const hashAfterApply = stack.stateHash();
-      const n = 1 + Math.floor(rng() * script.length);
-      const replay = script.slice(script.length - n);
-      for (let i = 0; i < n; i++) assert.notEqual(stack.undo(), null);
-      assert.notEqual(stack.stateHash(), hashAfterApply);
-      clock = (script.length - n) * 1000;
-      replay.forEach(apply);
+      const inPlayBefore = board.inPlayTiles().length;
+      const scoreBefore = stack.score;
+      // Expected returns: parked tiles still in the holder, newest first —
+      // a park later matched out of the holder is not a candidate.
+      const expected = holdsInOrder.filter((t) => board.isHeld(t)).reverse();
+      assert.equal(stack.undoDepth, expected.length, `${layout.id} seed ${seed}`);
 
-      assert.equal(stack.stateHash(), hashAfterApply, `${layout.id} seed ${seed}`);
+      for (const tile of expected) {
+        assert.equal(stack.undo()?.tile, tile, `${layout.id} seed ${seed}: newest-first`);
+      }
+      assert.equal(stack.undo(), null, 'matches are permanent');
+      assert.ok(board.holderSlots().every((slot) => slot === null));
+      assert.equal(
+        board.inPlayTiles().length,
+        inPlayBefore,
+        'returns never resurrect a matched tile',
+      );
+      assert.equal(stack.score, scoreBefore, 'returns never touch the score');
     }
   }
 });

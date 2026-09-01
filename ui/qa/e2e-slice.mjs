@@ -1184,17 +1184,57 @@ for (const vp of VIEWPORTS) {
     );
 
     // Play the hinted pair with real taps (two moves since issue #93: a hold
-    // and a match), then Undo both: board, score and holder come back; each
-    // Undo costs one charge, Hint is untouched. Hint points at face-down tiles
-    // too (issue #64, PM-intended leak), so the taps may need the extra peek.
+    // and a match). The pair clears in the holder, so the holder ends empty —
+    // and since issue #100 a match is permanent: Undo has nothing to return.
+    // Hint points at face-down tiles too (issue #64, PM-intended leak), so the
+    // taps may need the extra peek.
     for (const id of hint2) await tapTile(id);
     const matched = await page.evaluate(() => ({
       tilesLeft: window.__slice.game.tilesLeft,
       score: window.__slice.game.score,
     }));
     check(matched.tilesLeft === 142 && matched.score > 0, 'hinted pair is matchable', matched);
+
+    // Undo with an empty holder: no charge, no rewind, and it says why.
     await page.click('#btn-undo');
-    const undone = await page.evaluate(() => ({
+    const noUndo = await page.evaluate(() => ({
+      tilesLeft: window.__slice.game.tilesLeft,
+      score: window.__slice.game.score,
+      charges: window.__slice.boosterCharges(),
+      said: document.getElementById('a11y-status').textContent,
+    }));
+    check(
+      noUndo.tilesLeft === 142 && noUndo.score === matched.score,
+      'a match is permanent: undo rewinds nothing (issue #100)',
+      noUndo,
+    );
+    check(noUndo.charges.undo === 5, 'a no-op undo costs nothing', noUndo);
+    check(
+      /Nothing to undo — the holder is empty\./.test(noUndo.said),
+      'a no-op undo explains itself',
+      noUndo.said,
+    );
+
+    // Park a tile, then Undo returns it: one charge, score untouched.
+    const parkedId = await page.evaluate(() => {
+      const s = window.__slice;
+      const held = new Set(s.holder().slots.filter((id) => id !== null));
+      return s.game
+        .hitCandidates()
+        .find((c) => c.free && !held.has(c.id) && !s.game.isFaceHidden(c.id) && !s.game.pairsWithHeld(c.id))?.id;
+    });
+    await tapTile(parkedId);
+    const parked = await page.evaluate(() => ({
+      holder: window.__slice.holder(),
+      score: window.__slice.game.score,
+    }));
+    check(
+      parked.holder.slots.some((id) => id !== null),
+      'the tap parked a tile to return',
+      parked.holder,
+    );
+    await page.click('#btn-undo');
+    const returned = await page.evaluate(() => ({
       tilesLeft: window.__slice.game.tilesLeft,
       score: window.__slice.game.score,
       holder: window.__slice.holder(),
@@ -1202,48 +1242,26 @@ for (const vp of VIEWPORTS) {
       said: document.getElementById('a11y-status').textContent,
     }));
     check(
-      undone.tilesLeft === 144 && undone.score === 0,
-      'undo restores the pair and the score',
-      undone,
+      returned.holder.slots.every((id) => id === null),
+      'undo returns the parked tile to the board',
+      returned.holder,
     );
     check(
-      undone.holder.slots.some((id) => id !== null),
-      'the match undoes back into the holder (issue #93)',
-      undone.holder,
+      returned.tilesLeft === 142 && returned.score === parked.score,
+      'the return touches neither the matches nor the score',
+      returned,
     );
     check(
-      undone.charges.undo === 4 && undone.charges.hint === 3,
+      returned.charges.undo === 4 && returned.charges.hint === 3,
       'undo spent exactly one undo charge',
-      undone.charges,
-    );
-    check(/4 undos left\.$/.test(undone.said.trim()), 'undo announces the balance', undone.said);
-
-    // The second undo takes back the hold itself.
-    await page.click('#btn-undo');
-    const unheld = await page.evaluate(() => ({
-      holder: window.__slice.holder(),
-      charges: window.__slice.boosterCharges(),
-      said: document.getElementById('a11y-status').textContent,
-    }));
-    check(
-      unheld.holder.slots.every((id) => id === null),
-      'a second undo takes the hold back',
-      unheld,
+      returned.charges,
     );
     check(
-      /taken back out of the holder/.test(unheld.said),
+      /taken back out of the holder/.test(returned.said),
       'and says what came back',
-      unheld.said,
+      returned.said,
     );
-
-    // Undo with an empty stack: no charge, and it says why.
-    await page.click('#btn-undo');
-    const noUndo = await page.evaluate(() => ({
-      charges: window.__slice.boosterCharges(),
-      said: document.getElementById('a11y-status').textContent,
-    }));
-    check(noUndo.charges.undo === 3, 'a no-op undo costs nothing', noUndo);
-    check(/Nothing to undo yet\./.test(noUndo.said), 'a no-op undo explains itself', noUndo.said);
+    check(/4 undos left\.$/.test(returned.said.trim()), 'undo announces the balance', returned.said);
 
     // Shuffle: same tiles in the same slots, still playable, one charge spent.
     const beforeShuffle = await page.evaluate(() =>
@@ -1263,7 +1281,8 @@ for (const vp of VIEWPORTS) {
       charges: window.__slice.boosterCharges(),
       said: document.getElementById('a11y-status').textContent,
     }));
-    check(shuffled.tilesLeft === 144, 'shuffle keeps every tile in play', shuffled);
+    // 142: the hinted pair above is matched for good (issue #100).
+    check(shuffled.tilesLeft === 142, 'shuffle keeps every tile in play', shuffled);
     check(shuffled.status === 'playing', 'shuffled board is playable', shuffled);
     check(shuffled.signature !== beforeShuffle, 'shuffle re-randomized the faces', {
       changed: shuffled.signature !== beforeShuffle,
@@ -1297,12 +1316,12 @@ for (const vp of VIEWPORTS) {
       ),
     }));
     check(
-      resumed.charges.hint === 0 && resumed.charges.undo === 3 && resumed.charges.shuffle === 4,
+      resumed.charges.hint === 0 && resumed.charges.undo === 4 && resumed.charges.shuffle === 4,
       'charges persist across a restart',
       resumed.charges,
     );
     check(
-      resumed.badges.join('/') === '0/3/4',
+      resumed.badges.join('/') === '0/4/4',
       'the restored balances are on the buttons',
       resumed.badges,
     );
@@ -1365,6 +1384,7 @@ for (const vp of VIEWPORTS) {
           shuffleStillOffered: !document.getElementById('overlay-shuffle').hidden,
           undoOffered: !document.getElementById('overlay-undo').hidden,
           focus: document.activeElement?.id,
+          holderHasTile: window.__slice.holder().slots.some((id) => id !== null),
         }));
         check(
           rescued.charges.shuffle === stuck.charges.shuffle,
@@ -1377,13 +1397,23 @@ for (const vp of VIEWPORTS) {
           rescued.said,
         );
         check(!refused.shuffleStillOffered, 'a refused shuffle stops being offered', refused);
-        check(
-          refused.undoOffered && refused.focus === 'overlay-undo',
-          'the dialog still offers Undo as the way out',
-          refused,
-        );
+        // Issue #100: Undo is a return move, so the dialog offers it only when
+        // the holder has a tile to give back.
+        if (refused.holderHasTile) {
+          check(
+            refused.undoOffered && refused.focus === 'overlay-undo',
+            'the dialog still offers Undo — a tile is parked',
+            refused,
+          );
+        } else {
+          check(
+            !refused.undoOffered,
+            'no parked tile, so no Undo either (issue #100)',
+            refused,
+          );
+        }
         console.log(
-          `${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: unshufflable deadlock degrades to Undo (deal ${stuck.deal + 1}, ${stuck.tilesLeft} tiles left)`,
+          `${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: unshufflable deadlock degrades honestly (deal ${stuck.deal + 1}, ${stuck.tilesLeft} tiles left)`,
         );
       }
     }
@@ -1405,33 +1435,51 @@ for (const vp of VIEWPORTS) {
       console.log(`  note — ${vp.name}: no deadlock in ${DEADLOCK_HUNT_DEALS} naive deals; Undo-only check skipped`);
     } else {
       check(!stuck.shuffleOffered, 'a spent Shuffle is not offered', stuck);
-      check(stuck.undoOffered, 'Undo is offered as the remaining way out', stuck);
-      check(stuck.focus === 'overlay-undo', 'focus lands on Undo, not Restart', stuck);
-      await page.click('#overlay-undo');
-      const resumed = await page.evaluate(() => ({
-        status: window.__slice.game.status(),
-        overlayVisible: document.getElementById('overlay').classList.contains('visible'),
-        charges: window.__slice.boosterCharges(),
-        focusIsTile: document.activeElement?.classList.contains('tile-node') === true,
-        said: document.getElementById('a11y-status').textContent,
-      }));
-      check(
-        resumed.status === 'playing' && !resumed.overlayVisible,
-        'undoing out of a deadlock resumes play',
-        resumed,
+      const holderHasTile = await page.evaluate(() =>
+        window.__slice.holder().slots.some((id) => id !== null),
       );
-      check(resumed.charges.undo === 4, 'the rescue undo spent one charge', resumed.charges);
-      check(resumed.focusIsTile, 'focus returns to the board, not <body>', resumed);
-      // Whatever came back is named: a pair, or a hold the hunt took to get
-      // here (issue #43 makes holds undoable moves too).
-      check(
-        /(pair restored|the holder)\./.test(resumed.said),
-        'the undo rescue is announced',
-        resumed.said,
-      );
-      console.log(
-        `${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: deadlock rescued by Undo when Shuffle is spent (deal ${stuck.deal + 1})`,
-      );
+      if (!holderHasTile) {
+        // Issue #100: Undo cannot rescue a deadlock caused purely by matching.
+        check(!stuck.undoOffered, 'empty holder: Undo is not offered (issue #100)', stuck);
+        console.log(
+          `${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: matching-only deadlock offers no Undo (deal ${stuck.deal + 1})`,
+        );
+      } else {
+        check(stuck.undoOffered, 'a parked tile makes Undo the offered way out', stuck);
+        check(stuck.focus === 'overlay-undo', 'focus lands on Undo, not Restart', stuck);
+        const heldBefore = await page.evaluate(
+          () => window.__slice.holder().slots.filter((id) => id !== null).length,
+        );
+        await page.click('#overlay-undo');
+        const rescued = await page.evaluate(() => ({
+          status: window.__slice.game.status(),
+          overlayVisible: document.getElementById('overlay').classList.contains('visible'),
+          charges: window.__slice.boosterCharges(),
+          heldNow: window.__slice.holder().slots.filter((id) => id !== null).length,
+          said: document.getElementById('a11y-status').textContent,
+        }));
+        check(
+          rescued.heldNow === heldBefore - 1,
+          'the rescue undo returned one parked tile',
+          rescued,
+        );
+        check(rescued.charges.undo === 4, 'the rescue undo spent one charge', rescued.charges);
+        check(
+          /taken back out of the holder/.test(rescued.said),
+          'the return is announced',
+          rescued.said,
+        );
+        // The return re-covers what parking freed; it may or may not open a
+        // pair, so both a resumed board and a still-stuck dialog are honest.
+        check(
+          rescued.status === 'playing' ? !rescued.overlayVisible : rescued.status === 'stuck',
+          'the board resumes play or stays honestly stuck',
+          rescued,
+        );
+        console.log(
+          `${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: parked-tile deadlock handled by Undo (deal ${stuck.deal + 1}, ${rescued.status})`,
+        );
+      }
     }
   }
 

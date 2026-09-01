@@ -103,18 +103,16 @@ test('a parked concealed tile shows its face in the holder', () => {
   assert.equal(game.peeked, null);
 });
 
-test('undoing a match brings concealed tiles back face-down', () => {
+test('a returned concealed tile comes back face-down (issue #100)', () => {
   const game = new Game(ROW, undefined, [0, 2]);
   game.tap(free(0), 1); // reveal
   game.tap(free(0), 2); // to the holder (face-up there)
-  game.tap(free(2), 3); // reveal the partner
-  game.tap(free(2), 4); // matched in the holder
-  assert.equal(game.undo()?.kind, 'match');
-  // Tile 0 comes back *held* (the match took it from the holder), so it stays
-  // face-up on the player's shelf; tile 2 comes back to the board, and its
-  // peek does not survive the undo — face-down again.
-  assert.equal(game.board.isHeld(0), true);
-  assert.equal(game.isFaceHidden(0), false);
+  game.tap(free(2), 3); // peek the partner on the board
+  assert.equal(game.undo()?.kind, 'hold');
+  // Tile 0 comes back to the board face-down (the concealed set is fixed),
+  // and tile 2's peek does not survive the undo.
+  assert.equal(game.board.isHeld(0), false);
+  assert.equal(game.isFaceHidden(0), true);
   assert.equal(game.isFaceHidden(2), true);
   assert.equal(game.peeked, null);
 });
