@@ -1,7 +1,7 @@
 # Mahjong Solitaire — Product Roadmap
 
 **Source spec:** [mahjong-solitaire-spec.md](mahjong-solitaire-spec.md)
-**Owner:** PM (Danh) · **Status:** v0.4.0 — 2026-08-31 (wk-5 playtest feedback folded in: game feel added to Phase 3; Holder pulled from the v1.1+ backlog into Phase 3 per decision 0008)
+**Owner:** PM (Danh) · **Status:** v0.5.0 — 2026-08-31 (wk-5 playtest feedback folded in: game feel added to Phase 3; Holder pulled from the v1.1+ backlog into Phase 3 per decision 0008; ladder rescoped from 500-level rising curve to 150-level plateau ladder per decision 0011)
 **Target:** iOS + Android · MVP scope per spec §2.1
 
 ---
@@ -29,7 +29,7 @@
 | When | What's playable |
 |---|---|
 | **End of wk 5** (Phase 2 exit) | First hands-on playtest: one full level, boosters, save/resume — any browser (mobile or desktop) |
-| **End of wk 9** (Phase 4 exit) | Feature-complete MVP per spec §2.1: 500 levels, Daily Challenge, ads behind opt-in toggle (default OFF) — broad playtest |
+| **End of wk 9** (Phase 4 exit) | Feature-complete MVP per spec §2.1: 150 levels (decision 0011), Daily Challenge, ads behind opt-in toggle (default OFF) — broad playtest |
 | **Wk 12** (Phase 5 exit) | Release-quality build → soft launch |
 
 ## 3. Phases
@@ -54,17 +54,17 @@
 **Dependency:** final tile art lands mid-phase; ship slice on placeholders if late.
 
 ### Phase 3 — Content & progression (M3) · 2 wks
-**Deliverables:** 10 layouts as JSON data; 500-level ladder (curated + generated, interleaved difficulty curve with easy "relief" every ~5); scoring + Super Combo; star ratings; Daily Challenge (date-hash seed, DST/timezone-safe); local progression persistence.
+**Deliverables:** 10 layouts as JSON data; 150-level plateau ladder (curated + generated; decision 0011: three flat bands — 1–20 Easy, 21–60 Medium, 61–150 Medium+ — every 10th level spiking one band up; no rising curve or separate relief levels); scoring + Super Combo; star ratings; Daily Challenge (date-hash seed, DST/timezone-safe); local progression persistence.
 **Game feel lands here, not in Phase 5** (added 2026-08-31 from the wk-5 playtest): the wk-9 broad playtest is the first real read on retention, and it is worthless if the board is unreadable and matching feels like nothing. Two items:
 - **Tile depth readability (issue #45):** stacked layers currently read as one flat sheet — you cannot see which tiles are free without tapping. Drop shadows + side shading + per-layer value shift. Ships with the 10 layouts because every layout stacks differently.
 - **Match feedback animation (issue #44):** matched tiles fly together and collide instead of vanishing; mismatch shake; reduced-motion alternative. Pairs with Super Combo — a 5s-window scoring mechanic with no visible feedback will not read.
-- **Holder — temporary tile store (issue #43, pulled in 2026-08-31):** four off-board slots a free tile can be parked in to reach what is under it, always available and free (decision 0008). Core-engine work, not UI: hold and holder-match are move types in the determinism contract, held tiles are matchable to the solver and hint, and the deadlock check looks through hold sequences before it offers Shuffle. **It has to land before ladder calibration**, which is why it is here and not in v1.1: an always-available assist changes every level's effective difficulty, and re-bucketing 500 levels afterwards is the expensive path.
+- **Holder — temporary tile store (issue #43, pulled in 2026-08-31):** four off-board slots a free tile can be parked in to reach what is under it, always available and free (decision 0008). Core-engine work, not UI: hold and holder-match are move types in the determinism contract, held tiles are matchable to the solver and hint, and the deadlock check looks through hold sequences before it offers Shuffle. **It has to land before ladder calibration**, which is why it is here and not in v1.1: an always-available assist changes every level's effective difficulty, and re-bucketing the shipped ladder afterwards is the expensive path. (Decision 0011 later cut that cost differently: the v1 ladder is a 150-level plateau needing only band ordering, with full calibration deferred.)
   - **Amended the same day by decision 0009 (issue #63, playtest #16):** the holder is **one-way** — a parked tile can only leave by being matched, and filling the fourth slot **loses the level**. `unhold` is no longer a move (undo still rewinds a hold), the deadlock search stops one slot short of the park that would fill the holder, and spec §3.5 gains v1's one hard-fail.
   - **Parking is a board gesture (issue #62):** activate the selected free tile again; one tap on a board tile whose face is in the holder clears that pair. The rail's Hold control is retired.
 **Exit criteria:**
-- CI job validates all 500 shipped seeds solvable AND runs 10,000 random seeds × all 10 layouts (spec §11.1) — becomes a permanent release gate.
+- CI job validates all 150 shipped seeds solvable AND runs 10,000 random seeds × all 10 layouts (spec §11.1) — becomes a permanent release gate.
 - Daily Challenge determinism verified across device/timezone/DST fixtures.
-- Difficulty curve: no level's predicted difficulty (scorer metrics: `forced_move_ratio`, branching factor) deviates > 1 bucket from its ladder position; PM signs off against that report, not by feel. **Bucketed against holder-aware play** (issue #43 / decisions 0008 and 0009): `assessDifficulty` scores a no-holder position, which is no longer a bound in either direction — the holder opens positions the scorer cannot reach, *and* since 0009 it can lose the level outright. #18 has to bucket with both in the model.
+- Ladder ordering (decision 0011, replaces the rising-curve criterion): `assessDifficulty` produces no misordered pair among the bands in use — a spike level never scores below its decade's base levels, and no Medium+ level scores below the Medium median. PM signs off against a per-level report of band, score, and spike positions, not by feel. Full holder-aware bucket calibration (decisions 0008/0009) and concealment re-balance (decision 0010) are deferred to a follow-up ticket.
 - Depth readability: on each of the 10 layouts a first-time player identifies top-layer tiles without tapping; the cue survives greyscale and holds contrast ≥ 4.5:1 (issue #45).
 - Match animation plays at 60fps on the reference low-end device, never blocks input, and honours reduced-motion (issue #44).
 **Cost note:** these two items were not in the original 2-wk Phase 3 estimate. Expect ~+0.5 wk, or burn buffer.
@@ -124,6 +124,6 @@ Active Mind mode → themes/tile-set monetization → cloud save/sync → trophi
 |---|---|
 | Stack decision slips → M1 idles | Decide in Phase 0, time-box spike to 3 days |
 | Art lead time > 5 wks | Kick off wk 1; placeholders unblock all phases |
-| 500-level curation underestimated (largest hidden cost) | Generator + scorer automate bucketing; human review only flagged outliers |
+| Level curation underestimated (largest hidden cost) | Decision 0011 cut the ladder to 150 levels needing only band ordering; generator + scorer automate it; human review only flagged outliers |
 | Ad SDK bloat breaks 80MB budget | Size check in CI from Phase 4 |
 | Soft-launch data inconclusive | Pre-register metric thresholds (§1) before launch |

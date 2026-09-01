@@ -1,0 +1,752 @@
+[
+  {
+    "level": 1,
+    "layoutId": "butterfly",
+    "seed": 100000
+  },
+  {
+    "level": 2,
+    "layoutId": "cat",
+    "seed": 200000
+  },
+  {
+    "level": 3,
+    "layoutId": "moon_gate",
+    "seed": 300000
+  },
+  {
+    "level": 4,
+    "layoutId": "moon_gate",
+    "seed": 400001
+  },
+  {
+    "level": 5,
+    "layoutId": "windmill",
+    "seed": 500000
+  },
+  {
+    "level": 6,
+    "layoutId": "windmill",
+    "seed": 600001
+  },
+  {
+    "level": 7,
+    "layoutId": "windmill",
+    "seed": 700001
+  },
+  {
+    "level": 8,
+    "layoutId": "windmill",
+    "seed": 800000
+  },
+  {
+    "level": 9,
+    "layoutId": "windmill",
+    "seed": 900000
+  },
+  {
+    "level": 10,
+    "layoutId": "bridge",
+    "seed": 1000000
+  },
+  {
+    "level": 11,
+    "layoutId": "butterfly",
+    "seed": 1100000
+  },
+  {
+    "level": 12,
+    "layoutId": "cat",
+    "seed": 1200000
+  },
+  {
+    "level": 13,
+    "layoutId": "moon_gate",
+    "seed": 1300000
+  },
+  {
+    "level": 14,
+    "layoutId": "moon_gate",
+    "seed": 1400000
+  },
+  {
+    "level": 15,
+    "layoutId": "windmill",
+    "seed": 1500001
+  },
+  {
+    "level": 16,
+    "layoutId": "windmill",
+    "seed": 1600004
+  },
+  {
+    "level": 17,
+    "layoutId": "windmill",
+    "seed": 1700000
+  },
+  {
+    "level": 18,
+    "layoutId": "windmill",
+    "seed": 1800000
+  },
+  {
+    "level": 19,
+    "layoutId": "windmill",
+    "seed": 1900000
+  },
+  {
+    "level": 20,
+    "layoutId": "bridge",
+    "seed": 2000000
+  },
+  {
+    "level": 21,
+    "layoutId": "cat",
+    "seed": 2100001
+  },
+  {
+    "level": 22,
+    "layoutId": "cat",
+    "seed": 2200001
+  },
+  {
+    "level": 23,
+    "layoutId": "fortress",
+    "seed": 2300003
+  },
+  {
+    "level": 24,
+    "layoutId": "moon_gate",
+    "seed": 2400004
+  },
+  {
+    "level": 25,
+    "layoutId": "pyramid",
+    "seed": 2500015
+  },
+  {
+    "level": 26,
+    "layoutId": "spider",
+    "seed": 2600000
+  },
+  {
+    "level": 27,
+    "layoutId": "windmill",
+    "seed": 2700002
+  },
+  {
+    "level": 28,
+    "layoutId": "windmill",
+    "seed": 2800005
+  },
+  {
+    "level": 29,
+    "layoutId": "windmill",
+    "seed": 2900000
+  },
+  {
+    "level": 30,
+    "layoutId": "fortress",
+    "seed": 3000198
+  },
+  {
+    "level": 31,
+    "layoutId": "cat",
+    "seed": 3100000
+  },
+  {
+    "level": 32,
+    "layoutId": "cat",
+    "seed": 3200006
+  },
+  {
+    "level": 33,
+    "layoutId": "fortress",
+    "seed": 3300004
+  },
+  {
+    "level": 34,
+    "layoutId": "moon_gate",
+    "seed": 3400000
+  },
+  {
+    "level": 35,
+    "layoutId": "pyramid",
+    "seed": 3500007
+  },
+  {
+    "level": 36,
+    "layoutId": "spider",
+    "seed": 3600002
+  },
+  {
+    "level": 37,
+    "layoutId": "windmill",
+    "seed": 3700002
+  },
+  {
+    "level": 38,
+    "layoutId": "windmill",
+    "seed": 3800001
+  },
+  {
+    "level": 39,
+    "layoutId": "windmill",
+    "seed": 3900002
+  },
+  {
+    "level": 40,
+    "layoutId": "pyramid",
+    "seed": 4000001
+  },
+  {
+    "level": 41,
+    "layoutId": "cat",
+    "seed": 4100006
+  },
+  {
+    "level": 42,
+    "layoutId": "cat",
+    "seed": 4200001
+  },
+  {
+    "level": 43,
+    "layoutId": "fortress",
+    "seed": 4300000
+  },
+  {
+    "level": 44,
+    "layoutId": "moon_gate",
+    "seed": 4400000
+  },
+  {
+    "level": 45,
+    "layoutId": "pyramid",
+    "seed": 4500019
+  },
+  {
+    "level": 46,
+    "layoutId": "spider",
+    "seed": 4600001
+  },
+  {
+    "level": 47,
+    "layoutId": "turtle_classic",
+    "seed": 4700039
+  },
+  {
+    "level": 48,
+    "layoutId": "windmill",
+    "seed": 4800002
+  },
+  {
+    "level": 49,
+    "layoutId": "windmill",
+    "seed": 4900000
+  },
+  {
+    "level": 50,
+    "layoutId": "pyramid",
+    "seed": 5000001
+  },
+  {
+    "level": 51,
+    "layoutId": "cat",
+    "seed": 5100004
+  },
+  {
+    "level": 52,
+    "layoutId": "cat",
+    "seed": 5200009
+  },
+  {
+    "level": 53,
+    "layoutId": "fortress",
+    "seed": 5300005
+  },
+  {
+    "level": 54,
+    "layoutId": "moon_gate",
+    "seed": 5400003
+  },
+  {
+    "level": 55,
+    "layoutId": "pyramid",
+    "seed": 5500000
+  },
+  {
+    "level": 56,
+    "layoutId": "spider",
+    "seed": 5600002
+  },
+  {
+    "level": 57,
+    "layoutId": "windmill",
+    "seed": 5700002
+  },
+  {
+    "level": 58,
+    "layoutId": "windmill",
+    "seed": 5800008
+  },
+  {
+    "level": 59,
+    "layoutId": "windmill",
+    "seed": 5900003
+  },
+  {
+    "level": 60,
+    "layoutId": "pyramid",
+    "seed": 6000016
+  },
+  {
+    "level": 61,
+    "layoutId": "fortress",
+    "seed": 6100000
+  },
+  {
+    "level": 62,
+    "layoutId": "fortress",
+    "seed": 6200000
+  },
+  {
+    "level": 63,
+    "layoutId": "fortress",
+    "seed": 6300000
+  },
+  {
+    "level": 64,
+    "layoutId": "pyramid",
+    "seed": 6400000
+  },
+  {
+    "level": 65,
+    "layoutId": "pyramid",
+    "seed": 6500000
+  },
+  {
+    "level": 66,
+    "layoutId": "spider",
+    "seed": 6600000
+  },
+  {
+    "level": 67,
+    "layoutId": "terrace",
+    "seed": 6700062
+  },
+  {
+    "level": 68,
+    "layoutId": "turtle_classic",
+    "seed": 6800000
+  },
+  {
+    "level": 69,
+    "layoutId": "bridge",
+    "seed": 6900001
+  },
+  {
+    "level": 70,
+    "layoutId": "pyramid",
+    "seed": 7000004
+  },
+  {
+    "level": 71,
+    "layoutId": "fortress",
+    "seed": 7100000
+  },
+  {
+    "level": 72,
+    "layoutId": "fortress",
+    "seed": 7200000
+  },
+  {
+    "level": 73,
+    "layoutId": "fortress",
+    "seed": 7300001
+  },
+  {
+    "level": 74,
+    "layoutId": "pyramid",
+    "seed": 7400001
+  },
+  {
+    "level": 75,
+    "layoutId": "pyramid",
+    "seed": 7500000
+  },
+  {
+    "level": 76,
+    "layoutId": "spider",
+    "seed": 7600001
+  },
+  {
+    "level": 77,
+    "layoutId": "terrace",
+    "seed": 7700001
+  },
+  {
+    "level": 78,
+    "layoutId": "turtle_classic",
+    "seed": 7800000
+  },
+  {
+    "level": 79,
+    "layoutId": "bridge",
+    "seed": 7900004
+  },
+  {
+    "level": 80,
+    "layoutId": "pyramid",
+    "seed": 8000000
+  },
+  {
+    "level": 81,
+    "layoutId": "fortress",
+    "seed": 8100000
+  },
+  {
+    "level": 82,
+    "layoutId": "fortress",
+    "seed": 8200000
+  },
+  {
+    "level": 83,
+    "layoutId": "fortress",
+    "seed": 8300000
+  },
+  {
+    "level": 84,
+    "layoutId": "pyramid",
+    "seed": 8400000
+  },
+  {
+    "level": 85,
+    "layoutId": "pyramid",
+    "seed": 8500000
+  },
+  {
+    "level": 86,
+    "layoutId": "spider",
+    "seed": 8600000
+  },
+  {
+    "level": 87,
+    "layoutId": "terrace",
+    "seed": 8700018
+  },
+  {
+    "level": 88,
+    "layoutId": "turtle_classic",
+    "seed": 8800003
+  },
+  {
+    "level": 89,
+    "layoutId": "bridge",
+    "seed": 8900002
+  },
+  {
+    "level": 90,
+    "layoutId": "fortress",
+    "seed": 9000198
+  },
+  {
+    "level": 91,
+    "layoutId": "fortress",
+    "seed": 9100000
+  },
+  {
+    "level": 92,
+    "layoutId": "fortress",
+    "seed": 9200000
+  },
+  {
+    "level": 93,
+    "layoutId": "fortress",
+    "seed": 9300000
+  },
+  {
+    "level": 94,
+    "layoutId": "pyramid",
+    "seed": 9400001
+  },
+  {
+    "level": 95,
+    "layoutId": "pyramid",
+    "seed": 9500000
+  },
+  {
+    "level": 96,
+    "layoutId": "spider",
+    "seed": 9600001
+  },
+  {
+    "level": 97,
+    "layoutId": "terrace",
+    "seed": 9700018
+  },
+  {
+    "level": 98,
+    "layoutId": "turtle_classic",
+    "seed": 9800000
+  },
+  {
+    "level": 99,
+    "layoutId": "bridge",
+    "seed": 9900005
+  },
+  {
+    "level": 100,
+    "layoutId": "fortress",
+    "seed": 10000174
+  },
+  {
+    "level": 101,
+    "layoutId": "fortress",
+    "seed": 10100000
+  },
+  {
+    "level": 102,
+    "layoutId": "fortress",
+    "seed": 10200000
+  },
+  {
+    "level": 103,
+    "layoutId": "fortress",
+    "seed": 10300000
+  },
+  {
+    "level": 104,
+    "layoutId": "pyramid",
+    "seed": 10400001
+  },
+  {
+    "level": 105,
+    "layoutId": "pyramid",
+    "seed": 10500000
+  },
+  {
+    "level": 106,
+    "layoutId": "spider",
+    "seed": 10600000
+  },
+  {
+    "level": 107,
+    "layoutId": "terrace",
+    "seed": 10700041
+  },
+  {
+    "level": 108,
+    "layoutId": "turtle_classic",
+    "seed": 10800000
+  },
+  {
+    "level": 109,
+    "layoutId": "bridge",
+    "seed": 10900014
+  },
+  {
+    "level": 110,
+    "layoutId": "pyramid",
+    "seed": 11000006
+  },
+  {
+    "level": 111,
+    "layoutId": "fortress",
+    "seed": 11100000
+  },
+  {
+    "level": 112,
+    "layoutId": "fortress",
+    "seed": 11200000
+  },
+  {
+    "level": 113,
+    "layoutId": "fortress",
+    "seed": 11300000
+  },
+  {
+    "level": 114,
+    "layoutId": "pyramid",
+    "seed": 11400000
+  },
+  {
+    "level": 115,
+    "layoutId": "pyramid",
+    "seed": 11500000
+  },
+  {
+    "level": 116,
+    "layoutId": "spider",
+    "seed": 11600000
+  },
+  {
+    "level": 117,
+    "layoutId": "terrace",
+    "seed": 11700040
+  },
+  {
+    "level": 118,
+    "layoutId": "turtle_classic",
+    "seed": 11800000
+  },
+  {
+    "level": 119,
+    "layoutId": "bridge",
+    "seed": 11900007
+  },
+  {
+    "level": 120,
+    "layoutId": "pyramid",
+    "seed": 12000007
+  },
+  {
+    "level": 121,
+    "layoutId": "fortress",
+    "seed": 12100000
+  },
+  {
+    "level": 122,
+    "layoutId": "fortress",
+    "seed": 12200000
+  },
+  {
+    "level": 123,
+    "layoutId": "fortress",
+    "seed": 12300000
+  },
+  {
+    "level": 124,
+    "layoutId": "pyramid",
+    "seed": 12400000
+  },
+  {
+    "level": 125,
+    "layoutId": "pyramid",
+    "seed": 12500002
+  },
+  {
+    "level": 126,
+    "layoutId": "spider",
+    "seed": 12600000
+  },
+  {
+    "level": 127,
+    "layoutId": "terrace",
+    "seed": 12700032
+  },
+  {
+    "level": 128,
+    "layoutId": "turtle_classic",
+    "seed": 12800002
+  },
+  {
+    "level": 129,
+    "layoutId": "bridge",
+    "seed": 12900013
+  },
+  {
+    "level": 130,
+    "layoutId": "pyramid",
+    "seed": 13000002
+  },
+  {
+    "level": 131,
+    "layoutId": "fortress",
+    "seed": 13100000
+  },
+  {
+    "level": 132,
+    "layoutId": "fortress",
+    "seed": 13200000
+  },
+  {
+    "level": 133,
+    "layoutId": "fortress",
+    "seed": 13300000
+  },
+  {
+    "level": 134,
+    "layoutId": "pyramid",
+    "seed": 13400000
+  },
+  {
+    "level": 135,
+    "layoutId": "pyramid",
+    "seed": 13500000
+  },
+  {
+    "level": 136,
+    "layoutId": "spider",
+    "seed": 13600000
+  },
+  {
+    "level": 137,
+    "layoutId": "terrace",
+    "seed": 13700064
+  },
+  {
+    "level": 138,
+    "layoutId": "turtle_classic",
+    "seed": 13800000
+  },
+  {
+    "level": 139,
+    "layoutId": "bridge",
+    "seed": 13900006
+  },
+  {
+    "level": 140,
+    "layoutId": "pyramid",
+    "seed": 14000001
+  },
+  {
+    "level": 141,
+    "layoutId": "fortress",
+    "seed": 14100003
+  },
+  {
+    "level": 142,
+    "layoutId": "fortress",
+    "seed": 14200000
+  },
+  {
+    "level": 143,
+    "layoutId": "fortress",
+    "seed": 14300001
+  },
+  {
+    "level": 144,
+    "layoutId": "pyramid",
+    "seed": 14400000
+  },
+  {
+    "level": 145,
+    "layoutId": "pyramid",
+    "seed": 14500000
+  },
+  {
+    "level": 146,
+    "layoutId": "spider",
+    "seed": 14600000
+  },
+  {
+    "level": 147,
+    "layoutId": "terrace",
+    "seed": 14700002
+  },
+  {
+    "level": 148,
+    "layoutId": "turtle_classic",
+    "seed": 14800000
+  },
+  {
+    "level": 149,
+    "layoutId": "bridge",
+    "seed": 14900001
+  },
+  {
+    "level": 150,
+    "layoutId": "fortress",
+    "seed": 15000171
+  }
+]

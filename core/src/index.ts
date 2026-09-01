@@ -7,6 +7,14 @@ export type { DifficultyAssessment, DifficultyBucket, DifficultyMetrics } from '
 export { generateLevel, generateValidatedLevel } from './generator.js';
 export type { GeneratedLevel } from './generator.js';
 export {
+  bandForLevel,
+  concealBucketForBand,
+  LADDER_LENGTH,
+  LADDER_WINDOWS,
+  parseLadder,
+} from './ladder.js';
+export type { LadderBand, LadderEntry, LadderPosition } from './ladder.js';
+export {
   solve,
   findHint,
   hasPlayableMove,
