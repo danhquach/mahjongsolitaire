@@ -6,6 +6,12 @@ commit and build time of the running bundle.
 
 ## 2026-09-01
 
+- The game now has a player: Settings opens a profile screen with a
+  display name and a pickable avatar, plus your own record — current
+  level, levels cleared, and best score (streaks and trophies start
+  counting when the Daily Challenge arrives). Everything is stored on
+  the device; no account or sign-in exists, and the game stays fully
+  playable offline (#69).
 - All 10 board layouts reworked to a compact portrait shape — at most 9
   tiles wide, stacked 4–5 layers deep — so tiles stay big and readable
   on a phone. New game now deals the next layout from the current
