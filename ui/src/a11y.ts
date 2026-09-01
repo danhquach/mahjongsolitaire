@@ -46,12 +46,20 @@ export function traversalOrder(tiles: readonly A11yTile[]): A11yTile[] {
  * Spoken name for a tile: what it is, whether it can be played, and where it
  * sits. The row/column is what lets a screen-reader player find the second
  * half of a pair after hearing the first.
+ *
+ * A selected free tile also spells out what activating it *again* does
+ * (issue #62): parking is now a board move rather than a rail control, and a
+ * second activation is the whole gesture. Sighted players discover that by
+ * trying it; a screen-reader player has to be told, so this is the explicit
+ * park action the ticket asks for — reachable with two ordinary activations
+ * and no timing window, which keeps spec §7's "no double-tap" rule intact.
  */
-export function tileAriaLabel(tile: A11yTile): string {
+export function tileAriaLabel(tile: A11yTile, selected = false): string {
   const { label } = faceStyle(tile.face);
   const state = tile.free ? 'available' : 'blocked';
   const { row, col } = slotPosition(tile.slot);
-  return `${label}, ${state}, row ${row}, column ${col}`;
+  const park = selected && tile.free ? ', selected, activate again to park it in the holder' : '';
+  return `${label}, ${state}, row ${row}, column ${col}${park}`;
 }
 
 /**
@@ -213,7 +221,7 @@ export class A11yLayer {
       node.style.top = `${r.y}px`;
       node.style.width = `${r.w}px`;
       node.style.height = `${r.h}px`;
-      node.setAttribute('aria-label', tileAriaLabel(t));
+      node.setAttribute('aria-label', tileAriaLabel(t, selection === t.id));
       node.setAttribute('aria-pressed', String(selection === t.id));
       node.setAttribute('aria-disabled', String(!t.free));
     }

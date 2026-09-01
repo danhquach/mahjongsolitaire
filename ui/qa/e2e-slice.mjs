@@ -158,8 +158,12 @@ function huntDeadlock(maxDeals) {
       // pair is on the board".
       const free = slice.game.board.freeTileIds();
       if (free.length === 0) break;
-      click(free[(deal * 5 + move) % free.length]);
-      document.getElementById('btn-hold').click();
+      const target = free[(deal * 5 + move) % free.length];
+      // Issue #62: parking is two activations of the same tile. The first can
+      // be a *clear* instead, when the face is already in the holder — in which
+      // case the move is already made and there is nothing to activate again.
+      click(target);
+      if (slice.selection === target) click(target);
     }
     if (slice.game.status() === 'stuck') {
       return {
@@ -259,7 +263,8 @@ async function flightProbe(pair) {
 
 /**
  * The same frame sampling as flightProbe, but over a select + deselect — two
- * full-board redraws and no animation at all. This is the control: draw()
+ * full-board redraws and no animation at all. Deselecting is Escape since
+ * issue #62; a second tap on the tile would park it and change the board. This is the control: draw()
  * tears the board down and rebuilds all 144 tiles on every tap, which costs
  * far more than a match animation does, so an absolute frame-time floor would
  * be measuring the renderer rather than this ticket (issue #44).
@@ -292,7 +297,9 @@ async function baselineProbe() {
     requestAnimationFrame(step);
   });
   tap(); // select
-  tap(); // deselect — a second redraw, still nothing animating
+  // Deselect — a second redraw, still nothing animating (issue #62: Escape,
+  // because a second tap on the same tile parks it).
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await sampled;
   const intervals = frames.slice(1).sort((a, b) => a - b);
   return {
@@ -439,7 +446,7 @@ for (const vp of VIEWPORTS) {
     await page.mouse.click(probe.x, probe.y);
     const rotatedSel = await page.evaluate(() => window.__slice.game.selection);
     check(rotatedSel === probe.id, 'ROTATED FORGIVENESS', { want: probe.id, got: rotatedSel });
-    await page.mouse.click(probe.x, probe.y); // deselect
+    await page.keyboard.press('Escape'); // deselect (issue #62)
 
     await page.setViewportSize({ width: vp.width, height: vp.height });
     try {
@@ -584,14 +591,14 @@ for (const vp of VIEWPORTS) {
       console.error(`  FORGIVENESS FAIL: expected selection ${probe.id}, got ${sel}`);
       failures++;
     }
-    await page.mouse.click(probe.x, probe.y); // deselect via the same forgiven tap
+    await page.keyboard.press('Escape'); // deselect (issue #62: a second tap parks)
   }
 
-  // 2b. The holder (issue #43), driven through its real controls: park a free
-  //     tile with the Hold button, check the strip shows it and the tile it was
-  //     covering is now free, take it back with the same button (now Return),
-  //     park it again and clear it against its partner, then force-quit with a
-  //     tile still parked.
+  // 2b. The holder (issues #43, #62), driven the way a player drives it: park a
+  //     free tile by tapping it twice on the canvas, check the strip shows it
+  //     and the tile it was covering is now free, clear it against its partner
+  //     in a single tap, then force-quit with a tile still parked. The rail's
+  //     Hold control is gone (#62), so its absence is checked too.
   {
     const before = failures;
     const slotMetrics = () =>
@@ -606,7 +613,7 @@ for (const vp of VIEWPORTS) {
             return r.width < 48 || r.height < 48;
           }).length,
           groupLabel: document.getElementById('holder').getAttribute('aria-label'),
-          holdLabel: document.getElementById('btn-hold').getAttribute('aria-label'),
+          holdButton: document.getElementById('btn-hold') !== null,
         };
       });
 
@@ -616,7 +623,7 @@ for (const vp of VIEWPORTS) {
     check(empty.emptyAreDisabled, 'an empty slot is not a tab stop', empty);
     check(empty.tooSmall === 0, 'every holder slot is a 48dp target', empty);
     check(/0 of 4 slots used/.test(empty.groupLabel ?? ''), 'the strip names its state', empty);
-    check(/select a tile first/i.test(empty.holdLabel ?? ''), 'Hold says what it needs', empty);
+    check(!empty.holdButton, 'the rail no longer carries a Hold control (issue #62)', empty);
 
     // A free tile that is the *sole* cover of some tile below it, and whose
     // partner is also free: parking it proves both halves at once — the tile
@@ -653,9 +660,21 @@ for (const vp of VIEWPORTS) {
       );
       check(coveredBefore, 'the tile under it starts covered', target);
 
+      // Escape drops a selection now that a second tap on the tile parks it.
       const c = await tileCenter(target.id);
-      await page.mouse.click(c.x, c.y); // select it on the canvas
-      await page.click('#btn-hold');
+      await page.mouse.click(c.x, c.y);
+      await page.keyboard.press('Escape');
+      const escaped = await page.evaluate(() => ({
+        selection: window.__slice.selection,
+        said: document.getElementById('a11y-status').textContent,
+      }));
+      check(escaped.selection === null, 'Escape clears the selection (issue #62)', escaped);
+      check(/selection cleared/i.test(escaped.said ?? ''), 'and says so', escaped);
+
+      // Park: tap the tile, then tap it again. Two ordinary taps, no timing
+      // window — the whole gesture (issue #62 rule 1).
+      await page.mouse.click(c.x, c.y);
+      await page.mouse.click(c.x, c.y);
       const parked = await page.evaluate(
         (t) => ({
           holder: window.__slice.holder(),
@@ -680,55 +699,30 @@ for (const vp of VIEWPORTS) {
       check(strip.filled === 1, 'the strip draws the parked tile', strip);
       check(/1 of 4 slots used/.test(strip.groupLabel ?? ''), 'and counts it', strip);
 
-      // Selecting the parked tile turns Hold into Return, and Return puts it
-      // back in its own slot — always legal (issue #43 rule 4).
-      await page.click(`#holder [data-tile-id="${target.id}"]`);
-      const asReturn = await page.evaluate(() => ({
-        action: window.__slice.holder().action,
-        label: document.getElementById('btn-hold').getAttribute('aria-label'),
-        pressed: document
-          .querySelector('#holder .slot.filled')
-          ?.getAttribute('aria-pressed'),
-      }));
-      check(asReturn.action === 'return', 'the control flips to Return', asReturn);
-      check(/return/i.test(asReturn.label ?? ''), 'and says so', asReturn);
-      check(asReturn.pressed === 'true', 'the selected slot reads as pressed', asReturn);
-      await page.click('#btn-hold');
-      const returned = await page.evaluate(
-        (t) => ({
-          holder: window.__slice.holder(),
-          onBoard: window.__slice.game.board.presentTiles().some((x) => x.id === t.id),
-          free: window.__slice.game.board.isFree(t.id),
-        }),
-        target,
-      );
-      check(returned.holder.slots[0] === null, 'the slot is empty again', returned);
-      check(returned.onBoard && returned.free, 'the tile is back on the board, free', returned);
-      check(returned.holder.holdsUsed === 1, 'a return does not un-count the hold', returned);
-
-      // Park it again, then match it out of the holder against its partner.
-      const c2 = await tileCenter(target.id);
-      await page.mouse.click(c2.x, c2.y);
-      await page.click('#btn-hold');
+      // One tap on the partner clears the pair against the holder (issue #62
+      // rule 2) — no aiming at the strip, and no second tap.
       const p = await tileCenter(target.partner);
       await page.mouse.click(p.x, p.y);
-      await page.click(`#holder [data-tile-id="${target.id}"]`);
       const matched = await page.evaluate(() => ({
         holder: window.__slice.holder(),
+        selection: window.__slice.selection,
         tilesLeft: window.__slice.game.tilesLeft,
         score: window.__slice.game.score,
         filled: [...document.querySelectorAll('#holder .slot.filled')].length,
+        said: document.getElementById('a11y-status').textContent,
       }));
-      check(matched.holder.slots[0] === null, 'a holder match frees the slot', matched);
+      check(matched.holder.slots[0] === null, 'one tap frees the slot', matched);
       check(matched.tilesLeft === tilesBefore - 2, 'and clears both tiles', matched);
       check(matched.score === 100, 'and scores like any other pair', matched);
+      check(matched.selection === null, 'and leaves nothing selected', matched);
       check(matched.filled === 0, 'and the strip empties', matched);
+      check(/pair matched/i.test(matched.said ?? ''), 'and is announced as a match', matched);
 
       // Park one more tile and force-quit: the holder is part of the save.
       const spare = await page.evaluate(() => window.__slice.game.board.freeTileIds()[0]);
       const sc = await tileCenter(spare);
       await page.mouse.click(sc.x, sc.y);
-      await page.click('#btn-hold');
+      await page.mouse.click(sc.x, sc.y);
       const beforeQuit = await page.evaluate(() => ({
         holder: window.__slice.holder(),
         hash: window.__slice.stateHash(),
@@ -750,7 +744,7 @@ for (const vp of VIEWPORTS) {
       check(afterQuit.filled === 1, 'and the strip redraws it', afterQuit);
     }
     console.log(
-      `${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: holder park / return / match / resume`,
+      `${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: holder park / one-tap clear / resume`,
     );
     // A fresh deal for the end-to-end play-through below. Through the app's own
     // control, not localStorage + reload: the unload handler writes the save on
