@@ -9,6 +9,10 @@ commit and build time of the running bundle.
 - Stacks read as physical piles: deeper cast shadows, thicker beveled
   sides and a larger per-layer offset carry depth, and tile faces stay
   bright on every layer (#86).
+- Dots ink is now royal blue and Fall is russet, so Dots vs Winds and
+  Fall vs Characters tell apart at a glance (#83).
+- Face-down tile backs are a bright green that stands off the felt
+  instead of blending into it (#82).
 - The game now plays the 150-level ladder: each level has its own layout,
   deal and difficulty, clearing a level advances, and progress survives
   restarts (#79).
