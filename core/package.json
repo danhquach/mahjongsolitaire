@@ -10,7 +10,8 @@
   "scripts": {
     "build": "tsc",
     "test": "tsc && node --test \"dist/test/*.test.js\"",
-    "soak": "tsc && node dist/soak.js"
+    "soak": "tsc && node dist/soak.js",
+    "build:ladder": "tsc && node dist/build-ladder.js"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",
