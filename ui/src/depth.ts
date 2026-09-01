@@ -29,6 +29,16 @@
 //   * Warm lantern palette per decision 0002 — the shift scales the existing
 //     cream/tan toward black rather than introducing a new hue.
 
+/**
+ * The board's felt background (issue #82). Lives here with the rest of the
+ * palette because the face-down back is picked *against* it: the theme rule
+ * (shared with special-level theming, #67) is soft background / strong tile
+ * back of the same hue — the background takes the muted, dark variant to ease
+ * the eye, the back takes the saturated, light variant so a concealed tile
+ * can never sink into the table.
+ */
+export const BOARD_FELT = 0x14532d;
+
 /** Top face of a tile on the topmost layer, undimmed — the palette anchor. */
 export const BASE_FACE = 0xfdf6e3;
 /** Base colour of the extruded side face; SIDE_BAND_FACTORS shade it. */
