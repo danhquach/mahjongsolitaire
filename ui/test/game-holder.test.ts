@@ -1,7 +1,7 @@
-// Holder behaviour on the game controller (issues #43, #62): parking from the
-// board, the one-tap clear against a held tile, tapping a held tile, and the
+// Holder behaviour on the game controller (issues #43, #62, #63): parking from
+// the board, the one-tap clear against a held tile, tapping a held tile, and the
 // places the holder changes what the HUD is told — tiles left, the win check,
-// and the deadlock check.
+// the deadlock check, and — since decision 0009 — the loss.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -67,13 +67,21 @@ const HOLD_TO_MOVE: GeneratedLevel = {
   solution: [],
 };
 
-/** Four free tiles that pair with nothing, plus a fifth — enough to fill the
- *  holder and then ask for one slot too many. */
-const FIVE_SINGLETONS: GeneratedLevel = {
+/**
+ * Four free tiles that pair with nothing, plus a free pair that does. The pair
+ * keeps the level `playing` however many singletons are parked, so filling the
+ * holder is the *only* thing that can end it — which is what the loss tests
+ * need to be measuring.
+ */
+const FILL_TO_LOSE: GeneratedLevel = {
   layoutId: 'full-holder-fixture',
   seed: 0,
-  tiles: Array.from({ length: HOLDER_SLOTS + 1 }, (_, i) => tile(i, i * 4, 0, 0, `dots-${i + 1}`)),
-  solution: [],
+  tiles: [
+    ...Array.from({ length: HOLDER_SLOTS }, (_, i) => tile(i, i * 4, 0, 0, `dots-${i + 1}`)),
+    tile(HOLDER_SLOTS, HOLDER_SLOTS * 4, 0, 0, 'bamboo-1'),
+    tile(HOLDER_SLOTS + 1, (HOLDER_SLOTS + 1) * 4, 0, 0, 'bamboo-1'),
+  ],
+  solution: [[HOLDER_SLOTS, HOLDER_SLOTS + 1]],
 };
 
 /** Four identical free tiles in a row. */
@@ -132,20 +140,66 @@ test('a parked tile cannot be parked again — the second tap deselects it', () 
   assert.deepEqual(game.holderSlots(), [1, null, null, null], 'still exactly one slot used');
 });
 
-test('a full holder refuses the park and says so — the level goes on', () => {
-  const game = new Game(FIVE_SINGLETONS);
-  for (let i = 0; i < HOLDER_SLOTS; i++) {
+test('the park that fills the fourth slot loses the level (decision 0009)', () => {
+  const game = new Game(FILL_TO_LOSE);
+  for (let i = 0; i < HOLDER_SLOTS - 1; i++) {
     assert.equal(park(game, i, i * 4).kind, 'held', `slot ${i + 1}`);
+    assert.equal(game.status(), 'playing', `slot ${i + 1} is survivable`);
   }
-  assert.equal(game.holderFull, true);
+  assert.equal(game.holderVacancies, 1, 'one slot left — the warning point');
+  assert.equal(game.status(), 'playing');
 
-  game.tap(free(HOLDER_SLOTS), 100);
+  // The fatal park reports itself as an ordinary hold; status is what changes.
+  assert.equal(park(game, HOLDER_SLOTS - 1, 100).kind, 'held');
+  assert.equal(game.holderFull, true);
+  assert.equal(game.holderVacancies, 0);
+  assert.equal(game.status(), 'lost');
+  assert.equal(game.tilesLeft, HOLDER_SLOTS + 2, 'the tiles are all still in play');
+  assert.notEqual(game.hint(), null, 'and a pair is still there to be played — it is lost anyway');
+});
+
+test('the loss outranks everything a playable board would say', () => {
+  // A pair is free on the board the whole way through, so this position would
+  // report 'playing' on any other reading. Decision 0009 makes a full holder
+  // final regardless, and the difference matters: 'stuck' offers Shuffle and
+  // Undo, 'lost' offers neither.
+  const game = new Game(FILL_TO_LOSE);
+  for (let i = 0; i < HOLDER_SLOTS; i++) park(game, i, i * 4);
+  assert.equal(game.status(), 'lost');
+  assert.notEqual(game.hint(), null, 'even with a playable pair in plain sight');
+});
+
+test('undo is what takes a hold back — there is no return move', () => {
+  const game = new Game(FILL_TO_LOSE);
+  for (let i = 0; i < HOLDER_SLOTS - 1; i++) park(game, i, i * 4);
+  const survivable = game.stateHash();
+  park(game, HOLDER_SLOTS - 1, 100);
+  assert.equal(game.status(), 'lost');
+
+  // Undo still rewinds the hold — the dialog just does not offer it (main.ts
+  // inerts the rail behind the loss overlay), which is what makes it final in
+  // play while the move stack stays honest.
+  assert.equal(game.undo()?.kind, 'hold');
+  assert.equal(game.status(), 'playing');
+  assert.equal(game.selection, HOLDER_SLOTS - 1, 'restored to the selection the park was made from');
+  game.tap({ kind: 'miss' }, 200); // the selection is part of the hash
+  assert.equal(game.stateHash(), survivable);
+});
+
+test('a park asked of an already-full holder changes nothing', () => {
+  // Unreachable in play — the level is over by then — but the controller is
+  // pure, so it answers rather than throwing.
+  const game = new Game(FILL_TO_LOSE);
+  for (let i = 0; i < HOLDER_SLOTS; i++) park(game, i, i * 4);
+  game.tap(free(HOLDER_SLOTS + 1), 200);
   const before = game.stateHash();
-  assert.deepEqual(game.tap(free(HOLDER_SLOTS), 101), { kind: 'holder-full', id: HOLDER_SLOTS });
+  assert.deepEqual(game.tap(free(HOLDER_SLOTS + 1), 201), {
+    kind: 'holder-full',
+    id: HOLDER_SLOTS + 1,
+  });
   assert.equal(game.stateHash(), before, 'a refused park changes nothing at all');
-  assert.equal(game.selection, HOLDER_SLOTS, 'and the tile stays selected, still playable');
-  assert.equal(game.status(), 'stuck', 'it is a deadlock, not a loss');
-  assert.equal(game.tilesLeft, HOLDER_SLOTS + 1);
+  assert.equal(game.selection, HOLDER_SLOTS + 1);
+  assert.equal(game.status(), 'lost');
 });
 
 // --- the one-tap clear against the holder (issue #62 rule 2) ------------------
@@ -270,6 +324,19 @@ test('a board with no pair is not stuck while a hold would expose one', () => {
   park(game, 1, 0);
   assert.notEqual(game.hint(), null);
   assert.equal(game.status(), 'playing');
+});
+
+test('a park that would fill the holder is not a way out of a deadlock', () => {
+  // The same board, reached with only one slot left: the park that exposes the
+  // pair also ends the level, so this is a real deadlock and the dialog should
+  // offer Shuffle rather than a move that loses (decision 0009).
+  const game = new Game(HOLD_TO_MOVE);
+  park(game, 3, 0); // char-5, pairs with nothing
+  park(game, 4, 10); // char-6, likewise
+  park(game, 5, 20); // wind-east, likewise
+  assert.equal(game.holderVacancies, 1);
+  assert.equal(game.hint(), null, 'still no pair anywhere');
+  assert.equal(game.status(), 'stuck', 'and parking tile 1 would lose, not help');
 });
 
 test('hint sees a holder pair rather than reporting no moves', () => {

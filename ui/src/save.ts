@@ -17,12 +17,26 @@
 // ## Version 2 (issue #43)
 //
 // The holder made the record a different shape: a move is no longer always a
-// pair (hold and unhold are moves too), and the holder's own contents ride
-// alongside the faces and removed flags. Version 2 is a clean break rather than
-// a shim that reads a v1 record with defaults — this file's whole job is to
-// vouch for what it returns, and "assume the fields I cannot see mean nothing"
-// is the one thing it must not do. A v1 record therefore reads as absent, which
-// this module already has a defined answer for: a fresh deal.
+// pair (hold and unhold were both moves), and the holder's own contents ride
+// alongside the faces and removed flags. Version 2 was a clean break rather
+// than a shim that reads a v1 record with defaults — this file's whole job is
+// to vouch for what it returns, and "assume the fields I cannot see mean
+// nothing" is the one thing it must not do.
+//
+// ## Version 3 (issue #63)
+//
+// Decision 0009 made the holder one-way, which deletes the `unhold` move type
+// outright. A v2 record can carry one; this build has nothing that could replay
+// it, and quietly dropping the record would leave an undo stack that no longer
+// walks back to a pristine deal. So the version goes up and a v2 record reads
+// as absent — the same clean break, for the same reason.
+//
+// A record whose holder is *full* is not rejected, and must not be: that is a
+// lost level, and issue #63 is explicit that a reload cannot be an escape hatch
+// from one. It resumes, and `Game.status()` says `lost` on the first frame.
+//
+// An unreadable record of any version reads as absent, which this module
+// already has a defined answer for: a fresh deal.
 //
 // ## Trust boundary
 //
@@ -40,7 +54,7 @@ import type { GameSnapshot } from './game.js';
 import { clearRecord, readRecord, writeRecord } from './storage.js';
 import type { KeyValueStorage } from './storage.js';
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 /** The slot key is deliberately *not* versioned with the record: the `version`
  *  field inside is what decides whether a record can be trusted, and renaming
  *  the key would only orphan the old bytes instead of overwriting them. */
@@ -144,12 +158,15 @@ function parseMoves(value: unknown): MoveRecord[] | null {
         heldA: heldA as number | null,
         heldB: heldB as number | null,
       });
-    } else if (kind === 'hold' || kind === 'unhold') {
+    } else if (kind === 'hold') {
       const { tile, slotIndex } = raw;
       if (!isCount(tile) || !isSlotIndex(slotIndex)) return null;
       moves.push({ ...base, kind, tile, slotIndex });
     } else {
-      return null; // unknown move kind: a record from a build we do not know
+      // An unknown kind, or `unhold` from a v2 record — a move this build has
+      // no way to replay (decision 0009). The version check above catches a
+      // whole v2 record first; this is the belt and braces.
+      return null;
     }
   }
   return moves;
@@ -180,13 +197,14 @@ function parseHolder(value: unknown): (TileId | null)[] | null {
 /**
  * Walk the undo stack backwards and check every step is one the game could
  * actually take, ending at a pristine deal — nothing removed, holder empty.
+ * Two kinds since decision 0009: a match and a hold.
  *
  * This is the check that makes the record safe to *play*, not just to load.
  * Reopening a save only replays the state, so an incoherent stack loads fine
  * and then throws several undos later, out of a click handler: a match whose
  * tiles are not currently removed, a hold record for a tile that is not in that
- * slot, a return into a slot something else is sitting in. Each of those is a
- * throw from Board, and each is unreachable for an honest capture.
+ * slot, a match claiming a slot something else is sitting in. Each of those is
+ * a throw from Board, and each is unreachable for an honest capture.
  *
  * Reaching the empty start state also *is* the older "moves must partition
  * `removed`" rule: every removal is accounted for by exactly one match, and
@@ -205,7 +223,6 @@ function checkUndoChain(
 ): boolean {
   const gone = new Set<TileId>(removed);
   const slots: (TileId | null)[] = [...holder];
-  const heldAt = (id: TileId): number => slots.indexOf(id);
   for (let i = moves.length - 1; i >= 0; i--) {
     const move = moves[i]!;
     if (move.kind === 'match') {
@@ -218,13 +235,9 @@ function checkUndoChain(
         if (slot >= slots.length || slots[slot] !== null) return false;
         slots[slot] = id;
       }
-    } else if (move.kind === 'hold') {
+    } else {
       if (move.slotIndex >= slots.length || slots[move.slotIndex] !== move.tile) return false;
       slots[move.slotIndex] = null;
-    } else {
-      if (move.slotIndex >= slots.length || slots[move.slotIndex] !== null) return false;
-      if (gone.has(move.tile) || heldAt(move.tile) !== -1) return false;
-      slots[move.slotIndex] = move.tile;
     }
   }
   return gone.size === 0 && slots.every((s) => s === null);

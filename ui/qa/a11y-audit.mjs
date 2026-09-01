@@ -414,6 +414,129 @@ for (const vp of VIEWPORTS) {
     await page.evaluate(() => document.getElementById('btn-new').click());
   }
 
+  // --- 3c. The one-way holder's warning and its loss (issue #63). ----------
+  //
+  // Decision 0009 makes a full holder end the level, which is the one hard-fail
+  // in v1. A hard-fail a player can walk into blind is an accessibility defect
+  // whatever the rules say, so what is audited here is the *warning*: does the
+  // last empty slot say what it is, and does the tile about to be parked say
+  // what activating it again would cost — before the activation, not after.
+  {
+    // Park by keyboard, three times, skipping any face already in the holder
+    // (that first activation would clear the pair instead — issue #62 rule 2).
+    const parkByKeyboard = async () => {
+      const target = await page.evaluate(() => {
+        const b = window.__slice.game.board;
+        const parked = new Set(
+          window.__slice
+            .holder()
+            .slots.filter((id) => id !== null)
+            .map((id) => b.get(id).face),
+        );
+        const id = b.freeTileIds().find((x) => !parked.has(b.get(x).face));
+        if (id === undefined) return null;
+        document.querySelector(`#a11y-layer [data-tile-id="${id}"]`).focus();
+        return id;
+      });
+      if (target === null) return null;
+      await page.keyboard.press('Enter');
+      const selected = await page.evaluate(
+        (id) =>
+          document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.getAttribute('aria-label'),
+        target,
+      );
+      await page.keyboard.press('Enter');
+      return { target, selected };
+    };
+
+    let third = null;
+    for (let i = 0; i < 3; i++) {
+      const step = await parkByKeyboard();
+      check(step !== null, `park ${i + 1} found a tile`, step);
+      if (step === null) break;
+      third = step;
+    }
+    check(
+      /activate again to park it in the holder$/.test(third?.selected ?? ''),
+      'a park with room left offers the action with no warning attached',
+      third?.selected,
+    );
+
+    const warned = await page.evaluate(() => {
+      const last = document.querySelector('#holder .slot.last');
+      return {
+        vacancies: window.__slice.holder().vacancies,
+        group: document.getElementById('holder').getAttribute('aria-label'),
+        lastCount: document.querySelectorAll('#holder .slot.last').length,
+        lastLabel: last?.getAttribute('aria-label'),
+        said: document.getElementById('a11y-status').textContent,
+      };
+    });
+    check(warned.vacancies === 1, 'three parks leave one slot', warned);
+    check(warned.lastCount === 1, 'exactly one slot is marked as the last', warned);
+    check(
+      /one slot left/i.test(warned.group ?? '') && /ends the level/i.test(warned.group ?? ''),
+      'the holder group names the cost of filling it',
+      warned,
+    );
+    check(
+      /empty — the last one; filling it ends the level/.test(warned.lastLabel ?? ''),
+      'and the slot itself is not just "empty"',
+      warned,
+    );
+    check(
+      /one holder slot left/i.test(warned.said ?? ''),
+      'the park that leaves one slot is announced with the warning',
+      warned.said,
+    );
+
+    // The cue that actually matters: it reaches the tile the player is on,
+    // before the activation that ends the level.
+    const fatal = await parkByKeyboard();
+    check(fatal !== null, 'a fourth tile is available to park', fatal);
+    check(
+      /activate again to park it in the last holder slot, which ends the level/.test(
+        fatal?.selected ?? '',
+      ),
+      'the selected tile warns before the activation that loses',
+      fatal?.selected,
+    );
+
+    // …and the dialog that follows is a modal that takes focus, offering only
+    // the ways out that exist. Keyboard activation focuses the node itself, so
+    // the focus set inside showStatus sticks with no repair needed.
+    const lost = await page.evaluate(() => ({
+      status: window.__slice.game.status(),
+      role: document.getElementById('overlay').getAttribute('role'),
+      modal: document.getElementById('overlay').getAttribute('aria-modal'),
+      boardInert: document.getElementById('a11y-layer').hasAttribute('inert'),
+      holderInert: document.getElementById('holder').hasAttribute('inert'),
+      railInert: document.getElementById('booster-rail').hasAttribute('inert'),
+      focus: document.activeElement?.id,
+      shuffleOffered: !document.getElementById('overlay-shuffle').hidden,
+      undoOffered: !document.getElementById('overlay-undo').hidden,
+      said: document.getElementById('a11y-status').textContent,
+    }));
+    check(lost.status === 'lost', 'the fourth park ends the level', lost);
+    check(lost.role === 'dialog' && lost.modal === 'true', 'the loss is a modal dialog', lost);
+    check(
+      lost.boardInert && lost.holderInert && lost.railInert,
+      'and everything behind it is inert',
+      lost,
+    );
+    check(lost.focus === 'overlay-restart', 'focus moves to the only way out', lost);
+    check(!lost.shuffleOffered && !lost.undoOffered, 'no Shuffle, no Undo — it is final', lost);
+    check(
+      /Holder full\. The level is over\./.test(lost.said ?? ''),
+      'and the loss is announced, with its reason',
+      lost.said,
+    );
+
+    // Leave the board as it was found.
+    await page.click('#overlay-restart');
+    await page.evaluate(() => document.getElementById('btn-new').click());
+  }
+
   // --- 4. Keyboard-only play: traverse, match, hear the outcome. -----------
   {
     // Reload for a clean sequential-focus starting point: clicking the canvas

@@ -1,6 +1,14 @@
 # 0008 — The holder is a free, always-available 4-slot assist
 
-**Date:** 2026-08-31 · **Status:** accepted · **Ticket:** issue #43
+**Date:** 2026-08-31 · **Status:** superseded by [0009](0009-holder-is-one-way.md) · **Ticket:** issue #43
+
+> **Superseded the same day.** Answers 1 (4 slots) and 3 (no score penalty, but
+> holds are counted) still stand. Answer 2's *consequences* do not: decision 0009
+> makes the holder **one-way** — a parked tile cannot be returned, and filling the
+> fourth slot loses the level. Everything below about a held tile always being
+> returnable, a full holder refusing the park, and holds never being able to cost
+> the player the level was reversed by playtest #16 / issue #63. Read 0009 for
+> what is true now.
 
 ## Context
 

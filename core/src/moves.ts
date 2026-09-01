@@ -13,11 +13,17 @@
 // restore a game hash-identically — including its remaining undo depth.
 //
 // Issue #43 makes the holder part of the same contract. A move is no longer
-// always a pair: hold and unhold are recorded moves too, so undo walks back
-// through them in the order they happened and the holder's contents come back
-// exactly. A match records which holder slot each of its tiles came out of
-// (null for one taken off the board), because that is the only thing `restore`
-// cannot re-derive — the tile has to go back where the player put it.
+// always a pair: a hold is a recorded move too, so undo walks back through
+// holds in the order they happened and the holder's contents come back exactly.
+// A match records which holder slot each of its tiles came out of (null for one
+// taken off the board), because that is the only thing `restore` cannot
+// re-derive — the tile has to go back where the player put it.
+//
+// Issue #63 removes the other direction. The holder is one-way (decision 0009):
+// a parked tile can only leave by being matched, so `unhold` is no longer a
+// move and `MoveRecord` is a pair or a hold. `Board.unhold` survives as the
+// mechanism this file rewinds a hold with — undoing a hold is not the player
+// taking a tile back, it is the move never having happened.
 
 import type { Board, TileId } from './board.js';
 import { canMatch, matchPair } from './match.js';
@@ -49,14 +55,7 @@ export interface HoldMove extends MoveBase {
   readonly slotIndex: number;
 }
 
-/** A held tile returned to its own slot (issue #43). */
-export interface UnholdMove extends MoveBase {
-  readonly kind: 'unhold';
-  readonly tile: TileId;
-  readonly slotIndex: number;
-}
-
-export type MoveRecord = MatchMove | HoldMove | UnholdMove;
+export type MoveRecord = MatchMove | HoldMove;
 
 /**
  * A MoveStack's serializable state (spec §9 save/resume, issue #14). Pair it
@@ -91,7 +90,8 @@ export class MoveStack {
     return this.scores.total;
   }
 
-  /** Holds taken on this level (issue #43). Vita Mahjong reports a per-level
+  /** Holds taken on this level (issue #43) — and since decision 0009 the
+   *  measure of how close the player came to losing. Vita Mahjong reports a per-level
    *  holder average, so the count is tracked even though nothing deducts for it
    *  (PM decision 2026-08-31: no score penalty in v1). Derived from the stack,
    *  so undo rolls it back for free and a resumed game carries it. */
@@ -137,11 +137,14 @@ export class MoveStack {
 
   /**
    * Park a free tile in the holder (issue #43 rule 2): it leaves the board —
-   * freeing whatever it covered — and stays matchable from the holder.
+   * freeing whatever it covered — and stays matchable from the holder. One
+   * way, since decision 0009: the only way back out of the slot is a match.
    *
    * Returns the slot index, or null with nothing changed when the holder is
-   * full: rule 5 makes a full holder refuse the move, never end the level.
-   * Throws on a tile that is not free (rule 2 — blocked tiles cannot be held).
+   * already full. That is a defensive answer rather than a rule: the park that
+   * fills the last slot loses the level, so a caller that gates on the game's
+   * status never reaches it. Throws on a tile that is not free (issue #43
+   * rule 2 — blocked tiles cannot be held).
    */
   hold(id: TileId, nowMs: number): number | null {
     if (this.board.holderFull()) return null;
@@ -154,31 +157,15 @@ export class MoveStack {
     return slotIndex;
   }
 
-  /**
-   * Return a held tile to its own slot (issue #43 rule 4). Always legal for a
-   * held tile — see Board.unhold — so the only false here is "that tile is not
-   * in the holder".
-   */
-  unhold(id: TileId, nowMs: number): boolean {
-    const slotIndex = this.holderIndexOf(id);
-    if (slotIndex === null) return false;
-    const prevSelection = this.selected;
-    const prevScores = this.scores.snapshot();
-    this.board.unhold(id);
-    this.stack.push({ kind: 'unhold', tile: id, slotIndex, atMs: nowMs, prevSelection, prevScores });
-    this.selected = null;
-    return true;
-  }
-
   private holderIndexOf(id: TileId): number | null {
     const index = this.board.holderSlots().indexOf(id);
     return index === -1 ? null : index;
   }
 
   /**
-   * Undo the last move — match, hold or unhold — restoring the board, the
-   * holder, the score state and the selection as of just before it. Returns the
-   * undone record, or null on an empty stack.
+   * Undo the last move — a match or a hold — restoring the board, the holder,
+   * the score state and the selection as of just before it. Returns the undone
+   * record, or null on an empty stack.
    */
   undo(): MoveRecord | null {
     const record = this.stack.pop();
@@ -195,10 +182,9 @@ export class MoveStack {
         if (record.heldB !== null) this.board.holdAt(record.b, record.heldB);
         break;
       case 'hold':
+        // Not the player taking a tile back (decision 0009 forbids that) — the
+        // hold never happened, so the tile is where it was before it.
         this.board.unhold(record.tile);
-        break;
-      case 'unhold':
-        this.board.holdAt(record.tile, record.slotIndex);
         break;
     }
     this.scores.restore(record.prevScores);

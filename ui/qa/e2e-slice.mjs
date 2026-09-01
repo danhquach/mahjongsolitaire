@@ -157,7 +157,10 @@ function huntDeadlock(maxDeals) {
       // that used to crash the hunt, because "playing" no longer implies "a
       // pair is on the board".
       const free = slice.game.board.freeTileIds();
-      if (free.length === 0) break;
+      // Issue #63: the park that fills the last slot loses the level, and this
+      // hunt is looking for a *deadlock*. Stop one slot short, exactly as
+      // hasPlayableMove does.
+      if (free.length === 0 || slice.holder().vacancies < 2) break;
       const target = free[(deal * 5 + move) % free.length];
       // Issue #62: parking is two activations of the same tile. The first can
       // be a *clear* instead, when the face is already in the holder — in which
@@ -749,6 +752,155 @@ for (const vp of VIEWPORTS) {
     // A fresh deal for the end-to-end play-through below. Through the app's own
     // control, not localStorage + reload: the unload handler writes the save on
     // the way out, so a cleared slot would be refilled before the next boot.
+    await page.click('#btn-new');
+  }
+
+  // 2c. The one-way holder and its loss (issue #63 / decision 0009): park until
+  //     the holder is full and check the whole chain — the warning on the last
+  //     empty slot before the fatal step, the loss dialog with no Shuffle and no
+  //     Undo, the rail inert behind it, and a reload that comes back lost rather
+  //     than handing the board back.
+  {
+    const before = failures;
+    // Park a face the holder does not already carry, so the tap selects rather
+    // than clearing a pair (issue #62 rule 2). Returns what the strip and the
+    // selected tile say at each step.
+    const parkOne = async () => {
+      const target = await page.evaluate(() => {
+        const b = window.__slice.game.board;
+        const parked = new Set(
+          window.__slice
+            .holder()
+            .slots.filter((id) => id !== null)
+            .map((id) => b.get(id).face),
+        );
+        return b.freeTileIds().find((id) => !parked.has(b.get(id).face)) ?? null;
+      });
+      if (target === null) return null;
+      const c = await tileCenter(target);
+      await page.mouse.click(c.x, c.y);
+      const selected = await page.evaluate(
+        (id) =>
+          document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.getAttribute('aria-label'),
+        target,
+      );
+      await page.mouse.click(c.x, c.y);
+      return { target, selected };
+    };
+
+    let warned = null;
+    for (let i = 0; i < 3; i++) {
+      const step = await parkOne();
+      check(step !== null, `park ${i + 1} found a tile to park`, step);
+      if (step === null) break;
+      if (i === 2) warned = step;
+    }
+    const nearlyFull = await page.evaluate(() => ({
+      holder: window.__slice.holder(),
+      status: window.__slice.game.status(),
+      group: document.getElementById('holder').getAttribute('aria-label'),
+      lastMarked: [...document.querySelectorAll('#holder .slot.last')].map((n) => n.dataset.slot),
+      lastLabel: document.querySelector('#holder .slot.last')?.getAttribute('aria-label'),
+      said: document.getElementById('a11y-status').textContent,
+      overlay: document.getElementById('overlay').classList.contains('visible'),
+    }));
+    check(nearlyFull.holder.vacancies === 1, 'three parks leave one slot', nearlyFull);
+    check(nearlyFull.status === 'playing', 'and the level is still on', nearlyFull);
+    check(!nearlyFull.overlay, 'no dialog yet', nearlyFull);
+    check(nearlyFull.lastMarked.length === 1, 'exactly one slot is marked as the last', nearlyFull);
+    check(
+      /one slot left/i.test(nearlyFull.group ?? '') && /ends the level/i.test(nearlyFull.group ?? ''),
+      'the holder group warns what filling it costs',
+      nearlyFull,
+    );
+    check(
+      /the last one; filling it ends the level/i.test(nearlyFull.lastLabel ?? ''),
+      'and so does the slot itself',
+      nearlyFull,
+    );
+    check(
+      /one holder slot left/i.test(nearlyFull.said ?? ''),
+      'the third park is announced with the warning',
+      nearlyFull.said,
+    );
+
+    // The warning reaches the tile the player is about to activate, which is the
+    // one cue that arrives *before* the irreversible step.
+    const fatal = await parkOne();
+    check(fatal !== null, 'a fourth tile is available to park', fatal);
+    check(
+      /activate again to park it in the last holder slot, which ends the level/i.test(
+        fatal?.selected ?? '',
+      ),
+      'the selected tile says the next activation ends the level',
+      fatal?.selected,
+    );
+    // …and `warned` is the control: the third park offered no such warning.
+    check(
+      /activate again to park it in the holder$/i.test(warned?.selected ?? ''),
+      'while the park before it did not',
+      warned?.selected,
+    );
+
+    // The dialog's focus is repaired on the next task — a tap opens it from
+    // inside `pointerdown`, and the browser's own `mousedown` takes focus to
+    // <body> straight afterwards (see showStatus). Playwright's click resolves
+    // before that task runs, so settle first and then assert.
+    await page
+      .waitForFunction(() => document.getElementById('overlay').contains(document.activeElement), {
+        timeout: 2000,
+      })
+      .catch(() => {});
+    const lost = await page.evaluate(() => ({
+      holder: window.__slice.holder(),
+      status: window.__slice.game.status(),
+      title: document.getElementById('overlay-title').textContent,
+      text: document.getElementById('overlay-text').textContent,
+      shuffleOffered: !document.getElementById('overlay-shuffle').hidden,
+      undoOffered: !document.getElementById('overlay-undo').hidden,
+      railInert: document.getElementById('booster-rail').hasAttribute('inert'),
+      focus: document.activeElement?.id,
+      said: document.getElementById('a11y-status').textContent,
+      tilesLeft: window.__slice.game.tilesLeft,
+    }));
+    check(lost.holder.full && lost.status === 'lost', 'the fourth park ends the level', lost);
+    check(/holder full/i.test(lost.title ?? ''), 'the dialog names the reason', lost);
+    check(!lost.shuffleOffered, 'a full holder is final: no Shuffle', lost);
+    check(!lost.undoOffered, 'and no Undo', lost);
+    check(lost.railInert, 'and the rail behind it is inert, so neither is reachable', lost);
+    check(lost.focus === 'overlay-restart', 'focus lands on the way out that exists', lost);
+    check(/holder full\. the level is over/i.test(lost.said ?? ''), 'the loss is announced', lost.said);
+    check(lost.tilesLeft > 0, 'tiles are still on the board — this is a loss, not a win', lost);
+
+    // A reload is not an escape hatch (issue #63).
+    const beforeQuit = await page.evaluate(() => window.__slice.stateHash());
+    await page.reload();
+    await page.waitForFunction(() => window.__slice !== undefined);
+    const afterQuit = await page.evaluate(() => ({
+      status: window.__slice.game.status(),
+      hash: window.__slice.stateHash(),
+      title: document.getElementById('overlay-title').textContent,
+      shuffleOffered: !document.getElementById('overlay-shuffle').hidden,
+    }));
+    check(afterQuit.status === 'lost', 'a lost level resumes lost', { beforeQuit, afterQuit });
+    check(afterQuit.hash === beforeQuit, 'with the same state', { beforeQuit, afterQuit });
+    check(/holder full/i.test(afterQuit.title ?? ''), 'and the same dialog', afterQuit);
+    check(!afterQuit.shuffleOffered, 'still offering nothing but a restart', afterQuit);
+
+    // Restart hands a playable board back.
+    await page.click('#overlay-restart');
+    const restarted = await page.evaluate(() => ({
+      status: window.__slice.game.status(),
+      holder: window.__slice.holder(),
+      overlay: document.getElementById('overlay').classList.contains('visible'),
+      marked: document.querySelectorAll('#holder .slot.last').length,
+    }));
+    check(restarted.status === 'playing', 'restart deals a playable board', restarted);
+    check(restarted.holder.vacancies === 4, 'with an empty holder', restarted);
+    check(!restarted.overlay && restarted.marked === 0, 'and no warning left over', restarted);
+    console.log(
+      `${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: one-way holder, loss, resume, restart`,
+    );
     await page.click('#btn-new');
   }
 

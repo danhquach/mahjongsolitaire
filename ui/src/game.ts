@@ -20,6 +20,11 @@
 // here already accounts for it: a held tile is matchable, so `hint` and the
 // stuck check see holder pairs.
 //
+// Issue #63 makes the holder one-way (decision 0009, superseding 0008): a
+// parked tile can only leave by being matched, and filling the fourth slot ends
+// the level. That is a third terminal status — `lost` — and it is why `status()`
+// asks about the holder before it asks whether a move is left.
+//
 // Issue #62 moves parking onto the board itself and retires the rail control.
 // Two rules, both living in `tapBoard`:
 //   * a second activation of the already-selected free tile parks it, and
@@ -52,7 +57,10 @@ import type {
 } from '@mahjongsolitaire/core';
 import type { Hit, HitCandidate } from './hit-test.js';
 
-export type GameStatus = 'playing' | 'won' | 'stuck';
+/** `stuck` is the deadlock spec §4 never hard-fails — Shuffle and Undo are
+ *  offered against it. `lost` is the one that does hard-fail: a full holder,
+ *  which decision 0009 made final. */
+export type GameStatus = 'playing' | 'won' | 'stuck' | 'lost';
 
 export type TapOutcome =
   | { readonly kind: 'selected'; readonly id: TileId }
@@ -167,6 +175,12 @@ export class Game {
     return this.board.holderFull();
   }
 
+  /** Empty holder slots. One left means the next park ends the level
+   *  (decision 0009) — the cue the HUD warns on. */
+  get holderVacancies(): number {
+    return this.board.holderVacancies();
+  }
+
   /** Holds taken on this level. Nothing deducts for them in v1; the count is
    *  kept because Vita Mahjong reports a per-level holder average and a later
    *  star rating may want it (issue #43, PM decision 2026-08-31). */
@@ -176,9 +190,15 @@ export class Game {
 
   status(): GameStatus {
     if (this.tilesLeft === 0) return 'won';
-    // Not `legalPairs`: with the holder always available, parking a free tile
-    // can expose a pair, so a board with no pair *right now* is not
-    // necessarily stuck (issue #43 — hasPlayableMove looks through holds).
+    // A full holder ends the level (decision 0009), and it is asked first
+    // because it outranks everything below: there is no move to look for once
+    // the fourth slot is taken, and no Shuffle or Undo offered against it. It
+    // cannot collide with the win above — a win needs the holder empty.
+    if (this.board.holderFull()) return 'lost';
+    // Not `legalPairs`: parking a free tile can expose a pair, so a board with
+    // no pair *right now* is not necessarily stuck (issue #43 —
+    // hasPlayableMove looks through holds, and since decision 0009 stops one
+    // slot short of the park that would lose).
     if (!hasPlayableMove(this.board)) return 'stuck';
     return 'playing';
   }
@@ -212,10 +232,15 @@ export class Game {
   }
 
   /**
-   * Undo booster (spec §5): take back the last move — a match, a hold or a
-   * return (issue #43) — with the board, holder, score and selection exactly as
-   * they were before it. Returns the undone record, or null on an empty move
-   * stack (nothing happened, nothing to charge for).
+   * Undo booster (spec §5): take back the last move — a match or a hold, the
+   * only two kinds left once decision 0009 removed the return — with the board,
+   * holder, score and selection exactly as they were before it. Returns the
+   * undone record, or null on an empty move stack (nothing happened, nothing to
+   * charge for).
+   *
+   * Undoing a hold is not the player taking a parked tile back: the holder is
+   * one-way, and this is the move never having happened. The loss dialog offers
+   * no Undo and inerts the rail behind it, so a full holder stays final.
    */
   undo(): MoveRecord | null {
     const record = this.stack.undo();
@@ -227,9 +252,16 @@ export class Game {
   // --- holder (issue #43) -----------------------------------------------------
 
   /**
-   * Park the selected free tile (issue #62 rule 1). Nothing can fail
-   * destructively: a full holder refuses and leaves the game exactly as it was,
-   * selection included, so the player can play the tile instead.
+   * Park the selected free tile (issue #62 rule 1).
+   *
+   * Since decision 0009 this is the one move that can end the level: the holder
+   * is one-way, and the park that fills the fourth slot loses. The outcome is a
+   * plain `held` either way — `status()` is what turns the last one into a
+   * loss, so nothing here has to know about dialogs.
+   *
+   * `holder-full` is the belt-and-braces answer to a park asked of an
+   * already-full holder. The input layer gates on `status()`, so play never
+   * reaches it: by then the level is over.
    */
   private park(id: TileId, nowMs: number): TapOutcome {
     const slot = this.stack.hold(id, nowMs);

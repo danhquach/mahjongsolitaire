@@ -22,12 +22,18 @@
 // already answers "always free" for it and the parity precheck already counts
 // it. Two consequences worth stating, because the deadlock dialog rests on
 // them:
-//   * Holding can only *help*. It takes a tile off the lattice, which frees at
-//     least as many tiles as before and never fewer, and any winning line of
-//     the un-held position is still a winning line of the held one. So a
-//     position the solver calls solvable stays solvable across any sequence of
-//     holds — the property issue #43 asks to be tested rather than assumed.
-//   * The converse fails: holding *unblocks* without needing a matching
+//   * Holding still helps the *position*. It takes a tile off the lattice,
+//     which frees at least as many tiles as before and never fewer, so any
+//     winning line of the un-held position is still a winning line of the held
+//     one. `solve` therefore stays sound while ignoring holds entirely.
+//   * But holding no longer helps the *player* unconditionally. Under decision
+//     0009 the holder is one-way and filling the fourth slot loses the level,
+//     so a hold now costs a slot the player can never buy back except by
+//     matching. That is why `hasPlayableMove` below stops one slot short: a
+//     park that fills the last slot is a loss, not a way out. Everything a
+//     position needs to stay winnable is still true; what changed is which
+//     holds a *player* may take, and that is a rules question, not a search one.
+//   * The converse still fails: holding unblocks without needing a matching
 //     partner, so some positions are winnable only with the holder. The search
 //     itself does not plan holds (a plain `solve` answers the question the
 //     generator and Shuffle ask, which is about the deal, not the assist), so
@@ -347,12 +353,19 @@ export const DEFAULT_MAX_HOLD_STATES = 5_000;
  * already has — and with the holder always available (PM decision 2026-08-31)
  * that is not a corner case.
  *
- * Only holds are searched. Unholding puts a blocker back on the board and frees
- * a slot, and a returning tile can never expose what a hold could not, so it
- * cannot turn a dead position live. States are keyed by the set of held tiles,
- * and running out of budget answers false — a conservative "treat it as stuck",
- * never a phantom move. The probe is a private copy, so the caller's board is
- * untouched whatever happens.
+ * Decision 0009 narrows which holds count. The holder is one-way and a full one
+ * loses the level, so the park that fills the *last* slot is not an escape from
+ * a deadlock — it is a different way to lose. The search therefore stops one
+ * slot short: it only takes a hold that leaves a vacancy behind it. A position
+ * whose only "move" is that final park is stuck, and the dialog is right to
+ * offer Shuffle rather than a move that ends the level.
+ *
+ * Only holds are searched. Unholding is not a player move any more, and it
+ * never could expose what a hold could not, so nothing is lost by that. States
+ * are keyed by the set of held tiles, and running out of budget answers false —
+ * a conservative "treat it as stuck", never a phantom move. The probe is a
+ * private copy (and `unhold` on it is backtracking, not a move), so the
+ * caller's board is untouched whatever happens.
  */
 export function hasPlayableMove(board: Board, options: { maxStates?: number } = {}): boolean {
   if (legalPairs(board).length > 0) return true;
@@ -363,7 +376,9 @@ export function hasPlayableMove(board: Board, options: { maxStates?: number } = 
   let budget = options.maxStates ?? DEFAULT_MAX_HOLD_STATES;
   const seen = new Set<string>();
   const search = (): boolean => {
-    if (probe.holderFull()) return false;
+    // Fewer than two vacancies: any hold from here fills the holder, which
+    // ends the level (decision 0009). Not a way out.
+    if (probe.holderVacancies() < 2) return false;
     for (const id of probe.freeTileIds()) {
       if (budget-- <= 0) return false;
       probe.hold(id);

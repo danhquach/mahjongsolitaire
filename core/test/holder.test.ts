@@ -1,10 +1,17 @@
-// Holder: temporary tile store slots (issue #43).
+// Holder: temporary tile store slots (issues #43, #63).
 //
-// Covers the ticket's acceptance criteria at the core layer: hold / unhold /
+// Covers the ticket's acceptance criteria at the core layer: hold and
 // holder-match as move types with exact undo, solver and hint treating held
-// tiles as matchable, determinism across a move list containing holds, a full
-// holder refusing the move instead of ending the level, and the safety property
-// that no sequence of holds can make a solvable level unwinnable.
+// tiles as matchable, and determinism across a move list containing holds.
+//
+// Issue #63 (decision 0009, superseding 0008) makes the holder one-way, which
+// inverts one property here and adds another. Issue #43's safety property —
+// "no sequence of holds can turn a solvable position unwinnable" — is now
+// *false* by design, so it is tested as false: a hold can lose the level, and
+// there is a witness. What is still true is the narrower statement the solver
+// actually rests on: holding never makes the *position* less winnable, only the
+// player's remaining room. And `hasPlayableMove` now stops one slot short,
+// because the park that fills the last slot is a loss rather than a way out.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -81,7 +88,9 @@ test('only free tiles can be held', () => {
   assert.deepEqual(board.holderSlots(), [null, null, null, null]);
 });
 
-test('unholding puts the tile back in its own slot, free again', () => {
+test('unhold — the undo mechanism — puts the tile back in its own slot', () => {
+  // Not a player move since decision 0009: this is what MoveStack.undo rewinds
+  // a hold with, and the only thing that still calls it.
   const board = coveredBoard();
   board.hold(1);
   board.unhold(1);
@@ -92,14 +101,21 @@ test('unholding puts the tile back in its own slot, free again', () => {
   assert.throws(() => board.unhold(1), /not held/);
 });
 
-test('a full holder refuses the hold and says so — it never ends the level', () => {
+test('a full holder throws rather than silently dropping a hold', () => {
+  // Decision 0009 makes a full holder a lost level, so play never asks for a
+  // fifth slot — the game controller gates on status first. This is the model
+  // refusing an impossible call, not a rule.
   const board = new Board(
     Array.from({ length: 5 }, (_, i) => ({ id: i, slot: slot(i * 4, 0), face: `dots-${i + 1}` })),
   );
-  for (let i = 0; i < HOLDER_SLOTS; i++) board.hold(i);
+  for (let i = 0; i < HOLDER_SLOTS; i++) {
+    assert.equal(board.holderVacancies(), HOLDER_SLOTS - i);
+    board.hold(i);
+  }
   assert.equal(board.holderFull(), true);
+  assert.equal(board.holderVacancies(), 0);
   assert.throws(() => board.hold(4), /holder is full/);
-  // Nothing moved: the fifth tile is still on the board and playable.
+  // Nothing moved: the fifth tile is still on the board.
   assert.equal(board.isHeld(4), false);
   assert.equal(board.isFree(4), true);
   assert.equal(board.inPlayTiles().length, 5);
@@ -225,6 +241,45 @@ test('hasPlayableMove says stuck when no hold can expose a pair', () => {
   assert.equal(hasPlayableMove(board), false);
 });
 
+test('the park that fills the last slot is not a way out (decision 0009)', () => {
+  // Parking tile 1 frees tile 0, which pairs with tile 2 — the one-deep
+  // lookahead above. Under issue #43 that made this position live at any holder
+  // depth. Under 0009 the park that fills the holder ends the level instead, so
+  // the same position with a single vacancy is a real deadlock, and the dialog
+  // is right to offer Shuffle rather than a move that loses.
+  const tiles = [
+    { id: 0, slot: slot(0, 0, 0), face: 'dots-1' },
+    { id: 1, slot: slot(0, 0, 1), face: 'bamboo-2' }, // covers tile 0
+    { id: 2, slot: slot(4, 0, 0), face: 'dots-1' },
+    { id: 3, slot: slot(8, 0, 0), face: 'bamboo-5' },
+  ];
+  for (const capacity of [4, 3, 2]) {
+    const board = new Board(tiles, { holderCapacity: capacity });
+    assert.deepEqual(legalPairs(board), [], `capacity ${capacity}: no pair on the board`);
+    assert.equal(hasPlayableMove(board), true, `capacity ${capacity}: a vacancy survives the park`);
+  }
+  const lastSlot = new Board(tiles, { holderCapacity: 1 });
+  assert.deepEqual(legalPairs(lastSlot), []);
+  assert.equal(hasPlayableMove(lastSlot), false, 'the only park would fill the holder');
+
+  // Same thing reached the way a player reaches it: three of four slots spent
+  // on tiles that pair with nothing, leaving one vacancy and no way through.
+  const spent = new Board([
+    ...tiles,
+    { id: 4, slot: slot(12, 0, 0), face: 'wind-east' },
+    { id: 5, slot: slot(16, 0, 0), face: 'wind-south' },
+    { id: 6, slot: slot(20, 0, 0), face: 'wind-west' },
+  ]);
+  spent.hold(4);
+  spent.hold(5);
+  assert.equal(spent.holderVacancies(), 2);
+  assert.equal(hasPlayableMove(spent), true, 'two vacancies: the park still leaves one');
+  spent.hold(6);
+  assert.equal(spent.holderVacancies(), 1);
+  assert.deepEqual(legalPairs(spent), []);
+  assert.equal(hasPlayableMove(spent), false, 'one vacancy: the only park would lose');
+});
+
 test('shuffle permutes the board around a held tile, which keeps its own face', () => {
   // Regression: the candidate assignment was built from `allTiles()` and read a
   // held tile's new face out of a map that only covered *board* tiles — so
@@ -266,7 +321,7 @@ test('shuffle permutes the board around a held tile, which keeps its own face', 
   }
 });
 
-// --- move stack: hold / unhold / holder-match ---------------------------------
+// --- move stack: hold / holder-match ------------------------------------------
 
 test('hold is a move: it is recorded, and undo puts the tile back', () => {
   const board = coveredBoard();
@@ -287,20 +342,24 @@ test('hold is a move: it is recorded, and undo puts the tile back', () => {
   assert.equal(stack.stateHash(), before);
 });
 
-test('unhold is a move: undo re-parks the tile in the same slot', () => {
+test('the holder is one-way: undo is the only thing that empties a slot', () => {
+  // Decision 0009. There is no `unhold` on the stack any more — the only two
+  // ways a slot comes free are a match and taking the hold itself back.
   const board = coveredBoard();
   const stack = new MoveStack(board);
+  assert.equal('unhold' in stack, false, 'no return move exists on the stack');
+
   stack.hold(3, 1000);
   stack.hold(1, 2000);
-  const held = stack.stateHash();
   assert.deepEqual(board.holderSlots(), [3, 1, null, null]);
+  assert.deepEqual(
+    stack.state.moves.map((m) => m.kind),
+    ['hold', 'hold'],
+  );
 
-  assert.equal(stack.unhold(3, 3000), true);
-  assert.deepEqual(board.holderSlots(), [null, 1, null, null]);
-  assert.equal(stack.undo()?.kind, 'unhold');
-  assert.deepEqual(board.holderSlots(), [3, 1, null, null]);
-  assert.equal(stack.stateHash(), held);
-  assert.equal(stack.unhold(2, 4000), false); // tile 2 was never held
+  assert.equal(stack.undo()?.kind, 'hold');
+  assert.deepEqual(board.holderSlots(), [3, null, null, null]);
+  assert.equal(stack.holdsUsed, 1, 'and the undone hold stops counting');
 });
 
 test('undoing a holder match puts each tile back in the slot it came from', () => {
@@ -340,7 +399,7 @@ test('undoing a mixed match returns one tile to the board and one to the holder'
   assert.deepEqual(board.holderSlots(), [1, 3, null, null]);
 });
 
-test('a full holder makes hold a no-op rather than an error or a loss', () => {
+test('a full holder makes hold a no-op rather than an error — the level is over', () => {
   const board = new Board(
     Array.from({ length: 5 }, (_, i) => ({ id: i, slot: slot(i * 4, 0), face: `dots-${i + 1}` })),
   );
@@ -409,28 +468,26 @@ test('property: a move list with holds replays to an identical state hash', () =
       const board = new Board(level.tiles);
       const stack = new MoveStack(board);
 
-      // A random script of holds, unholds and matches — every move type, in an
-      // order the player could actually produce.
-      type Step = ['hold' | 'unhold', TileId] | ['match', TileId, TileId];
+      // A random script of holds and matches — every move type there now is
+      // (decision 0009 removed the return), in an order a player could produce.
+      // Holds stop one slot short, because filling the holder ends the level and
+      // a lost level has no further moves to replay.
+      type Step = ['hold', TileId] | ['match', TileId, TileId];
       const script: Step[] = [];
       let clock = 0;
       const apply = (step: Step): void => {
         clock += 1000;
         if (step[0] === 'hold') stack.hold(step[1], clock);
-        else if (step[0] === 'unhold') stack.unhold(step[1], clock);
         else stack.play(step[1], step[2]!, clock);
       };
 
       for (let i = 0; i < 24; i++) {
-        const held = board.heldTileIds();
         const free = board.freeTileIds();
         const pairs = legalPairs(board);
         const roll = rng();
         let step: Step | null = null;
-        if (roll < 0.3 && !board.holderFull() && free.length > 0) {
+        if (roll < 0.45 && board.holderVacancies() > 1 && free.length > 0) {
           step = ['hold', free[Math.floor(rng() * free.length)]!];
-        } else if (roll < 0.45 && held.length > 0) {
-          step = ['unhold', held[Math.floor(rng() * held.length)]!];
         } else if (pairs.length > 0) {
           const pair = pairs[Math.floor(rng() * pairs.length)]!;
           step = ['match', pair[0], pair[1]];
@@ -454,9 +511,13 @@ test('property: a move list with holds replays to an identical state hash', () =
   }
 });
 
-// --- acceptance: holds can never make a solvable level unwinnable -------------
+// --- acceptance: what holding does and no longer does (decision 0009) --------
 
-test('property: no sequence of holds turns a solvable position unwinnable', () => {
+test('property: holding never makes the position itself less winnable', () => {
+  // The narrow statement `solve` rests on, and all that survives of issue #43's
+  // safety property: a held tile is off the lattice, so every winning line of
+  // the un-held position is still a winning line of the held one. What is gone
+  // is the *player-facing* half — see the next test.
   const rng = mulberry32(0x5afe5afe);
   for (const layout of SEED_LAYOUTS) {
     for (const seed of [1, 8, 64, 512]) {
@@ -480,18 +541,15 @@ test('property: no sequence of holds turns a solvable position unwinnable', () =
         const free = board.freeTileIds();
         if (free.length === 0 || board.holderFull()) break;
         stack.hold(free[Math.floor(rng() * free.length)]!, (clock += 1000));
-        // The whole safety argument, checked at every depth: the position is
-        // still winnable, and there is still a move to make.
         assert.equal(
           solve(board.allTiles(), { holder: board.holderSlots() }).verdict,
           'solvable',
           `${layout.id} seed ${seed} with ${board.heldTileIds().length} held`,
         );
-        assert.equal(hasPlayableMove(board), true);
       }
 
-      // And the holder can always be emptied again, which is the reason why.
-      for (const id of board.heldTileIds()) stack.unhold(id, (clock += 1000));
+      // Undo is the only way back, and it still is one: unwind to the start.
+      while (board.heldTileIds().length > 0) assert.notEqual(stack.undo(), null);
       assert.deepEqual(board.holderSlots(), new Array(HOLDER_SLOTS).fill(null));
       assert.equal(
         solve(board.allTiles(), { holder: board.holderSlots() }).verdict,
@@ -501,9 +559,70 @@ test('property: no sequence of holds turns a solvable position unwinnable', () =
   }
 });
 
+test('property (inverted): a sequence of holds CAN lose a solvable level', () => {
+  // Issue #43 / decision 0008 asserted the opposite, and decision 0009 reverses
+  // it deliberately: the holder is a resource the player can spend themselves
+  // out of. This is the witness that the reversal actually took — if it ever
+  // goes green-by-accident, the one-way rule has been undone somewhere.
+  const rng = mulberry32(0x105e105e);
+  let witnesses = 0;
+  for (const layout of SEED_LAYOUTS) {
+    for (const seed of [1, 8, 64, 512]) {
+      const level = generateLevel(layout, seed);
+      const board = new Board(level.tiles);
+      const stack = new MoveStack(board);
+      assert.equal(
+        solve(board.allTiles()).verdict,
+        'solvable',
+        `${layout.id} seed ${seed} deals solvable`,
+      );
+
+      // Park four tiles that pair with nothing else currently matchable, so no
+      // slot can be bought back. Skipped when the deal offers no such quartet.
+      let clock = 0;
+      while (!board.holderFull()) {
+        const candidate = board
+          .freeTileIds()
+          .filter((id) => rng() >= 0) // keep the rng in step across layouts
+          .find((id) => {
+            const face = board.get(id).face;
+            return !board
+              .matchableTileIds()
+              .some((other) => other !== id && board.get(other).face === face);
+          });
+        if (candidate === undefined) break;
+        stack.hold(candidate, (clock += 1000));
+      }
+      if (!board.holderFull()) continue;
+      witnesses++;
+
+      // The position is *still* winnable — holding never hurt it — and the
+      // player has still lost, because the holder is full and one-way.
+      assert.equal(
+        solve(board.allTiles(), { holder: board.holderSlots() }).verdict,
+        'solvable',
+        `${layout.id} seed ${seed}: the position stayed winnable`,
+      );
+      assert.equal(board.holderFull(), true, `${layout.id} seed ${seed}: and the level is lost`);
+      // Every one of those four holds was legal when it was taken — the loss is
+      // something the player walked into, not a state the model forbade.
+      assert.equal(board.heldTileIds().length, HOLDER_SLOTS);
+      assert.equal(stack.holdsUsed, HOLDER_SLOTS);
+      // The "stops one slot short" boundary is not asserted here: with the
+      // holder full, `holderVacancies() < 2` holds for any threshold, so the
+      // answer would be the same whatever the rule said. That boundary has its
+      // own unit test above.
+    }
+  }
+  assert.ok(witnesses > 0, `the property needs at least one witness (${witnesses})`);
+});
+
 test('property: a level can be cleared entirely through the holder', () => {
-  // Every pair played out of the holder rather than off the board — the
-  // strongest form of "holds never lose the level".
+  // Every pair played out of the holder rather than off the board. Under
+  // decision 0009 this is no longer a safety claim about holds in general — the
+  // test above is the counter-example — but the narrower one that still holds:
+  // a hold taken to *play* a pair immediately never spends a slot, so a whole
+  // level can still be cleared through the holder without ever filling it.
   const level = generateLevel(SEED_LAYOUTS[0]!, 21);
   const board = new Board(level.tiles);
   const stack = new MoveStack(board);

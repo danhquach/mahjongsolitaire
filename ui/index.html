@@ -243,6 +243,16 @@
       #holder .slot.filled {
         border-style: solid;
       }
+      /* The last empty slot (issue #63). Filling it ends the level, so it is
+         marked before the player takes the step, not explained afterwards.
+         Amber and a heavier dash — a colour *and* a weight change, because
+         spec §7 forbids carrying meaning on colour alone; the slot's own
+         accessible name and the selected tile's both spell it out too. */
+      #holder .slot.last {
+        border-color: #f59e0b;
+        border-width: 3px;
+        color: #fcd34d;
+      }
       #holder .slot .glyph {
         font-size: 26px;
         font-weight: bold;
