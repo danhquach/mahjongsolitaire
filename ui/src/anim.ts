@@ -17,6 +17,9 @@ export const FADE_MS = 120;
 export const CROSSFADE_MS = 160;
 /** Mismatch shake, matched to the existing red-outline flash in main.ts. */
 export const SHAKE_MS = 250;
+/** Reveal / re-conceal flip (issue #64). Short enough that peeking around the
+ *  board never feels throttled — the peek itself is free and unlimited. */
+export const FLIP_MS = 160;
 /** Impact particles. Sized to end with the fade, not after it. */
 export const PARTICLE_MS = FADE_MS;
 export const PARTICLE_COUNT = 8;
@@ -115,6 +118,19 @@ export function matchFrame(from: Point, to: Point, tMs: number, reduced: boolean
     alpha: 1 - f,
     flash: 1 - f,
   };
+}
+
+/**
+ * Reveal / re-conceal flip (issue #64): horizontal scale of the tile at `tMs`.
+ *
+ * The redraw at tap time has already swapped the art (face or back), so the
+ * animation is the *unfold*: the tile opens from its vertical centreline to
+ * full width, 0 → 1 with an ease-out so it lands softly. Exactly 1 from
+ * FLIP_MS on, so a tile is never left squashed, whatever frame the effect
+ * ends on (same guarantee shakeOffset gives).
+ */
+export function flipScaleX(tMs: number): number {
+  return tMs >= FLIP_MS ? 1 : easeOut(tMs / FLIP_MS);
 }
 
 /**

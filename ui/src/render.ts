@@ -19,11 +19,14 @@ import type { Tile, TileId } from '@mahjongsolitaire/core';
 import {
   BORDER_WIDTH,
   BORDER_WIDTH_ACTIVE,
+  LAYER_FACE_STEP,
   SHADOW_DX,
   SHADOW_DY,
   SHADOW_PAD,
   SHADOW_RINGS,
   SHADOW_UP_LEFT_RATIO,
+  depthSteps,
+  scaleColor,
   tileShade,
 } from './depth.js';
 import { faceStyle } from './faces.js';
@@ -42,6 +45,20 @@ const FACE_SELECTED = 0xfff0c2;
 const FACE_HINT = 0xdbeafe;
 /** Corner radius of the tile silhouette, shared by face, sides, and shadow. */
 const TILE_RADIUS = 6;
+
+// --- face-down back (issue #64) ----------------------------------------------
+//
+// A concealed tile is the same tile — same silhouette, sides, shadow, border,
+// highlight outlines — with the face painted as a card back instead of a suit:
+// a deep felt green with a lighter inset keyline, no glyph, no pips, no tag.
+// Both colours run through the same per-layer darkening as a face does
+// (LAYER_FACE_STEP via depthSteps), so a face-down tile recedes with its layer
+// exactly like its neighbours.
+const BACK_FACE = 0x2e6b4f;
+const BACK_KEYLINE = 0x9fc4ae;
+/** Inset of the keyline from the face edge, board px. */
+const BACK_INSET = 7;
+const BACK_KEYLINE_WIDTH = 2;
 
 // --- suited-rank pip art (issue #45) ----------------------------------------
 //
@@ -290,7 +307,8 @@ export class BoardRenderer {
       // be dimmed — the dim must never fight the selection or hint cue.
       const dimmed =
         state.dimBlocked && !selected && !hinted && !flashed && !game.board.isFree(tile.id);
-      const node = this.buildTile(tile, { selected, flashed, hinted, dimmed });
+      const hidden = game.isFaceHidden(tile.id);
+      const node = this.buildTile(tile, { selected, flashed, hinted, dimmed, hidden });
       this.tileNodes.set(tile.id, node);
       this.boardLayer.addChild(node);
     }
@@ -311,9 +329,11 @@ export class BoardRenderer {
       readonly flashed: boolean;
       readonly hinted: boolean;
       readonly dimmed: boolean;
+      /** Face-down this frame (issue #64): back art instead of the face. */
+      readonly hidden?: boolean;
     },
   ): Container {
-    const { selected, flashed, hinted, dimmed } = opts;
+    const { selected, flashed, hinted, dimmed, hidden = false } = opts;
     const node = new Container();
     const r = tileRect(tile.slot);
     const shade = tileShade(tile.slot.z, this.topZ, dimmed);
@@ -333,8 +353,20 @@ export class BoardRenderer {
       const depth = (SIDE_DEPTH * (bands.length - i)) / bands.length;
       g.roundRect(r.x, r.y, r.w + depth, r.h + depth, TILE_RADIUS).fill(color);
     });
+    // A hidden face keeps the back colour even under a hint (the outline is the
+    // cue; recolouring the face would make the back read as a fourth suit).
+    // `hidden && selected` cannot happen: a selection pins its reveal (#64).
+    const backFactor = 1 - LAYER_FACE_STEP * depthSteps(tile.slot.z, this.topZ, dimmed);
     g.roundRect(r.x, r.y, r.w, r.h, TILE_RADIUS)
-      .fill(selected ? FACE_SELECTED : hinted ? FACE_HINT : shade.face)
+      .fill(
+        hidden
+          ? scaleColor(BACK_FACE, backFactor)
+          : selected
+            ? FACE_SELECTED
+            : hinted
+              ? FACE_HINT
+              : shade.face,
+      )
       .stroke({
         width: selected || flashed || hinted ? BORDER_WIDTH_ACTIVE : BORDER_WIDTH,
         color: flashed
@@ -346,6 +378,19 @@ export class BoardRenderer {
               : shade.border,
       });
     node.addChild(g);
+
+    if (hidden) {
+      // The back's only ornament: an inset keyline, so a face-down tile reads
+      // as a deliberate card back rather than a rendering failure.
+      g.roundRect(
+        r.x + BACK_INSET,
+        r.y + BACK_INSET,
+        r.w - 2 * BACK_INSET,
+        r.h - 2 * BACK_INSET,
+        Math.max(2, TILE_RADIUS - 2),
+      ).stroke({ width: BACK_KEYLINE_WIDTH, color: scaleColor(BACK_KEYLINE, backFactor) });
+      return node; // no glyph, no pips, no tag — that is the point
+    }
 
     const style = faceStyle(tile.face);
     // Ink recedes with the face it sits on, faster than the face does, so

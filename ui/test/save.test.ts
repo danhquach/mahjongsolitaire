@@ -66,10 +66,20 @@ function park(game: Game, id: TileId, atMs: number): void {
   game.tap(free(id), atMs + 1);
 }
 
+/** Peek a face-down tile so the next tap acts on it (issue #64: the first tap
+ *  on a hidden tile only reveals it). No-op for a face-up tile. */
+function reveal(game: Game, id: TileId, nowMs: number): void {
+  if (game.isFaceHidden(id)) game.tap(free(id), nowMs);
+}
+
 /** Tap a tile wherever it is: on the board, or in the holder (issue #43). */
 function tapAnywhere(game: Game, id: TileId, nowMs: number): void {
-  if (game.board.isHeld(id)) game.tapHeld(id, nowMs);
-  else game.tap(free(id), nowMs);
+  if (game.board.isHeld(id)) {
+    game.tapHeld(id, nowMs);
+    return;
+  }
+  reveal(game, id, nowMs);
+  game.tap(free(id), nowMs);
 }
 
 /** In-play copies of a tile's face, the holder included. */
@@ -92,7 +102,9 @@ test('spec §11.2: save/restore at every move index of the Turtle sample level',
 
     const move = solution[index];
     if (!move) break;
+    reveal(game, move[0], index * 2);
     game.tap(free(move[0]), index * 2);
+    reveal(game, move[1], index * 2 + 1);
     game.tap(free(move[1]), index * 2 + 1);
   }
   assert.equal(game.tilesLeft, 0, 'the sample level was played to completion');
@@ -137,6 +149,7 @@ test('issue #43: save/restore at every move index of a level played with holds',
         .freeTileIds()
         .find((id) => copiesInPlay(game, id) === 2 && !parkedFaces.has(game.board.get(id).face));
       if (target !== undefined) {
+        reveal(game, target, t);
         game.tap(free(target), t);
         if (game.tap(free(target), t + 1).kind === 'held') holds++;
       }
@@ -156,14 +169,20 @@ test('a resumed game keeps playing identically to one that never quit', () => {
   const level = generateValidatedLevel(TURTLE, SAMPLE_SEED);
   const live = new Game(level);
   for (const [a, b] of level.solution.slice(0, 20)) {
+    reveal(live, a, 0);
     live.tap(free(a), 0);
+    reveal(live, b, 0);
     live.tap(free(b), 0);
   }
   const resumed = forceQuit(live)!;
   // Same 10 further moves, same timestamps: the combo ladder must agree too.
+  // Peeks are per-game: a resume re-conceals (issue #64), so the resumed game
+  // may need a reveal tap the live one does not — the tracked state stays equal.
   for (const [a, b] of level.solution.slice(20, 30)) {
     for (const g of [live, resumed]) {
+      reveal(g, a, 0);
       g.tap(free(a), 0);
+      reveal(g, b, 0);
       g.tap(free(b), 0);
     }
   }

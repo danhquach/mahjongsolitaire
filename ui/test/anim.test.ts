@@ -8,6 +8,8 @@ import { test } from 'node:test';
 import {
   CROSSFADE_MS,
   FADE_MS,
+  FLIP_MS,
+  flipScaleX,
   PARTICLE_COUNT,
   PARTICLE_MS,
   SHAKE_AMPLITUDE,
@@ -122,4 +124,19 @@ test('the particle burst is deterministic, radial, and fully faded by the end', 
     const half = particleFrame(p, PARTICLE_MS / 2);
     assert.ok(Math.hypot(half.x, half.y) > 0, 'particle never left the impact point');
   }
+});
+
+test('the reveal flip unfolds from the centreline and never overshoots (issue #64)', () => {
+  assert.equal(flipScaleX(0), 0);
+  assert.equal(flipScaleX(FLIP_MS), 1);
+  // Past the end — whatever frame the effect lands on, the tile is full width.
+  assert.equal(flipScaleX(FLIP_MS * 3), 1);
+  let previous = 0;
+  for (let t = 0; t <= FLIP_MS; t += 10) {
+    const s = flipScaleX(t);
+    assert.ok(s >= previous && s <= 1, `scale not monotonic in [0,1] at ${t}ms (${s})`);
+    previous = s;
+  }
+  // Ease-out: the first half covers more than half the distance.
+  assert.ok(flipScaleX(FLIP_MS / 2) > 0.5);
 });
