@@ -998,6 +998,29 @@ async function start(): Promise<void> {
   }
 
   /**
+   * Fit the canvas to #board and the board to the canvas, and keep going until
+   * the two agree (issue #125). The holder strip is sized off the fitted
+   * on-screen tile size (issue #66), so a fit changes the holder's height,
+   * which changes #board's box, which Pixi has already read: one pass can
+   * leave the canvas taller than #board — tiles then bleed into the band the
+   * booster rail (and, since #125, the settings gear) reserves under it — or
+   * shorter, wasting board. The explicit app.resize() also cancels the frame
+   * Pixi's own resize plugin queues on a window resize, so nothing else will
+   * re-read #board for us. The loop converges in two passes in practice; the
+   * cap is only a guard against a layout that oscillates.
+   */
+  function settleBoardFit(): void {
+    applyHudPlacement();
+    for (let pass = 0; pass < 4; pass++) {
+      app.resize();
+      applyTileSize(); // fits the board for the stored tile size, then redraws
+      if (app.renderer.width === boardDiv.clientWidth && app.renderer.height === boardDiv.clientHeight) {
+        return;
+      }
+    }
+  }
+
+  /**
    * Put the HUD on whichever edge leaves the board the larger fit (issue #37).
    *
    * The HUD's own footprint is measured, not modelled: each candidate is
@@ -1763,14 +1786,9 @@ async function start(): Promise<void> {
   // Re-decide the HUD edge on every viewport change — an orientation flip is a
   // resize, so there is nothing orientation-specific to listen for (issue #37).
   //
-  // Only re-size Pixi when the edge actually moved. Pixi's own resize plugin
-  // listens on this same event and re-reads #board on the next frame, which
-  // already covers the case where the placement stayed put; when it moved,
-  // app.resize() re-reads #board now and cancels that queued frame, so the
-  // board is re-fit exactly once either way.
-  window.addEventListener('resize', () => {
-    if (applyHudPlacement()) app.resize();
-  });
+  // Not only when the edge moved (issue #125): a size-only change can leave
+  // the canvas and #board disagreeing too — see settleBoardFit.
+  window.addEventListener('resize', () => settleBoardFit());
 
   boosterUi.hint.button.addEventListener('click', () => useBooster('hint'));
   boosterUi.undo.button.addEventListener('click', () => useBooster('undo'));
@@ -1834,8 +1852,7 @@ async function start(): Promise<void> {
   // Pixi sized itself to #board during init, before any placement existed, so
   // the canvas has to be re-read once there is one — this is also the call that
   // reveals #app (see the `:not([data-hud])` rule in index.html).
-  if (applyHudPlacement()) app.resize();
-  applyTileSize(); // fits the board for the stored tile size, then redraws
+  settleBoardFit();
   if (resumed !== null) {
     announcer.say(`Game resumed. ${game.tilesLeft} tiles left. Score ${game.score}.`);
     // A deadlocked or lost board can be resumed (see persist): re-offer the

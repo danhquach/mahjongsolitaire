@@ -511,6 +511,28 @@ for (const vp of VIEWPORTS) {
     });
   }
 
+  // 1a. Settings gear never overlaps a board tile (issue #125): the gear used
+  //     to be absolutely positioned inside #board, top-right, where it could
+  //     cover that corner's tiles. It now lives in the booster rail, whose
+  //     band #board reserves — so its rect should never intersect a tile's.
+  {
+    const overlap = await page.evaluate(() => {
+      const slice = window.__slice;
+      const gear = document.getElementById('btn-settings').getBoundingClientRect();
+      const canvas = document.querySelector('#board canvas').getBoundingClientRect();
+      const hit = slice.game.board.presentTiles().find((t) => {
+        const r = slice.tileCssRect(t.id);
+        const tx = canvas.x + r.x;
+        const ty = canvas.y + r.y;
+        return (
+          gear.x < tx + r.w && gear.x + gear.width > tx && gear.y < ty + r.h && gear.y + gear.height > ty
+        );
+      });
+      return { hit: hit ? hit.id : null, gear };
+    });
+    check(overlap.hit === null, 'SETTINGS GEAR does not overlap any tile', overlap);
+  }
+
   // 1b. Rotation (issue #37): the placement and the fit are re-decided live on
   //     an orientation change, not just at startup — and a forgiven tap still
   //     lands afterwards, so the new scale did not cost input accuracy. Every

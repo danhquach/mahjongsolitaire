@@ -202,18 +202,41 @@
         flex-direction: column;
         gap: 8px;
       }
+      /* The boosters keep their own flex row/column, nested one level inside
+         the rail (see the markup) so the "Boosters" a11y group wraps only
+         the three of them — the gear sits beside that group, not in it. */
+      #booster-rail .boosters {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      /* Settings (issue #125): the rail's last control, set apart from the
+         boosters with extra space so it still reads as "settings" rather
+         than a fourth booster. */
+      /* 8px on top of the rail's 8px gap: a 16px break between the boosters
+         and the gear, so it reads as settings, not a fourth booster. */
+      #booster-rail > #btn-settings {
+        margin-top: 8px;
+      }
       /* Portrait (top HUD): the issue #99 boards fill the full height, so a
          vertical right rail would sit on the bottom-right tiles — occluding
          them and stealing their taps. Lay the rail flat along the bottom and
          reserve that band under #board so the fit never puts a tile there. */
-      #app[data-hud='top'] #booster-rail {
+      #app[data-hud='top'] #booster-rail,
+      #app[data-hud='top'] #booster-rail .boosters {
         flex-direction: row;
+      }
+      #app[data-hud='top'] #booster-rail {
         right: 50%;
         transform: translateX(50%);
         /* The rail is a child of #board: anchor it into the reserved band
            below the board's box, not onto its bottom tiles. */
         top: calc(100% + 12px);
         bottom: auto;
+      }
+      #app[data-hud='top'] #booster-rail > #btn-settings {
+        margin-top: 0;
+        margin-left: 8px;
       }
       #app[data-hud='top'] #board {
         margin-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
@@ -581,33 +604,11 @@
         color: #ffffff;
       }
 
-      /* Settings entry point: a rail-style icon button in the opposite corner
-         to the boosters, so neither crowds the other. */
-      #btn-settings {
-        position: absolute;
-        top: calc(8px + env(safe-area-inset-top, 0px));
-        right: calc(12px + env(safe-area-inset-right, 0px));
-        display: grid;
-        place-items: center;
-        width: 48px; /* spec §7: 48dp minimum */
-        height: 48px;
-        padding: 0;
-        border-radius: 10px;
-        border: 1px solid #bbf7d0;
-        background: #166534;
-        color: #f0fdf4;
-      }
+      /* Settings entry point (issue #125): lives in the booster rail now, so
+         `#booster-rail button` above already gives it the 56px size and
+         rail colours — only the icon's own stroke weight needs a say here. */
       #btn-settings svg {
-        width: 28px;
-        height: 28px;
-        fill: none;
-        stroke: currentColor;
         stroke-width: 2.2;
-        stroke-linecap: round;
-      }
-      #btn-settings svg .solid {
-        fill: currentColor;
-        stroke: none;
       }
 
       /* --- Settings screen (issue #14) -------------------------------------
@@ -921,28 +922,21 @@
         <div id="board">
           <div id="a11y-layer"></div>
           <div id="loss-wash-layer"></div>
-          <!-- The way into settings lives here rather than in the header: at
-               375dp the header is already a full row, and a sixth control there
-               wraps it and costs the board 54px of height. Top-right keeps it one
-               tap from the board (spec §7) and out of the thumb rail. -->
-          <button
-            id="btn-settings"
-            type="button"
-            data-action="Settings"
-            title="Settings"
-            aria-label="Settings"
-          >
-            <!-- A gear reads as a gear only with teeth *on* a rim: a hub plus
-                 loose spokes reads as a sunburst at 26px. -->
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="6.6" />
-              <circle class="solid" cx="12" cy="12" r="2.4" />
-              <path
-                d="M12 5.4V2.2M12 18.6v3.2M5.4 12H2.2M18.6 12h3.2M7.33 7.33 5.07 5.07M16.67 16.67l2.26 2.26M16.67 7.33l2.26-2.26M7.33 16.67l-2.26 2.26"
-              />
-            </svg>
-          </button>
-          <div id="booster-rail" role="group" aria-label="Boosters">
+          <!-- The gear used to live top-right, absolutely positioned inside
+               #board, where it could sit on top of the board's own top-right
+               tiles (issue #125): it wasn't part of what the HUD fit measures.
+               It now lives in the booster rail instead — the rail is a child
+               of #board anchored into a band #board itself reserves (see the
+               #app[data-hud] rules below), so the fit prices that band in and
+               nothing the rail holds can ever overlap a tile. It is the rail's
+               last control, set apart from the boosters by its own spacing
+               (see `#booster-rail > #btn-settings` below) so it still reads as
+               "settings" rather than a fourth booster. -->
+          <div id="booster-rail">
+            <!-- The gear below isn't a booster, so the "Boosters" group name
+               wraps only these three — the honest a11y tree the rail's own
+               role would otherwise misstate. -->
+            <div class="boosters" role="group" aria-label="Boosters">
             <!-- Placeholder icon art (bulb / back-arrow / crossing arrows), like
                  the tile faces. `aria-hidden` on the drawing: the spoken name is
                  the button's aria-label, which main.ts keeps in sync with the
@@ -989,6 +983,24 @@
                 <path class="solid" d="M20.5 13.5v7h-7z" />
               </svg>
               <span class="charges" id="charges-shuffle">5</span>
+            </button>
+            </div>
+            <!-- A gear reads as a gear only with teeth *on* a rim: a hub plus
+                 loose spokes reads as a sunburst at 26px. -->
+            <button
+              id="btn-settings"
+              type="button"
+              data-action="Settings"
+              title="Settings"
+              aria-label="Settings"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="6.6" />
+                <circle class="solid" cx="12" cy="12" r="2.4" />
+                <path
+                  d="M12 5.4V2.2M12 18.6v3.2M5.4 12H2.2M18.6 12h3.2M7.33 7.33 5.07 5.07M16.67 16.67l2.26 2.26M16.67 7.33l2.26-2.26M7.33 16.67l-2.26 2.26"
+                />
+              </svg>
             </button>
           </div>
           <div
