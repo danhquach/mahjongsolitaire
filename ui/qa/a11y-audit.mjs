@@ -297,7 +297,7 @@ for (const vp of VIEWPORTS) {
     );
     check(
       controls.map((c) => c.name).join('|') ===
-        'Profile|Daily Challenge|New game|Restart|Hint|Undo|Shuffle|Settings',
+        'Profile|Daily Challenge|New game|Restart|Leaderboard|Hint|Undo|Shuffle|Settings',
       'board screen exposes the complete slice action set',
       controls,
     );
