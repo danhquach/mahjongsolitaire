@@ -13,11 +13,14 @@ import type { Container, Ticker } from 'pixi.js';
 import type { TileId } from '@mahjongsolitaire/core';
 import {
   FLIP_MS,
+  LOSS_WASH_MS,
   SHAKE_MS,
   cascadeDurationMs,
   cascadeFrame,
   flipScaleX,
   shakeOffset,
+  slumpFrame,
+  slumpLayout,
 } from './anim.js';
 import type { Point } from './anim.js';
 
@@ -138,6 +141,55 @@ class CascadeEffect implements Effect {
 }
 
 /**
+ * The remaining board tiles slumping, tilting and losing colour while the
+ * holder-full loss's red wash plays over them (issue #121) — deliberately
+ * harsher than the win cascade's graceful sweep-off, since a full holder is
+ * a hard fail rather than a reward. Desaturation is one filter on the whole
+ * board layer (`setDesaturation`) rather than per tile: cheaper, and every
+ * slumping tile fades at the same rate regardless, so one shared amount is
+ * exactly right. Like the other live-node effects, tiles are re-resolved
+ * every frame and one that has left the board simply drops out.
+ */
+class SlumpEffect implements Effect {
+  private t = 0;
+  private readonly specs: ReadonlyMap<TileId, ReturnType<typeof slumpLayout>>;
+
+  constructor(
+    private readonly tiles: readonly TileId[],
+    private readonly tileNode: (id: TileId) => Container | undefined,
+    private readonly setDesaturation: (amount: number) => void,
+  ) {
+    this.specs = new Map(tiles.map((id) => [id, slumpLayout(id)]));
+  }
+
+  advance(dtMs: number): boolean {
+    this.t += dtMs;
+    let saturation = 1;
+    for (const id of this.tiles) {
+      const spec = this.specs.get(id)!;
+      const frame = slumpFrame(spec, this.t);
+      saturation = frame.saturation;
+      const node = this.tileNode(id);
+      if (!node) continue;
+      node.position.set(0, frame.dy);
+      node.rotation = frame.rotationRad;
+    }
+    this.setDesaturation(1 - saturation);
+    return this.t < LOSS_WASH_MS;
+  }
+
+  dispose(): void {
+    for (const id of this.tiles) {
+      const node = this.tileNode(id);
+      if (!node) continue;
+      node.position.set(0, 0);
+      node.rotation = 0;
+    }
+    this.setDesaturation(0);
+  }
+}
+
+/**
  * Every live effect, advanced from one ticker callback.
  *
  * Concurrent effects are simply separate entries — nothing queues and nothing
@@ -153,6 +205,7 @@ export class Animator {
     private readonly opts: {
       readonly reduced: () => boolean;
       readonly tileNode: (id: TileId) => Container | undefined;
+      readonly setDesaturation: (amount: number) => void;
     },
   ) {
     ticker.add(this.onTick);
@@ -178,6 +231,14 @@ export class Animator {
   cascade(tiles: ReadonlyArray<{ readonly id: TileId; readonly column: number }>): void {
     if (this.opts.reduced()) return;
     this.effects.push(new CascadeEffect(tiles, this.opts.tileNode));
+  }
+
+  /** The holder-full loss slump (issue #121): whatever tile pictures are
+   *  still on the board sag, tilt and desaturate while the red wash plays.
+   *  Reduced motion skips it — the wash appears at once instead. */
+  slump(ids: readonly TileId[]): void {
+    if (this.opts.reduced()) return;
+    this.effects.push(new SlumpEffect(ids, this.opts.tileNode, this.opts.setDesaturation));
   }
 
   /** Drop every live effect — the board underneath them has been replaced. */

@@ -141,4 +141,13 @@ export class HolderStrip {
     if (inert) this.root.setAttribute('inert', '');
     else this.root.removeAttribute('inert');
   }
+
+  /** Mark the strip as the reason the level ended (issue #121: the holder-full
+   *  loss). Filled slots carry no border by default (`.filled .tile`), so the
+   *  red one has to be set explicitly here rather than riding on `.last`'s
+   *  amber, which only ever marks a single *empty* slot. Cleared on restart
+   *  or a new deal, same as every other end-of-level effect. */
+  setLost(lost: boolean): void {
+    this.root.classList.toggle('lost', lost);
+  }
 }

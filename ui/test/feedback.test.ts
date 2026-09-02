@@ -65,3 +65,37 @@ test('the win cue is silent on both channels when both toggles are off', () => {
   assert.deepEqual(played, []);
   assert.equal(vibrated.length, 0);
 });
+
+// Issue #121: the holder-full loss's 'fail' cue, same two-channel gate.
+
+test('the fail cue sounds and vibrates when both channels are on', () => {
+  const { player, vibrate, played, vibrated } = spies();
+  const feedback = new Feedback(() => BASE, player, vibrate);
+  feedback.cue('fail');
+  assert.deepEqual(played, ['fail']);
+  assert.equal(vibrated.length, 1);
+});
+
+test('the fail cue respects the audio toggle independently of haptics', () => {
+  const { player, vibrate, played, vibrated } = spies();
+  const feedback = new Feedback(() => ({ ...BASE, audio: false }), player, vibrate);
+  feedback.cue('fail');
+  assert.deepEqual(played, [], 'muted, so nothing sounds');
+  assert.equal(vibrated.length, 1, 'haptics still fire on their own toggle');
+});
+
+test('the fail cue respects the haptics toggle independently of audio', () => {
+  const { player, vibrate, played, vibrated } = spies();
+  const feedback = new Feedback(() => ({ ...BASE, haptics: false }), player, vibrate);
+  feedback.cue('fail');
+  assert.deepEqual(played, ['fail'], 'audio still fires on its own toggle');
+  assert.equal(vibrated.length, 0, 'no vibration pattern requested');
+});
+
+test('the fail cue is silent on both channels when both toggles are off', () => {
+  const { player, vibrate, played, vibrated } = spies();
+  const feedback = new Feedback(() => ({ ...BASE, audio: false, haptics: false }), player, vibrate);
+  feedback.cue('fail');
+  assert.deepEqual(played, []);
+  assert.equal(vibrated.length, 0);
+});

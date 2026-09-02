@@ -276,3 +276,113 @@ export function confettiFrame(spec: ConfettiSpec, tMs: number): ConfettiFrame {
     alpha: 1 - u,
   };
 }
+
+// --- Holder-full loss (issue #121) --------------------------------------
+//
+// The one hard fail in the game (decision 0009) is deliberately harsher than
+// the deadlock treatment (#122): the fourth tile's landing slams rather than
+// parks, the holder strip shakes and its slots redden, a dark wash settles
+// over the board while whatever tiles are left slump and lose their colour,
+// and only then does the dialog appear. Every curve below is driven from a
+// single clock started at the tap that fills the holder — main.ts fires the
+// slam flight and schedules the rest off the same constants, so they land in
+// step without the timeline having to hand off between modules.
+
+/** The slam's own travel time — heavier and faster than a normal park
+ *  (TRAY_FLY_MS), so the landing reads as a drop rather than a flight. */
+export const SLAM_MS = 140;
+/** Portion of SLAM_MS, at the tail, given over to the landing squash. */
+const SLAM_SQUASH_MS = 90;
+/** How far the squash compresses at its deepest point. */
+const SLAM_SQUASH_AMOUNT = 0.18;
+
+/** Cubic ease-in: unlike the tray's ease-in park, this starts slower still and
+ *  finishes faster, so the same short duration reads as "dropped". Exactly 0
+ *  at the start and 1 from SLAM_MS on. */
+export function slamProgress(tMs: number): number {
+  if (tMs <= 0) return 0;
+  if (tMs >= SLAM_MS) return 1;
+  const u = tMs / SLAM_MS;
+  return u * u * u;
+}
+
+/** Scale multiplier for the landing squash: 1 outside its window, dipping to
+ *  `1 - SLAM_SQUASH_AMOUNT` at the impact and recovering to exactly 1 by
+ *  SLAM_MS — never left squashed, whatever frame an effect stops on. */
+export function slamSquash(tMs: number): number {
+  const start = SLAM_MS - SLAM_SQUASH_MS;
+  if (tMs <= start || tMs >= SLAM_MS) return 1;
+  const u = (tMs - start) / SLAM_SQUASH_MS;
+  return 1 - SLAM_SQUASH_AMOUNT * Math.sin(Math.PI * u);
+}
+
+/** Two swings of the holder strip, reusing the blocked-tap shake's own
+ *  duration (SHAKE_MS) so the two fails share a timing signature — just twice
+ *  the cycles in the same span, since the whole strip is announcing this one
+ *  rather than a single tile. */
+const HOLDER_SHAKE_CYCLES = 2;
+export function holderShakeOffset(tMs: number): number {
+  if (tMs <= 0 || tMs >= SHAKE_MS) return 0;
+  const u = tMs / SHAKE_MS;
+  return SHAKE_AMPLITUDE * (1 - u) * Math.sin(2 * Math.PI * HOLDER_SHAKE_CYCLES * u);
+}
+
+/** The red wash's fade-in duration. */
+export const LOSS_WASH_MS = 700;
+/** Delay before the loss dialog appears, measured from the tap that filled
+ *  the holder — long enough for the slam (SLAM_MS) to land, the shake and
+ *  wash to play out, and the result to register before the dialog interrupts
+ *  it. Longer than the win's own delay on purpose (decision 0009's hard fail
+ *  is meant to land harder than a win or a lifted deadlock). */
+export const LOSS_DIALOG_DELAY_MS = 1400;
+
+/** The loss dialog's timing, collapsed to "now" under reduced motion (or a
+ *  reload of an already-lost save — see main.ts's `presentLossCelebration`):
+ *  nothing to wait for when the theatre itself is skipped. */
+export function lossSchedule(skipTheatre: boolean): { readonly dialogAtMs: number } {
+  return { dialogAtMs: skipTheatre ? 0 : LOSS_DIALOG_DELAY_MS };
+}
+
+/** How far a slumping tile drops, at most. */
+const SLUMP_DROP_PX = 16;
+/** How far a slumping tile tilts, at most, in either direction. */
+const SLUMP_MAX_TILT_RAD = 0.26; // ~15°
+
+export interface SlumpSpec {
+  /** Signed tilt this tile settles into — deterministic per tile id, so a
+   *  given board always slumps the same way twice. */
+  readonly tiltRad: number;
+}
+
+/** One tile's slump layout, seeded by its own id (any `lcg`-seedable number
+ *  works — main.ts passes the TileId). */
+export function slumpLayout(seed: number): SlumpSpec {
+  const random = lcg(seed);
+  const sign = random() < 0.5 ? -1 : 1;
+  return { tiltRad: sign * (0.5 + random() * 0.5) * SLUMP_MAX_TILT_RAD };
+}
+
+export interface SlumpFrame {
+  /** Downward offset, board px. */
+  readonly dy: number;
+  readonly rotationRad: number;
+  /** 1 = full colour, 0 = fully desaturated. */
+  readonly saturation: number;
+}
+
+/** A slumping tile's frame at `tMs` into the wash (LOSS_WASH_MS is the whole
+ *  span — the slump settles alongside it, not after it). `dy` grows and
+ *  `saturation` falls monotonically, both exactly at their final value from
+ *  LOSS_WASH_MS on, so nothing is left mid-slump whatever frame it stops on. */
+export function slumpFrame(spec: SlumpSpec, tMs: number): SlumpFrame {
+  const u = easeOut(clamp01(tMs / LOSS_WASH_MS));
+  return {
+    dy: SLUMP_DROP_PX * u,
+    // `u === 0` short-circuits rather than relying on `spec.tiltRad * 0`,
+    // which is -0 for a negative tilt — a real value, but one that would
+    // fail a strict deep-equal against the tidy `0` a test (or a caller)
+    // reasonably expects at rest.
+    rotationRad: u === 0 ? 0 : spec.tiltRad * u,
+    saturation: 1 - u,
+  };
+}

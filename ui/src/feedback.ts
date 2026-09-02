@@ -21,8 +21,11 @@ import type { Settings } from './settings.js';
 
 /** The moments the board gives feedback for. Issue #120 adds 'win': one soft
  *  cue on clearing a level, alongside the cascade/lanterns/confetti — still
- *  just the two existing channels, each honouring its own toggle. */
-export type Cue = 'select' | 'match' | 'mismatch' | 'win';
+ *  just the two existing channels, each honouring its own toggle. Issue #121
+ *  adds 'fail': the holder-full loss, the one hard fail in the game — lower
+ *  and heavier than 'mismatch' rather than a variant of it, since this ends
+ *  the level instead of just refusing a tap. */
+export type Cue = 'select' | 'match' | 'mismatch' | 'win' | 'fail';
 
 export interface CuePlayer {
   play(cue: Cue): void;
@@ -39,6 +42,7 @@ const TONES: Record<Cue, { readonly from: number; readonly to: number; readonly 
   match: { from: 587, to: 880, ms: 180 },
   mismatch: { from: 320, to: 240, ms: 130 },
   win: { from: 523, to: 784, ms: 200 },
+  fail: { from: 220, to: 140, ms: 240 },
 };
 
 const PEAK_GAIN = 0.06;
@@ -49,6 +53,7 @@ const HAPTICS: Record<Cue, number | readonly number[]> = {
   match: 14,
   mismatch: [10, 40, 10],
   win: 20,
+  fail: 40,
 };
 
 /**
