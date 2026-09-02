@@ -21,7 +21,8 @@
 //      tap, every control named and ≥ 48dp, and Escape returns focus to it.
 //   7. the feedback form (issue #118) is a labelled modal reachable from
 //      Settings, its fields are labelled and ≥ 48dp, Send starts disabled,
-//      and Escape returns focus to the row that opened it.
+//      and Escape returns focus to the row that opened it; its attachment
+//      controls (issue #130) are named and ≥ 48dp too.
 //
 // Real VoiceOver/TalkBack device passes remain a Phase 5 manual item; this
 // audit is the automated gate that keeps the semantics from regressing.
@@ -923,6 +924,58 @@ for (const vp of VIEWPORTS) {
     await page.fill('#feedback-body', 'The bamboo tile clips the dot tile.');
     const filled = await page.evaluate(() => document.getElementById('feedback-send').disabled);
     check(!filled, 'Send enables once both fields have content', { disabled: filled });
+
+    // Attachments (issue #130): the Add control is a named ≥ 48dp button,
+    // the strip is a labelled list, and each thumbnail's Remove is a named
+    // ≥ 48dp button that hands focus back to Add when it goes.
+    const attachOpen = await page.evaluate(() => {
+      const add = document.getElementById('feedback-attach');
+      const list = document.getElementById('feedback-attachments');
+      return {
+        addName: add.textContent.trim(),
+        addH: Math.round(add.getBoundingClientRect().height),
+        addW: Math.round(add.getBoundingClientRect().width),
+        listLabel: list.getAttribute('aria-label'),
+        listHidden: list.hidden,
+        inputHidden: document.getElementById('feedback-file').hidden,
+      };
+    });
+    check(attachOpen.addName.length > 0, 'the attach control is named', attachOpen);
+    check(
+      attachOpen.addH >= MIN_TOUCH_TARGET && attachOpen.addW >= MIN_TOUCH_TARGET,
+      `the attach control is ≥ ${MIN_TOUCH_TARGET}dp`,
+      attachOpen,
+    );
+    check(attachOpen.listLabel === 'Attachments', 'the thumbnail strip is a labelled list', attachOpen);
+    check(attachOpen.listHidden && attachOpen.inputHidden, 'strip and native input start hidden', attachOpen);
+    const png = await page.screenshot({ type: 'png', clip: { x: 0, y: 0, width: 40, height: 40 } });
+    await page.setInputFiles('#feedback-file', { name: 'shot.png', mimeType: 'image/png', buffer: png });
+    await page.waitForFunction(() => document.querySelectorAll('#feedback-attachments li').length === 1);
+    const attached = await page.evaluate(() => {
+      const remove = document.querySelector('#feedback-attachments .remove');
+      return {
+        removeLabel: remove.getAttribute('aria-label'),
+        removeH: Math.round(remove.getBoundingClientRect().height),
+        removeW: Math.round(remove.getBoundingClientRect().width),
+        imgAlt: document.querySelector('#feedback-attachments img')?.getAttribute('alt'),
+        listHidden: document.getElementById('feedback-attachments').hidden,
+      };
+    });
+    check(attached.removeLabel === 'Remove shot.png', 'each thumbnail has a named Remove control', attached);
+    check(
+      attached.removeH >= MIN_TOUCH_TARGET && attached.removeW >= MIN_TOUCH_TARGET,
+      `Remove is ≥ ${MIN_TOUCH_TARGET}dp`,
+      attached,
+    );
+    check(attached.imgAlt === '', 'the thumbnail is decorative (the name is the text)', attached);
+    await page.click('#feedback-attachments .remove');
+    const removed = await page.evaluate(() => ({
+      count: document.querySelectorAll('#feedback-attachments li').length,
+      listHidden: document.getElementById('feedback-attachments').hidden,
+      focus: document.activeElement?.id,
+    }));
+    check(removed.count === 0 && removed.listHidden, 'Remove takes the thumbnail away', removed);
+    check(removed.focus === 'feedback-attach', 'focus lands on Add after a Remove', removed);
 
     // Escape is the keyboard way out, and focus must land back on the
     // Settings button that Send feedback led away from — not <body>.

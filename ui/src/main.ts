@@ -107,11 +107,17 @@ import { BoardRenderer } from './render.js';
 import { parseChangelog, versionLabel } from './changelog.js';
 import changelogMd from '../../CHANGELOG.md?raw';
 import {
+  ATTACHMENT_ACCEPT,
   FEEDBACK_INBOX,
+  MAX_ATTACHMENTS,
   buildFeedbackPayload,
   canSend as canSendFeedback,
+  checkAttachment,
+  encodeAttachments,
   feedbackSubject,
   feedbackText,
+  reencodedName,
+  refusalMessage,
   mailtoUrl,
   sendFeedback,
 } from './feedback-form.js';
@@ -231,6 +237,11 @@ async function start(): Promise<void> {
   const feedbackSend = el<HTMLButtonElement>('feedback-send');
   const feedbackCancel = el<HTMLButtonElement>('feedback-cancel');
   const feedbackMailto = el<HTMLAnchorElement>('feedback-mailto');
+  const feedbackMailtoNote = el<HTMLElement>('feedback-mailto-note');
+  const feedbackAttachButton = el<HTMLButtonElement>('feedback-attach');
+  const feedbackFileInput = el<HTMLInputElement>('feedback-file');
+  const feedbackAttachmentList = el<HTMLUListElement>('feedback-attachments');
+  const feedbackAttachStatus = el<HTMLElement>('feedback-attach-status');
 
   // One storage handle for every persisted concern (charges, settings, save,
   // ladder progress). Created before the layout is chosen: the save and the
@@ -424,6 +435,24 @@ async function start(): Promise<void> {
   /** True while a submit is in flight — Send stays disabled regardless of
    *  field content so a slow request cannot be fired twice (issue #118). */
   let feedbackSending = false;
+  /** Files picked for the current report (issue #130), in pick order. Images
+   *  are already re-encoded (metadata stripped); `previewUrl` is an object
+   *  URL revoked when the entry goes away. */
+  interface PendingAttachment {
+    readonly id: number;
+    readonly name: string;
+    readonly type: string;
+    readonly kind: 'image' | 'video';
+    readonly blob: Blob;
+    readonly size: number;
+    readonly previewUrl: string;
+  }
+  let feedbackAttachments: PendingAttachment[] = [];
+  let nextAttachmentId = 1;
+  /** True while a picked batch is being checked and re-encoded: Add and Send
+   *  wait for it, so a second pick cannot interleave with the first and a
+   *  Send cannot go out missing the file still on the canvas. */
+  let feedbackPicking = false;
   /** Tiles the last Hint pointed at — highlighted until the board changes. */
   let hintPair: readonly TileId[] = [];
   /** Shuffles taken on this deal; feeds the shuffle seed so a given
@@ -1220,7 +1249,9 @@ async function start(): Promise<void> {
    *  already in flight (issue #118: no double-submit on a slow request). */
   function updateFeedbackSendEnabled(): void {
     feedbackSend.disabled =
-      feedbackSending || !canSendFeedback(feedbackSummaryInput.value, feedbackBodyInput.value);
+      feedbackSending ||
+      feedbackPicking ||
+      !canSendFeedback(feedbackSummaryInput.value, feedbackBodyInput.value);
   }
 
   /** Clear the status line and hide the mailto fallback — the start of every
@@ -1229,6 +1260,156 @@ async function start(): Promise<void> {
     feedbackStatus.textContent = '';
     feedbackStatus.className = '';
     feedbackMailto.hidden = true;
+    feedbackMailtoNote.hidden = true;
+    feedbackAttachStatus.textContent = '';
+  }
+
+  // --- attachments (issue #130) ------------------------------------------------
+
+  /** Re-encode an image through a canvas so EXIF/location metadata never
+   *  leaves the device — the pixels are redrawn, nothing else is carried over.
+   *  `imageOrientation: 'from-image'` bakes the EXIF rotation into the pixels
+   *  first, so the upright photo survives losing its orientation tag. PNG
+   *  stays PNG (screenshots keep crisp UI text); everything else — JPEG, WebP,
+   *  HEIC — becomes JPEG, which is also what makes HEIC deliverable to any
+   *  mail client. Very large photos are scaled to fit 4096 px on the long
+   *  edge: well under every browser's canvas limit and plenty for a bug. */
+  async function stripImageMetadata(file: File): Promise<Blob> {
+    const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    try {
+      const scale = Math.min(1, 4096 / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const ctx = canvas.getContext('2d');
+      if (ctx === null) throw new Error('no 2d context');
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const type = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, 0.92));
+      if (blob === null) throw new Error('encode failed');
+      return blob;
+    } finally {
+      bitmap.close();
+    }
+  }
+
+  function setAttachStatus(message: string): void {
+    feedbackAttachStatus.textContent = message;
+    if (message !== '') announcer.say(message);
+  }
+
+  function updateAttachButton(): void {
+    feedbackAttachButton.disabled =
+      feedbackSending || feedbackPicking || feedbackAttachments.length >= MAX_ATTACHMENTS;
+  }
+
+  /** Rebuild the thumbnail strip from the list: one <li> per file with its
+   *  preview, name, and a named Remove control (≥ 48dp, spec §7). */
+  function renderAttachments(): void {
+    feedbackAttachmentList.replaceChildren();
+    for (const item of feedbackAttachments) {
+      const li = document.createElement('li');
+      const preview =
+        item.kind === 'image'
+          ? Object.assign(document.createElement('img'), { src: item.previewUrl, alt: '' })
+          : Object.assign(document.createElement('video'), {
+              src: item.previewUrl,
+              muted: true,
+              playsInline: true,
+              preload: 'metadata',
+            });
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = item.name;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'remove';
+      remove.setAttribute('aria-label', `Remove ${item.name}`);
+      remove.textContent = '×';
+      remove.addEventListener('click', () => removeAttachment(item.id));
+      li.append(preview, name, remove);
+      feedbackAttachmentList.append(li);
+    }
+    feedbackAttachmentList.hidden = feedbackAttachments.length === 0;
+    updateAttachButton();
+  }
+
+  function removeAttachment(id: number): void {
+    const item = feedbackAttachments.find((a) => a.id === id);
+    if (item === undefined) return;
+    URL.revokeObjectURL(item.previewUrl);
+    feedbackAttachments = feedbackAttachments.filter((a) => a.id !== id);
+    renderAttachments();
+    announcer.say(`Removed ${item.name}.`);
+    feedbackAttachButton.focus();
+  }
+
+  function clearAttachments(): void {
+    for (const item of feedbackAttachments) URL.revokeObjectURL(item.previewUrl);
+    feedbackAttachments = [];
+    renderAttachments();
+  }
+
+  /** The picker returned: check each file against the caps (issue #130 — an
+   *  over-limit file is refused with a short message, the rest of the form
+   *  is untouched), strip image metadata, and add what survives. */
+  async function addPickedFiles(files: readonly File[]): Promise<void> {
+    if (feedbackPicking) return;
+    feedbackPicking = true;
+    updateAttachButton();
+    updateFeedbackSendEnabled();
+    try {
+      await addPickedFilesInner(files);
+    } finally {
+      feedbackPicking = false;
+      renderAttachments();
+      updateFeedbackSendEnabled();
+    }
+  }
+
+  async function addPickedFilesInner(files: readonly File[]): Promise<void> {
+    setAttachStatus('');
+    for (const file of files) {
+      // Cheap check on the picked file first, so a huge file is refused
+      // before anything tries to decode it.
+      const pre = checkAttachment(feedbackAttachments, file);
+      if (!pre.ok) {
+        setAttachStatus(refusalMessage(pre.reason));
+        continue;
+      }
+      let blob: Blob = file;
+      let name = file.name;
+      let type = file.type;
+      if (pre.kind === 'image') {
+        try {
+          blob = await stripImageMetadata(file);
+        } catch {
+          setAttachStatus(`Couldn't read ${file.name}`);
+          continue;
+        }
+        type = blob.type;
+        name = reencodedName(file.name, type);
+      }
+      // The re-encoded size is the one that ships — check it again.
+      const post = checkAttachment(feedbackAttachments, { name, type, size: blob.size });
+      if (!post.ok) {
+        setAttachStatus(refusalMessage(post.reason));
+        continue;
+      }
+      feedbackAttachments = [
+        ...feedbackAttachments,
+        {
+          id: nextAttachmentId++,
+          name,
+          type,
+          kind: post.kind,
+          blob,
+          size: blob.size,
+          previewUrl: URL.createObjectURL(blob),
+        },
+      ];
+      announcer.say(`Attached ${name}.`);
+    }
   }
 
   function clearFeedbackCloseTimer(): void {
@@ -1271,6 +1452,7 @@ async function start(): Promise<void> {
     if (feedbackSend.disabled) return;
     feedbackSending = true;
     updateFeedbackSendEnabled();
+    updateAttachButton();
     resetFeedbackStatus();
     const payload = buildFeedbackPayload({
       summary: feedbackSummaryInput.value,
@@ -1279,15 +1461,18 @@ async function start(): Promise<void> {
       level: currentLevelLabel(),
       ua: navigator.userAgent,
       date: new Date().toISOString(),
+      attachments: await encodeAttachments(feedbackAttachments),
     });
     const result = await sendFeedback(payload, (input, init) => fetch(input, init));
     feedbackSending = false;
+    updateAttachButton();
     if (result === 'sent') {
       feedbackStatus.textContent = 'Thanks, your feedback was sent';
       feedbackStatus.className = 'success';
       announcer.say('Thanks, your feedback was sent.');
       feedbackSummaryInput.value = '';
       feedbackBodyInput.value = '';
+      clearAttachments();
       updateFeedbackSendEnabled();
       // Leave the confirmation up for a beat before closing, so it is
       // perceivable rather than an instant swap back to Settings.
@@ -1305,6 +1490,9 @@ async function start(): Promise<void> {
         feedbackText(payload),
       );
       feedbackMailto.hidden = false;
+      // A mailto: link cannot carry files (issue #130): the attachments stay
+      // in the form, and the player is told to add them to the email.
+      feedbackMailtoNote.hidden = feedbackAttachments.length === 0;
       updateFeedbackSendEnabled();
     }
   }
@@ -1313,6 +1501,16 @@ async function start(): Promise<void> {
     feedbackButton.addEventListener('click', () => openFeedback());
     feedbackCancel.addEventListener('click', () => closeFeedback());
     feedbackSend.addEventListener('click', () => void submitFeedback());
+    // Attachments (issue #130): the visible button opens the (hidden) native
+    // picker; the input is reset after each pick so choosing the same file
+    // again still fires `change`.
+    feedbackFileInput.accept = ATTACHMENT_ACCEPT;
+    feedbackAttachButton.addEventListener('click', () => feedbackFileInput.click());
+    feedbackFileInput.addEventListener('change', () => {
+      const files = Array.from(feedbackFileInput.files ?? []);
+      feedbackFileInput.value = '';
+      void addPickedFiles(files);
+    });
     feedbackSummaryInput.addEventListener('input', () => updateFeedbackSendEnabled());
     feedbackBodyInput.addEventListener('input', () => updateFeedbackSendEnabled());
     // Tapping the dimmed backdrop dismisses the panel, same as Settings

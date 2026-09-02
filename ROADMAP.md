@@ -73,7 +73,9 @@
 ### Phase 4 — Services (M4) · 2 wks
 **Landed early:** the feedback endpoint (issue #118) — an in-game "Send
 feedback" form in Settings, delivered by email through a Cloudflare Worker
-route (decision 0019), with a `mailto:` fallback if the endpoint is down.
+route (decision 0019), with a `mailto:` fallback if the endpoint is down;
+and its attachments (issue #130) — up to three screenshots or a short
+recording per report, metadata-stripped on the device (decision 0020).
 **Deliverables:** rewarded video + interstitial + banner via mediation, **all gated behind the settings ads toggle (default OFF, issue #3)** — no ad SDK init while the toggle is off; frequency caps **in code** (never mid-level, ≤ 1/3 levels, ≥ 90s gap, skip after 5s); booster economy (grants, replenishment); analytics event set (spec §10); remote config for level reordering + ad tuning (caps floor stays in code). ~~Remove-Ads IAP + restore~~ deferred to v1.1+ (issue #21).
 **Exit criteria:**
 - With ads toggle OFF (default): zero ad SDK calls in an instrumented full session.

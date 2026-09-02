@@ -6,6 +6,13 @@ commit and build time of the running bundle.
 
 ## 2026-09-02
 
+- The feedback form can now carry evidence: an "Add image or video" control
+  attaches up to three screenshots or a short screen recording (images up to
+  10 MB, video up to 25 MB, 25 MB in all), shown as thumbnails with a remove
+  control before sending. Images are redrawn on your device before they
+  leave it, so no camera or location metadata travels with them. A failed
+  send keeps the attachments along with the text; the "Email it instead"
+  fallback can't carry files and says so (#130).
 - Settings gains a "Send feedback" row: a short Summary + Body form that
   emails the QA inbox directly from the game, with the build version, current
   level, and platform attached automatically. If the connection fails, the

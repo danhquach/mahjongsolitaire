@@ -718,6 +718,7 @@
       #profile .card > button,
       #feedback .card > button,
       #feedback .card > a,
+      #feedback .attach-row > button,
       #welcome .card > button {
         margin-top: 16px;
         display: block;
@@ -865,10 +866,82 @@
       #feedback .card > button:disabled {
         opacity: 0.5;
       }
-      #feedback .card > .secondary {
+      #feedback .card > .secondary,
+      #feedback .attach-row > .secondary {
         background: none;
         color: #166534;
         border-color: #bbf7d0;
+      }
+      #feedback .attach-row > button:disabled {
+        opacity: 0.5;
+      }
+      /* Attachments (issue #130): a compact Add control under Details, a
+         thumbnail strip with a ≥ 48dp Remove on each, and its own status line
+         for refusals so the send status stays about sending. */
+      #feedback .attach-row {
+        margin-top: 12px;
+      }
+      #feedback .attach-row > button {
+        margin: 0;
+        width: auto;
+      }
+      #feedback-attach-status {
+        display: block;
+        margin-top: 8px;
+        font-size: 15px;
+        color: #991b1b;
+        font-weight: bold;
+      }
+      #feedback-attachments {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        list-style: none;
+        margin: 12px 0 0;
+        padding: 0;
+      }
+      #feedback-attachments li {
+        position: relative;
+        width: 112px;
+      }
+      #feedback-attachments img,
+      #feedback-attachments video {
+        display: block;
+        width: 112px;
+        height: 112px;
+        object-fit: cover;
+        border-radius: 8px;
+        border: 1px solid #bbf7d0;
+        background: #ecfccb;
+      }
+      #feedback-attachments .name {
+        display: block;
+        margin-top: 4px;
+        font-size: 13px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #feedback-attachments .remove {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 48px;
+        height: 48px;
+        margin: 0;
+        padding: 0;
+        border: none;
+        border-radius: 0 8px 0 8px;
+        background: rgba(20, 83, 45, 0.85);
+        color: #ffffff;
+        font-size: 24px;
+        line-height: 48px;
+        cursor: pointer;
+      }
+      #feedback-mailto-note {
+        display: block;
+        margin-top: 8px;
+        font-size: 15px;
       }
 
       /* --- Accessibility layer (issue #12) ---------------------------------
@@ -1140,11 +1213,24 @@
               />
               <label for="feedback-body">Details</label>
               <textarea id="feedback-body" maxlength="2000" rows="6"></textarea>
+              <!-- Attachments (issue #130): up to three screenshots or a short
+                   recording. The native picker is a hidden input driven by the
+                   visible button; the `accept` list is set from the one place
+                   the allowed types live (feedback-form.ts). -->
+              <div class="attach-row">
+                <button id="feedback-attach" type="button" class="secondary">Add image or video</button>
+                <span id="feedback-attach-status" aria-live="polite"></span>
+              </div>
+              <input id="feedback-file" type="file" multiple hidden />
+              <ul id="feedback-attachments" aria-label="Attachments" hidden></ul>
               <span id="feedback-status" aria-live="polite"></span>
               <!-- The mailto fallback (issue #118): a real link with a real
                    href, so both a click and inspecting the href work — shown
                    only after a failed send, text kept in the fields either way. -->
               <a id="feedback-mailto" class="secondary" href="#" hidden>Email it instead</a>
+              <span id="feedback-mailto-note" hidden
+                >Attachments couldn't be included — please reply to the email with them</span
+              >
               <button id="feedback-send" type="button" disabled>Send</button>
               <button id="feedback-cancel" type="button" class="secondary">Cancel</button>
             </div>
