@@ -211,6 +211,9 @@ async function huntDeadlock(maxDeals) {
         undoOffered: !document.getElementById('overlay-undo').hidden,
         focus: document.activeElement?.id,
         charges: slice.boosterCharges(),
+        // Read once the theatre has drained, so a still-stuck rescue below
+        // can be held to the same settled value (issue #144).
+        desaturation: slice.renderer.desaturation(),
       };
     }
   }
@@ -1638,7 +1641,6 @@ for (const vp of VIEWPORTS) {
         focusIsTile: document.activeElement?.classList.contains('tile-node') === true,
         said: document.getElementById('a11y-status').textContent,
         washPresent: document.querySelector('.fx-loss-wash') !== null,
-        desaturation: window.__slice.renderer.desaturation(),
       }));
       // Two honest outcomes: the shuffle rescues the deal, or it refuses because
       // this end position has no solvable face assignment (a pair stacked on
@@ -1671,10 +1673,23 @@ for (const vp of VIEWPORTS) {
         // Issue #122 follow-up: the still-stuck redraw must not drop the grey
         // wash back to full colour underneath the still-open dialog.
         check(rescued.washPresent, 'the grey wash stays present on a still-stuck board', rescued);
+        // Issue #144: the re-applied grey-out is a live effect for one more
+        // frame, and whether a synchronous read landed before or after that
+        // frame decided the old `desaturation > 0` check. Let it drain (the
+        // same `animating()` wait huntDeadlock's own read sits behind) and
+        // hold the settled value to what the deadlock itself settled at —
+        // the regression this guards is redraw() dropping the grey-out
+        // relative to the stuck state, not a particular amount.
+        await page.waitForFunction(() => !window.__slice.animating());
+        const settled = await page.evaluate(() => ({
+          desaturation: window.__slice.renderer.desaturation(),
+          washPresent: document.querySelector('.fx-loss-wash') !== null,
+          overlayVisible: document.getElementById('overlay').classList.contains('visible'),
+        }));
         check(
-          rescued.desaturation > 0,
-          'the board stays desaturated on a still-stuck board',
-          rescued,
+          settled.desaturation === stuck.desaturation && settled.washPresent && settled.overlayVisible,
+          'the still-stuck board settles on the same grey-out the deadlock had',
+          { stuck: stuck.desaturation, settled },
         );
         console.log(
           `${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: shuffle re-rolled a still-stuck position honestly (deal ${stuck.deal + 1}, ${stuck.tilesLeft} tiles left)`,
