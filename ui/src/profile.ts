@@ -5,23 +5,17 @@
 //
 //   mahjong.profile.v1   who is playing: display name + avatar
 //   mahjong.record.v1    what they have done: levels cleared, best and total
-//                        score, stars per ladder level, Daily Challenge
-//                        streak (+ the date it is anchored to), trophies
+//                        score, which ladder levels are cleared, Daily
+//                        Challenge streak (+ the date it is anchored to),
+//                        trophies
 //
-// The Daily Challenge and star fields (issue #19, decision 0016) live here
-// rather than on a second record; a record written before #19 parses with
-// them empty. The display name will eventually be shown to other players
-// (issue #70) — length is clamped here, but profanity screening is
-// deliberately deferred until the name actually leaves the device.
+// The Daily Challenge fields (issue #19, decision 0016) live here rather than
+// on a second record; a record written before #19 parses with them empty.
+// The display name will eventually be shown to other players (issue #70) —
+// length is clamped here, but profanity screening is deliberately deferred
+// until the name actually leaves the device.
 
-import {
-  LADDER_LENGTH,
-  dailyTrophies,
-  daysBetween,
-  isDateKey,
-  parseStarRating,
-} from '@mahjongsolitaire/core';
-import type { StarRating } from '@mahjongsolitaire/core';
+import { LADDER_LENGTH, dailyTrophies, daysBetween, isDateKey } from '@mahjongsolitaire/core';
 import { readRecord, writeRecord } from './storage.js';
 import type { KeyValueStorage } from './storage.js';
 
@@ -160,9 +154,9 @@ export interface PlayerRecord {
   readonly bestScore: number;
   /** Every won level's final score, summed (spec §6 "total score"). */
   readonly totalScore: number;
-  /** Best star rating per ladder level, keyed by the level number as a string
-   *  (JSON object keys). Absent means never cleared. */
-  readonly stars: Readonly<Record<string, StarRating>>;
+  /** Ladder levels that have been cleared at least once (issue #119: a clear
+   *  is a clear, no rating attached). */
+  readonly cleared: readonly number[];
   /** Consecutive Daily Challenge days, as of `lastDaily`. */
   readonly dailyStreak: number;
   /** The date key of the last Daily Challenge credited, or null. The streak
@@ -177,7 +171,7 @@ export const EMPTY_RECORD: PlayerRecord = {
   levelsCleared: 0,
   bestScore: 0,
   totalScore: 0,
-  stars: {},
+  cleared: [],
   dailyStreak: 0,
   lastDaily: null,
   trophies: 0,
@@ -186,10 +180,16 @@ export const EMPTY_RECORD: PlayerRecord = {
 export const RECORD_STORAGE_KEY = 'mahjong.record.v1';
 
 /** Per-field tolerance, like parseProfile: counters are non-negative integers
- *  or zero, the stars map keeps only well-formed (level, 1–3) entries, and the
- *  last Daily date must be a real date key or it is forgotten (with the
- *  streak it vouched for). A record from before issue #19 has no totalScore,
- *  stars or lastDaily and simply starts those at empty. */
+ *  or zero, the cleared set keeps only well-formed (1..LADDER_LENGTH) levels,
+ *  and the last Daily date must be a real date key or it is forgotten (with
+ *  the streak it vouched for). A record from before issue #19 has no
+ *  totalScore, cleared or lastDaily and simply starts those at empty.
+ *
+ *  A record written before issue #119 stored a `stars` map (level → 1-3
+ *  rating) instead of a `cleared` list. Any level key present in that old map
+ *  migrates straight to cleared — the rating is discarded, but no player
+ *  loses a clear, and hasCleared/clearedLevelCount (and the booster grants
+ *  built on them, #51/#117) keep seeing the same levels as cleared. */
 export function parsePlayerRecord(record: unknown): PlayerRecord {
   if (typeof record !== 'object' || record === null) return EMPTY_RECORD;
   const raw = record as Record<string, unknown>;
@@ -197,44 +197,42 @@ export function parsePlayerRecord(record: unknown): PlayerRecord {
     const v = raw[key];
     return typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : 0;
   };
-  const stars: Record<string, StarRating> = {};
+  const cleared = new Set<number>();
+  const addLevel = (level: number): void => {
+    if (Number.isInteger(level) && level >= 1 && level <= LADDER_LENGTH) cleared.add(level);
+  };
+  const rawCleared = raw['cleared'];
+  if (Array.isArray(rawCleared)) {
+    for (const v of rawCleared) if (typeof v === 'number') addLevel(v);
+  }
   const rawStars = raw['stars'];
   if (typeof rawStars === 'object' && rawStars !== null && !Array.isArray(rawStars)) {
-    for (const [key, value] of Object.entries(rawStars as Record<string, unknown>)) {
-      const level = Number(key);
-      const rating = parseStarRating(value);
-      if (!Number.isInteger(level) || level < 1 || level > LADDER_LENGTH || rating === null) continue;
-      stars[String(level)] = rating;
-    }
+    // JSON object keys are always strings — unlike the array case above,
+    // Number(key) is the only way to read them back as levels.
+    for (const key of Object.keys(rawStars as Record<string, unknown>)) addLevel(Number(key));
   }
   const lastDaily = isDateKey(raw['lastDaily']) ? raw['lastDaily'] : null;
   return {
     levelsCleared: count('levelsCleared'),
     bestScore: count('bestScore'),
     totalScore: count('totalScore'),
-    stars,
+    cleared: Array.from(cleared).sort((a, b) => a - b),
     dailyStreak: lastDaily === null ? 0 : count('dailyStreak'),
     lastDaily,
     trophies: count('trophies'),
   };
 }
 
-/** Has this ladder level ever been cleared? Every ladder win writes a star
- *  rating, so the stars map is the clear record (issue #51 keys first-clear
- *  grants off it). */
+/** Has this ladder level ever been cleared (issue #51 keys first-clear grants
+ *  off it, #117 the every-third and milestone grants). */
 export function hasCleared(record: PlayerRecord, level: number): boolean {
-  return String(level) in record.stars;
+  return record.cleared.includes(level);
 }
 
 /** Distinct ladder levels cleared — what the every-third-clear grant counts
  *  (issue #51), never completions. */
 export function clearedLevelCount(record: PlayerRecord): number {
-  return Object.keys(record.stars).length;
-}
-
-/** Stars earned across the ladder — the profile's headline star count. */
-export function totalStars(record: PlayerRecord): number {
-  return Object.values(record.stars).reduce((n, s) => n + s, 0);
+  return record.cleared.length;
 }
 
 /** The streak as it stands on `today`: the stored count if the last Daily
@@ -271,22 +269,21 @@ export class RecordStore {
   }
 
   /** A level was won at `score`: one more clear, the score banked into the
-   *  total, a new best if it is one — and, for a ladder level, its star
-   *  rating kept if it beats the stored one (a Daily clear passes no level:
-   *  stars are per ladder level, the Daily pays in trophies). */
-  recordWin(score: number, rated?: { readonly level: number; readonly stars: StarRating }): PlayerRecord {
+   *  total, a new best if it is one — and, for a ladder level, marked cleared
+   *  (a Daily clear passes no level: ladder levels track clears, the Daily
+   *  pays in trophies). */
+  recordWin(score: number, rated?: { readonly level: number }): PlayerRecord {
     const banked = Math.max(0, Math.floor(score));
-    const stars = { ...this.current.stars };
-    if (rated !== undefined) {
-      const key = String(rated.level);
-      stars[key] = Math.max(stars[key] ?? 0, rated.stars) as StarRating;
-    }
+    const cleared =
+      rated !== undefined && !this.current.cleared.includes(rated.level)
+        ? [...this.current.cleared, rated.level].sort((a, b) => a - b)
+        : this.current.cleared;
     this.current = {
       ...this.current,
       levelsCleared: this.current.levelsCleared + 1,
       bestScore: Math.max(this.current.bestScore, banked),
       totalScore: this.current.totalScore + banked,
-      stars,
+      cleared,
     };
     writeRecord(this.storage, this.key, this.current);
     return this.current;

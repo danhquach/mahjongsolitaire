@@ -1,5 +1,9 @@
 # 0016 — Daily Challenge, star ratings, and the progression record
 
+> **Superseded in part, 2026-09-01 (issue #119, PM):** the star rating this
+> decision specifies was removed — a clear is a clear. The Daily Challenge
+> and progression-record parts of this decision stand.
+
 **Date:** 2026-09-01 · **Status:** accepted · **Ticket:** issue #19 · **Amends:** spec §6 (fills in what it left open)
 
 ## Context

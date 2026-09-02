@@ -1,5 +1,6 @@
-// Progression persistence (issue #19, spec §6): stars per ladder level, total
-// score, and the Daily Challenge streak + trophies — all on the player record.
+// Progression persistence (issue #19, spec §6; stars removed by issue #119):
+// which ladder levels are cleared, total score, and the Daily Challenge
+// streak + trophies — all on the player record.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -8,9 +9,9 @@ import {
   EMPTY_RECORD,
   RECORD_STORAGE_KEY,
   RecordStore,
+  hasCleared,
   liveStreak,
   parsePlayerRecord,
-  totalStars,
 } from '../src/profile.js';
 import type { KeyValueStorage } from '../src/storage.js';
 
@@ -24,47 +25,49 @@ function fakeStorage(seed: Record<string, string> = {}): KeyValueStorage & { dat
   };
 }
 
-// --- stars ----------------------------------------------------------------------
+// --- cleared levels ---------------------------------------------------------------
 
-test('recordWin keeps the best star rating per ladder level', () => {
+test('recordWin marks a ladder level cleared, once', () => {
   const storage = fakeStorage();
   const record = new RecordStore(storage);
-  record.recordWin(500, { level: 3, stars: 2 });
-  assert.deepEqual(record.value.stars, { '3': 2 });
-  record.recordWin(500, { level: 3, stars: 1 }); // a worse replay does not lower it
-  assert.deepEqual(record.value.stars, { '3': 2 });
-  record.recordWin(500, { level: 3, stars: 3 });
-  record.recordWin(500, { level: 10, stars: 1 });
-  assert.deepEqual(record.value.stars, { '3': 3, '10': 1 });
-  assert.equal(totalStars(record.value), 4);
+  record.recordWin(500, { level: 3 });
+  assert.deepEqual(record.value.cleared, [3]);
+  record.recordWin(500, { level: 3 }); // a replay does not duplicate the entry
+  assert.deepEqual(record.value.cleared, [3]);
+  record.recordWin(500, { level: 10 });
+  assert.deepEqual(record.value.cleared, [3, 10]);
   // Persisted, and read back through the parser.
-  assert.deepEqual(new RecordStore(storage).value.stars, { '3': 3, '10': 1 });
+  assert.deepEqual(new RecordStore(storage).value.cleared, [3, 10]);
 });
 
-test('a Daily clear (no level) banks score and the clear but no stars', () => {
+test('a Daily clear (no level) banks score and the clear but marks no level', () => {
   const record = new RecordStore(fakeStorage());
   record.recordWin(700);
-  assert.deepEqual(record.value.stars, {});
+  assert.deepEqual(record.value.cleared, []);
   assert.equal(record.value.levelsCleared, 1);
   assert.equal(record.value.totalScore, 700);
 });
 
-test('parsePlayerRecord keeps only well-formed star entries', () => {
+test('parsePlayerRecord keeps only well-formed cleared levels', () => {
   const parsed = parsePlayerRecord({
-    stars: {
-      '1': 3,
-      '2': 4, // out of range
-      '3': '2', // wrong type
-      '0': 1, // no level 0
-      [String(LADDER_LENGTH)]: 2,
-      [String(LADDER_LENGTH + 1)]: 2, // past the ladder
-      abc: 3,
-      '2.5': 1,
-    },
+    cleared: [1, LADDER_LENGTH, LADDER_LENGTH + 1, 0, 2.5, '3', NaN, Infinity, -1, 1],
   });
-  assert.deepEqual(parsed.stars, { '1': 3, [String(LADDER_LENGTH)]: 2 });
-  assert.deepEqual(parsePlayerRecord({ stars: [3, 3] }).stars, {});
-  assert.deepEqual(parsePlayerRecord({ stars: 'lots' }).stars, {});
+  assert.deepEqual(parsed.cleared, [1, LADDER_LENGTH]);
+  assert.deepEqual(parsePlayerRecord({ cleared: 'lots' }).cleared, []);
+  assert.deepEqual(parsePlayerRecord({ cleared: { '1': true } }).cleared, []);
+});
+
+test('an old-shape record (stars map, issue #119) migrates: every keyed level counts as cleared, no rating, no re-paid first-clear grant', () => {
+  const parsed = parsePlayerRecord({ stars: { '3': 2, '10': 1 } });
+  assert.deepEqual(parsed.cleared, [3, 10]);
+  assert.equal(hasCleared(parsed, 3), true);
+  assert.equal(hasCleared(parsed, 10), true);
+  assert.equal(hasCleared(parsed, 5), false);
+  assert.equal((parsed as unknown as { stars?: unknown }).stars, undefined);
+});
+
+test('a record carrying both a cleared list and an old stars map merges them (issue #119)', () => {
+  assert.deepEqual(parsePlayerRecord({ cleared: [3], stars: { '10': 1, '3': 3 } }).cleared, [3, 10]);
 });
 
 // --- daily streak + trophies ------------------------------------------------------
@@ -164,7 +167,7 @@ test('a throwing storage still yields a working in-memory record', () => {
   };
   const record = new RecordStore(broken);
   assert.equal(record.recordDailyWin('2026-09-01').credited, true);
-  assert.equal(record.recordWin(10, { level: 1, stars: 3 }).stars['1'], 3);
+  assert.deepEqual(record.recordWin(10, { level: 1 }).cleared, [1]);
   assert.equal(storageKeyIsStable(), true);
 });
 

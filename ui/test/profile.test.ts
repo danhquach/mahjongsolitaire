@@ -177,8 +177,8 @@ test('a fresh record is all zeroes', () => {
 test('parsePlayerRecord: counters are non-negative integers or zero; a pre-#19 record starts the new fields empty', () => {
   assert.deepEqual(parsePlayerRecord(null), EMPTY_RECORD);
   assert.deepEqual(parsePlayerRecord({ levelsCleared: -3, bestScore: 2.5, trophies: '9' }), EMPTY_RECORD);
-  // The issue #69 shape: no totalScore, stars or lastDaily. A streak with no
-  // date to anchor it is not a live streak, so it reads as 0.
+  // The issue #69 shape: no totalScore, cleared or lastDaily. A streak with
+  // no date to anchor it is not a live streak, so it reads as 0.
   assert.deepEqual(parsePlayerRecord({ levelsCleared: 7, bestScore: 1200, dailyStreak: 3, trophies: 2 }), {
     ...EMPTY_RECORD,
     levelsCleared: 7,

@@ -80,11 +80,16 @@ import type { KeyValueStorage } from './storage.js';
  *  keeps.
  *
  *  v6 (issue #19): the record grows the spec §9 `boostersUsed`-style counts
- *  the star rating needs (`hints`, `undos`, alongside the existing
- *  `shuffles`) and `daily` — the date key when the deal is a Daily Challenge
- *  board, null for a ladder deal. A v5 record has neither; resuming it would
- *  mean guessing (zero assists? a ladder deal?) and this file does not guess.
- *  Same clean break, same consequence: the in-flight deal restarts. */
+ *  (`hints`, `undos`, alongside the existing `shuffles`) and `daily` — the
+ *  date key when the deal is a Daily Challenge board, null for a ladder deal.
+ *  A v5 record has neither; resuming it would mean guessing (zero assists? a
+ *  ladder deal?) and this file does not guess. Same clean break, same
+ *  consequence: the in-flight deal restarts.
+ *
+ *  Issue #119 removed the star rating that `hints`/`undos` fed. The fields
+ *  stay in the save format rather than forcing another version bump for a
+ *  migration — main.ts just stops computing anything meaningful for them
+ *  (always writes 0), and this parser stays as tolerant of them as before. */
 export const SAVE_VERSION = 6;
 /** The slot key is deliberately *not* versioned with the record: the `version`
  *  field inside is what decides whether a record can be trusted, and renaming
@@ -99,9 +104,9 @@ export interface SaveState {
   readonly layoutId: string;
   readonly seed: number;
   readonly shuffles: number;
-  /** Hints and Undos charged on this deal (issue #19): with `shuffles`, the
-   *  assists the star rating counts. Undo cannot be recovered from the move
-   *  stack — an undone hold leaves no record — so it is counted here. */
+  /** Hints and Undos charged on this deal. Fed the star rating removed by
+   *  issue #119; kept in the format (always 0 from #119 on) to avoid a
+   *  version bump. */
   readonly hints: number;
   readonly undos: number;
   readonly elapsedMs: number;

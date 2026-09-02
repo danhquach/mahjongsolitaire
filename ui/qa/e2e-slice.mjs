@@ -432,7 +432,7 @@ for (const vp of VIEWPORTS) {
       );
     }
     if (localStorage.getItem('mahjong.record.v1') === null) {
-      localStorage.setItem('mahjong.record.v1', JSON.stringify({ stars: { 47: 1 } }));
+      localStorage.setItem('mahjong.record.v1', JSON.stringify({ cleared: [47] }));
     }
   }, dailyDateKey());
   await page.goto(url);
@@ -1618,8 +1618,8 @@ for (const vp of VIEWPORTS) {
           'mahjong.boosters.v1',
           JSON.stringify({ hint: 0, undo: 5, shuffle: 0, lastLoginGrant: today }),
         );
-        const stars = Object.fromEntries(Array.from({ length: 150 }, (_, i) => [i + 1, 1]));
-        localStorage.setItem('mahjong.record.v1', JSON.stringify({ stars }));
+        const cleared = Array.from({ length: 150 }, (_, i) => i + 1);
+        localStorage.setItem('mahjong.record.v1', JSON.stringify({ cleared }));
       },
       dailyDateKey(),
     );

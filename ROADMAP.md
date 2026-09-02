@@ -54,7 +54,7 @@
 **Dependency:** final tile art lands mid-phase; ship slice on placeholders if late.
 
 ### Phase 3 — Content & progression (M3) · 2 wks
-**Deliverables:** 10 layouts as JSON data; 150-level plateau ladder (curated + generated; decision 0011: three flat bands — 1–20 Easy, 21–60 Medium, 61–150 Medium+ — every 10th level spiking one band up; no rising curve or separate relief levels); scoring + Super Combo; star ratings; Daily Challenge (date-hash seed, DST/timezone-safe); local progression persistence.
+**Deliverables:** 10 layouts as JSON data; 150-level plateau ladder (curated + generated; decision 0011: three flat bands — 1–20 Easy, 21–60 Medium, 61–150 Medium+ — every 10th level spiking one band up; no rising curve or separate relief levels); scoring + Super Combo; ~~star ratings~~ removed by issue #119 — a clear is a clear; Daily Challenge (date-hash seed, DST/timezone-safe); local progression persistence.
 **Game feel lands here, not in Phase 5** (added 2026-08-31 from the wk-5 playtest): the wk-9 broad playtest is the first real read on retention, and it is worthless if the board is unreadable and matching feels like nothing. Two items:
 - **Tile depth readability (issue #45):** stacked layers currently read as one flat sheet — you cannot see which tiles are free without tapping. Drop shadows + side shading + per-layer value shift. Ships with the 10 layouts because every layout stacks differently.
 - **Match feedback animation (issue #44):** matched tiles fly together and collide instead of vanishing; mismatch shake; reduced-motion alternative. Pairs with Super Combo — a 5s-window scoring mechanic with no visible feedback will not read.

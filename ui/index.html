@@ -667,20 +667,11 @@
         font-size: 32px;
         line-height: 1;
       }
-      /* Star rating on the win dialog (issue #19): the same gold as the score
-         chip, big enough to read at arm's length. */
       /* Booster grants on the win dialog (issue #51): the payout line reads
          like the score line. */
       #overlay-grant {
         margin: 8px 0 4px;
         color: #3f6212;
-      }
-      #overlay-stars {
-        margin: 0 0 8px;
-        font-size: 36px;
-        line-height: 1.1;
-        letter-spacing: 4px;
-        color: #ca8a04;
       }
       /* --- Profile screen (issue #69) ---------------------------------------
          The avatar is drawn as a glyph, sized like a tile face; the picker is
@@ -921,10 +912,6 @@
           >
             <div class="card">
               <h2 id="overlay-title"></h2>
-              <!-- Star rating on a win (issue #19): glyphs for sighted players,
-                   the accessible name spells it out; hidden on every other
-                   dialog. -->
-              <p id="overlay-stars" role="img" hidden></p>
               <p id="overlay-text"></p>
               <!-- Booster grants (issue #51, #117): what a first clear paid —
                    every-third bonus, milestone set. Hidden on every other
@@ -967,10 +954,8 @@
                 <div class="record-row"><span>Levels cleared</span><strong id="record-cleared">0</strong></div>
                 <div class="record-row"><span>Best score</span><strong id="record-best">0</strong></div>
                 <div class="record-row"><span>Total score</span><strong id="record-total">0</strong></div>
-                <!-- Issue #19: stars across the ladder (best per level, out of
-                     3 × 150), the Daily streak as it stands today, and the
+                <!-- Issue #19: the Daily streak as it stands today, and the
                      trophies Daily clears have paid. -->
-                <div class="record-row"><span>Stars</span><strong id="record-stars">0</strong></div>
                 <div class="record-row"><span>Daily Challenge streak</span><strong id="record-streak">0</strong></div>
                 <div class="record-row"><span>Trophies</span><strong id="record-trophies">0</strong></div>
                 <p class="record-hint">

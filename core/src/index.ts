@@ -51,5 +51,3 @@ export type {
 export { ScoreKeeper, BASE_PAIR_POINTS, COMBO_WINDOW_MS } from './scoring.js';
 export type { MatchScore, ScoreSnapshot } from './scoring.js';
 export { shuffleBoard } from './shuffle.js';
-export { PAIR_BASELINE_MS, baselineMs, parseStarRating, starRating } from './stars.js';
-export type { StarInputs, StarRating } from './stars.js';

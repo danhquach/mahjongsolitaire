@@ -6,8 +6,8 @@
 // primitives via game.ts, with charges persisted by boosters.ts.
 // Issue #14 adds auto-save + resume (save.ts) and the settings screen
 // (settings.ts): audio and haptics via feedback.ts, tile size through the
-// renderer's fit; elapsed.ts keeps a silent clock for the save and the star
-// baseline (the on-screen timer was removed by issue #114).
+// renderer's fit; elapsed.ts keeps a silent clock for the save (the on-screen
+// timer was removed by issue #114).
 // Issue #37 makes the HUD edge itself part of the fit: applyHudPlacement()
 // measures the board area each candidate placement would leave and keeps the
 // one that fits the board larger (hud-fit.ts).
@@ -38,7 +38,6 @@ import { Application } from 'pixi.js';
 import {
   HOLDER_SLOTS,
   bandForLevel,
-  baselineMs,
   concealBucketForBand,
   dailyDateKey,
   dailyLayoutId,
@@ -48,7 +47,6 @@ import {
   generateValidatedLevel,
   parseLadder,
   parseLayout,
-  starRating,
 } from '@mahjongsolitaire/core';
 import type {
   DifficultyBucket,
@@ -57,7 +55,6 @@ import type {
   LadderEntry,
   Layout,
   Slot,
-  StarRating,
   TileId,
 } from '@mahjongsolitaire/core';
 import { A11yLayer, Announcer, slotPosition } from './a11y.js';
@@ -98,7 +95,6 @@ import {
   clearedLevelCount,
   hasCleared,
   liveStreak,
-  totalStars,
 } from './profile.js';
 import { SaveStore, captureSave, reopen } from './save.js';
 import { SettingsStore, TILE_SIZE_FACTOR, TILE_SIZE_LABEL, TILE_SIZES } from './settings.js';
@@ -124,9 +120,9 @@ const BOOSTER_PLURAL: Record<BoosterKind, string> = {
 };
 
 /** The band a Daily Challenge board plays at (issue #19, decision 0016): its
- *  concealment bucket and its star-rating baseline. The Daily draws from all
- *  ten layouts, hard-pool ones included, so it sits one band up from the
- *  ladder's middle rather than at easy. */
+ *  concealment bucket. The Daily draws from all ten layouts, hard-pool ones
+ *  included, so it sits one band up from the ladder's middle rather than at
+ *  easy. */
 const DAILY_BAND: LadderBand = 'medium-plus';
 
 /** A date key as the HUD chip shows it ("Sep 1") and as it is read out
@@ -193,7 +189,6 @@ async function start(): Promise<void> {
   const avatarGrid = el<HTMLDivElement>('avatar-grid');
   const profileRowGlyph = el<HTMLElement>('profile-row-glyph');
   const profileRowName = el<HTMLElement>('profile-row-name');
-  const overlayStars = el<HTMLElement>('overlay-stars');
   const overlayGrant = el<HTMLElement>('overlay-grant');
   const dailyButton = el<HTMLButtonElement>('btn-daily');
   const dailyDateEl = el<HTMLElement>('daily-date');
@@ -265,7 +260,7 @@ async function start(): Promise<void> {
   }
 
   /** The band the deal on the table plays at: the ladder level's, or the
-   *  Daily's fixed band (issue #19). Drives concealment and the star baseline. */
+   *  Daily's fixed band (issue #19). Drives concealment. */
   function bandInPlay(): LadderBand {
     return daily === null ? bandForLevel(progress.level).band : DAILY_BAND;
   }
@@ -372,10 +367,6 @@ async function start(): Promise<void> {
    *  (level seed, shuffle index) always produces the same board. Restored with
    *  the save so a resumed deal shuffles the way it would have. */
   let shuffleCount = resumed === null ? 0 : saved!.shuffles;
-  /** Hints and Undos charged on this deal (issue #19): with shuffleCount,
-   *  the assists the star rating counts. Restored with the save, like it. */
-  let hintCount = resumed === null ? 0 : saved!.hints;
-  let undoCount = resumed === null ? 0 : saved!.undos;
   const elapsed = new Elapsed(
     () => performance.now(),
     resumed === null ? 0 : saved!.elapsedMs,
@@ -488,8 +479,11 @@ async function start(): Promise<void> {
       saves.write(
         captureSave(game, {
           shuffles: shuffleCount,
-          hints: hintCount,
-          undos: undoCount,
+          // hints/undos (issue #19) existed only for the star rating, removed
+          // by #119. The save format keeps the fields rather than bump the
+          // version for a migration; nothing reads them any more.
+          hints: 0,
+          undos: 0,
           elapsedMs: elapsed.ms,
           daily,
         }),
@@ -538,28 +532,19 @@ async function start(): Promise<void> {
     // On a Daily board the secondary action leaves for the ladder (issue #19).
     overlayRestart.hidden = false;
     overlayNew.textContent = daily === null ? 'New game' : 'Back to the ladder';
-    overlayStars.hidden = true;
     overlayGrant.hidden = true;
     if (status === 'won') {
-      // The star rating (spec §6) is read off the deal before anything below
-      // banks it: assists charged on this deal, and time against the band's
-      // baseline.
-      const stars = starRating(
-        { hints: hintCount, undos: undoCount, shuffles: shuffleCount, elapsedMs: elapsed.ms },
-        baselineMs(game.level.tiles.length, bandInPlay()),
-      );
-      showStars(stars);
       overlayRestart.hidden = true;
       if (daily === null) {
         // Advance the ladder exactly once per win: this branch is inside the
         // once-per-level transition (the overlayVisible guard above). The
-        // player's record counts the same moment (issue #69), stars included.
+        // player's record counts the same moment (issue #69).
         const cleared = progress.level;
         const atEnd = progress.advance() === cleared;
         // Booster grants (issue #51, #117) key off the record *before* this
         // win is written: only a first clear can pay, a replay never does.
         const firstClear = !hasCleared(record.value, cleared);
-        record.recordWin(game.score, { level: cleared, stars });
+        record.recordWin(game.score, { level: cleared });
         overlayTitle.textContent = `Level ${cleared} complete!`;
         overlayText.textContent = `Final score: ${game.score}`;
         overlayNew.textContent = atEnd ? 'Play again' : 'Next level';
@@ -583,7 +568,7 @@ async function start(): Promise<void> {
           overlayGrant.hidden = false;
         }
         announcer.say(
-          `Level ${cleared} complete. ${stars} of 3 stars. Final score ${game.score}. ${grantLines.join(' ')}`.trim(),
+          `Level ${cleared} complete. Final score ${game.score}. ${grantLines.join(' ')}`.trim(),
         );
       } else {
         // A Daily clear banks the score like any win and pays in trophies,
@@ -598,9 +583,7 @@ async function start(): Promise<void> {
         overlayTitle.textContent = 'Daily Challenge complete!';
         overlayText.textContent = `Final score: ${game.score}. ${payout}`;
         overlayNew.textContent = 'Back to the ladder';
-        announcer.say(
-          `Daily Challenge complete. ${stars} of 3 stars. Final score ${game.score}. ${payout}`,
-        );
+        announcer.say(`Daily Challenge complete. Final score ${game.score}. ${payout}`);
       }
     } else if (status === 'lost') {
       overlayTitle.textContent = 'Holder full';
@@ -664,14 +647,6 @@ async function start(): Promise<void> {
       if (inert) region.setAttribute('inert', '');
       else region.removeAttribute('inert');
     }
-  }
-
-  /** The win dialog's star row (issue #19): filled and empty glyphs for the
-   *  eye, "N of 3 stars" for assistive technology. */
-  function showStars(stars: StarRating): void {
-    overlayStars.textContent = '★'.repeat(stars) + '☆'.repeat(3 - stars);
-    overlayStars.setAttribute('aria-label', `${stars} of 3 stars`);
-    overlayStars.hidden = false;
   }
 
   /** "+2 Hint, +1 Shuffle" — the non-zero parts of a grant, in rail order;
@@ -906,7 +881,6 @@ async function start(): Promise<void> {
     el<HTMLElement>('record-cleared').textContent = String(record.value.levelsCleared);
     el<HTMLElement>('record-best').textContent = String(record.value.bestScore);
     el<HTMLElement>('record-total').textContent = String(record.value.totalScore);
-    el<HTMLElement>('record-stars').textContent = String(totalStars(record.value));
     // The streak as it stands today, not as it was last written: a missed
     // day has already ended it (issue #19).
     el<HTMLElement>('record-streak').textContent = String(liveStreak(record.value, dailyDateKey()));
@@ -1168,11 +1142,6 @@ async function start(): Promise<void> {
     const result = runBooster(kind);
     if (result.ok) {
       charges.spend(kind);
-      // Assists the star rating counts (issue #19) — charged uses only, the
-      // same rule as the charge itself. Shuffle keeps its own count (it seeds
-      // the next shuffle) in runBooster.
-      if (kind === 'hint') hintCount++;
-      if (kind === 'undo') undoCount++;
     }
     // Undo puts a parked tile back on the board and Shuffle repaints every
     // face: a copy still flying from the old board would paint over the new
@@ -1462,8 +1431,6 @@ async function start(): Promise<void> {
     trayFx.clear();
     hintPair = [];
     shuffleCount = 0;
-    hintCount = 0;
-    undoCount = 0;
     elapsed.reset();
     const fromDialog = hideOverlay();
     redraw();
@@ -1606,17 +1573,9 @@ async function start(): Promise<void> {
     get daily() {
       return daily;
     },
-    /** Assists charged on this deal — the star rating's inputs (issue #19). */
-    assists(): { hints: number; undos: number; shuffles: number } {
-      return { hints: hintCount, undos: undoCount, shuffles: shuffleCount };
-    },
     /** The booster grant line on the win dialog, null while hidden (issue #51 QA). */
     grantText(): string | null {
       return overlayGrant.hidden ? null : overlayGrant.textContent;
-    },
-    /** The star row as the win dialog shows it: null while hidden. */
-    starsShown(): string | null {
-      return overlayStars.hidden ? null : overlayStars.getAttribute('aria-label');
     },
     get dealing() {
       return dealing;
