@@ -6,7 +6,8 @@
 // primitives via game.ts, with charges persisted by boosters.ts.
 // Issue #14 adds auto-save + resume (save.ts) and the settings screen
 // (settings.ts): audio and haptics via feedback.ts, tile size through the
-// renderer's fit, and an opt-in count-up clock via elapsed.ts.
+// renderer's fit; elapsed.ts keeps a silent clock for the save and the star
+// baseline (the on-screen timer was removed by issue #114).
 // Issue #37 makes the HUD edge itself part of the fit: applyHudPlacement()
 // measures the board area each candidate placement would leave and keeps the
 // one that fits the board larger (hud-fit.ts).
@@ -63,7 +64,7 @@ import { A11yLayer, Announcer, slotPosition } from './a11y.js';
 import type { A11yTile } from './a11y.js';
 import { BOOSTER_KINDS, BoosterCharges, FIRST_CLEAR_GRANT, MILESTONE_GRANT, milestoneDue } from './boosters.js';
 import type { BoosterKind, Counts } from './boosters.js';
-import { Elapsed, formatElapsed } from './elapsed.js';
+import { Elapsed } from './elapsed.js';
 import { Animator } from './effects.js';
 import { TrayFx } from './tray-fx.js';
 import type { Box } from './tray-fx.js';
@@ -103,8 +104,6 @@ import type { HintPair, TapOutcome } from './game.js';
 /** Spec §7: mis-tap forgiveness radius, in dp (≈ CSS px on the web). */
 const FORGIVENESS_DP = 8;
 const FLASH_MS = 250;
-/** Repaint cadence of the opt-in timed-mode readout (spec §6). */
-const CLOCK_TICK_MS = 500;
 
 /** Visible booster labels, and the plural used when announcing the balance. */
 const BOOSTER_LABEL: Record<BoosterKind, string> = {
@@ -188,8 +187,6 @@ async function start(): Promise<void> {
   const avatarGrid = el<HTMLDivElement>('avatar-grid');
   const profileRowGlyph = el<HTMLElement>('profile-row-glyph');
   const profileRowName = el<HTMLElement>('profile-row-name');
-  const timeStat = el<HTMLElement>('time-stat');
-  const elapsedEl = el<HTMLElement>('elapsed');
   const overlayStars = el<HTMLElement>('overlay-stars');
   const overlayGrant = el<HTMLElement>('overlay-grant');
   const grantChoice = el<HTMLDivElement>('grant-choice');
@@ -445,7 +442,6 @@ async function start(): Promise<void> {
       tileSize: tileCssSize(),
       hint: hintPair,
     });
-    drawClock();
     // The last argument is the issue #63 warning: with one slot left, parking
     // an unmatched tile ends the level, so a free tile's accessible name has
     // to say so.
@@ -469,14 +465,6 @@ async function start(): Promise<void> {
       scoreEl.classList.add('bump');
     }
     shownScore = game.score;
-  }
-
-  /** Opt-in count-up readout (spec §6). Hidden entirely while timed mode is
-   *  off, so the default board shows no clock at all. */
-  function drawClock(): void {
-    const { timedMode } = settings.value;
-    timeStat.hidden = !timedMode;
-    if (timedMode) elapsedEl.textContent = formatElapsed(elapsed.ms);
   }
 
   /**
@@ -735,12 +723,11 @@ async function start(): Promise<void> {
    */
   const settingsToggles: ReadonlyArray<{
     readonly input: HTMLInputElement;
-    readonly key: 'audio' | 'haptics' | 'timedMode' | 'ads' | 'highlightFree' | 'reducedMotion';
+    readonly key: 'audio' | 'haptics' | 'ads' | 'highlightFree' | 'reducedMotion';
     readonly name: string;
   }> = [
     { input: el<HTMLInputElement>('set-audio'), key: 'audio', name: 'Sound effects' },
     { input: el<HTMLInputElement>('set-haptics'), key: 'haptics', name: 'Vibration' },
-    { input: el<HTMLInputElement>('set-timed'), key: 'timedMode', name: 'Timer' },
     { input: el<HTMLInputElement>('set-ads'), key: 'ads', name: 'Ads' },
     {
       input: el<HTMLInputElement>('set-highlight-free'),
@@ -1029,7 +1016,6 @@ async function start(): Promise<void> {
     for (const { input, key, name } of settingsToggles) {
       input.addEventListener('change', () => {
         settings.set(key, input.checked);
-        if (key === 'timedMode') drawClock();
         // The pressed-state CSS reads the toggle from the DOM (issue #95).
         if (key === 'reducedMotion') applyMotionPreference();
         // The only toggle the board itself reads — repaint so the change is
@@ -1582,7 +1568,6 @@ async function start(): Promise<void> {
       persist();
     } else {
       elapsed.resume();
-      drawClock();
     }
   });
   window.addEventListener('pagehide', () => {
@@ -1593,10 +1578,6 @@ async function start(): Promise<void> {
   for (const kind of BOOSTER_KINDS) {
     el<HTMLButtonElement>(`grant-${kind}`).addEventListener('click', () => chooseGrant(kind));
   }
-
-  window.setInterval(() => {
-    if (settings.value.timedMode && !document.hidden) drawClock();
-  }, CLOCK_TICK_MS);
 
   // Pixi sized itself to #board during init, before any placement existed, so
   // the canvas has to be re-read once there is one — this is also the call that
