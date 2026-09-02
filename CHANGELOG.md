@@ -6,6 +6,11 @@ commit and build time of the running bundle.
 
 ## 2026-09-02
 
+- Tile size in Settings is now a one-row slider with three stops — Medium,
+  Large, Extra large — instead of a four-option list, so the popup is shorter
+  on a phone. Small is gone (too small to read on a phone); anyone who had it
+  picked is moved to Medium. Each stop applies as you reach it, by touch or
+  arrow key, and screen readers hear the stop's name (#139).
 - Tapping the Level chip in the HUD opens your profile — name, avatar, and
   record — so progression is one tap from where it is shown. It is a real
   button for screen readers, named for what it shows and where it goes, and

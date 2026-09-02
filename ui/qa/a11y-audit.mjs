@@ -850,14 +850,40 @@ for (const vp of VIEWPORTS) {
       settingsControls.filter((c) => c.small),
     );
 
-    // Thirteen controls: the profile row (issue #69), five toggles (issue #45
+    // Ten controls: the profile row (issue #69), five toggles (issue #45
     // added Highlight free tiles, issue #44 added Reduced motion; the timer
-    // toggle was retired 2026-09-01), four tile sizes, the Send feedback row
-    // (issue #118), the version row (issue #81), and Done. The Daily Challenge
-    // row moved to the HUD (issue #136).
-    check(settingsControls.length === 13, 'settings screen exposes all thirteen controls', {
+    // toggle was retired 2026-09-01), the tile-size slider row (issue #139
+    // replaced four radios), the Send feedback row (issue #118), the version
+    // row (issue #81), and Done. The Daily Challenge row moved to the HUD
+    // (issue #136).
+    check(settingsControls.length === 10, 'settings screen exposes all ten controls', {
       count: settingsControls.length,
     });
+
+    // The tile-size slider (issue #139) is named, reports its stop as a word,
+    // spans exactly the three stops, and is a 48dp target.
+    const slider = await page.evaluate(() => {
+      const s = document.getElementById('set-size');
+      const r = s.getBoundingClientRect();
+      return {
+        name: s.getAttribute('aria-label'),
+        valuetext: s.getAttribute('aria-valuetext'),
+        min: s.min,
+        max: s.max,
+        step: s.step,
+        h: Math.round(r.height),
+      };
+    });
+    check(
+      slider.name === 'Tile size' &&
+        ['Medium', 'Large', 'Extra large'].includes(slider.valuetext) &&
+        slider.min === '0' &&
+        slider.max === '2' &&
+        slider.step === '1' &&
+        slider.h >= MIN_TOUCH_TARGET,
+      'the tile-size slider is named, worded, three-stop and 48dp',
+      slider,
+    );
 
     // Escape is the keyboard way out, and focus must come back to the control
     // that opened it — not <body>, which would strand a keyboard player.

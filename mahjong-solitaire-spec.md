@@ -203,7 +203,7 @@ Starting grant: 5 of each of the three charged boosters; the holder has no balan
 
 ## 7. UX & Accessibility Requirements (the actual differentiator)
 
-- **Minimum tile touch target: 48×48 dp**; tile face artwork scales with a user-set "Tile Size" (S/M/L/XL).
+- **Minimum tile touch target: 48×48 dp**; tile face artwork scales with a user-set "Tile Size" (M/L/XL slider; Small retired 2026-09-02, issue #139).
 - Default type scale ≥ 18sp body; support OS Dynamic Type up to 200%.
 - Contrast ratio ≥ 4.5:1 for all text and tile symbols; colorblind-safe suit differentiation (shape + symbol, not color alone).
 - Every action reachable within 2 taps from the board.

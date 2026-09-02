@@ -3,7 +3,9 @@
 //
 //   audio        gentle sound effects  — default ON (§7)
 //   haptics      gentle vibration      — default ON, independent of audio (§7)
-//   tileSize     S / M / L / XL        — default XL (§1.2/§7: oversized tiles)
+//   tileSize     M / L / XL            — default XL (§1.2/§7: oversized tiles;
+//                                        Small retired by issue #139, a stored
+//                                        's' reads as Medium)
 //   ads          ads master toggle     — default OFF (§8, decision 0004, #3)
 //   highlightFree dim the blocked tiles — default OFF (issue #45)
 //   reducedMotion cross-fade instead of flying tiles — default OFF (issue #44)
@@ -19,9 +21,14 @@
 import { readRecord, writeRecord } from './storage.js';
 import type { KeyValueStorage } from './storage.js';
 
-export type TileSize = 's' | 'm' | 'l' | 'xl';
+export type TileSize = 'm' | 'l' | 'xl';
 
-export const TILE_SIZES: readonly TileSize[] = ['s', 'm', 'l', 'xl'];
+/** The slider's stops, smallest first (issue #139). */
+export const TILE_SIZES: readonly TileSize[] = ['m', 'l', 'xl'];
+
+/** Tile sizes this build no longer offers, and what a stored one reads as:
+ *  Small (issue #139) was too small to read on a phone. */
+const RETIRED_TILE_SIZES: Record<string, TileSize> = { s: 'm' };
 
 /**
  * Tile size as a fraction of the fit-to-viewport scale (PM decision,
@@ -31,7 +38,6 @@ export const TILE_SIZES: readonly TileSize[] = ['s', 'm', 'l', 'xl'];
  * as large as it can be instead, and left pan/zoom unbuilt.
  */
 export const TILE_SIZE_FACTOR: Record<TileSize, number> = {
-  s: 0.64,
   m: 0.76,
   l: 0.88,
   xl: 1,
@@ -39,7 +45,6 @@ export const TILE_SIZE_FACTOR: Record<TileSize, number> = {
 
 /** Human-readable names for the settings screen and announcements. */
 export const TILE_SIZE_LABEL: Record<TileSize, string> = {
-  s: 'Small',
   m: 'Medium',
   l: 'Large',
   xl: 'Extra large',
@@ -83,6 +88,14 @@ function isTileSize(value: unknown): value is TileSize {
   return typeof value === 'string' && (TILE_SIZES as readonly string[]).includes(value);
 }
 
+/** A stored tile size: a current stop as is, a retired one migrated, anything
+ *  else the default. */
+function parseTileSize(value: unknown): TileSize {
+  if (isTileSize(value)) return value;
+  if (typeof value === 'string' && Object.hasOwn(RETIRED_TILE_SIZES, value)) return RETIRED_TILE_SIZES[value]!;
+  return DEFAULT_SETTINGS.tileSize;
+}
+
 /** Per-field validation: a bad field falls back, a bad record starts fresh. */
 export function parseSettings(record: unknown): Settings {
   if (typeof record !== 'object' || record === null) return DEFAULT_SETTINGS;
@@ -93,7 +106,7 @@ export function parseSettings(record: unknown): Settings {
   return {
     audio: bool('audio'),
     haptics: bool('haptics'),
-    tileSize: isTileSize(raw['tileSize']) ? raw['tileSize'] : DEFAULT_SETTINGS.tileSize,
+    tileSize: parseTileSize(raw['tileSize']),
     ads: bool('ads'),
     highlightFree: bool('highlightFree'),
     reducedMotion: bool('reducedMotion'),
