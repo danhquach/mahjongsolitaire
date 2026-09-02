@@ -209,6 +209,8 @@ export class BoardRenderer {
    *  every tile at the same rate anyway). Created lazily; torn down at 0
    *  rather than left attached at a no-op amount. */
   private desaturationFilter: ColorMatrixFilter | null = null;
+  /** The amount last passed to `setDesaturation` (QA debug getter below). */
+  private currentDesaturation = 0;
 
   constructor(
     private readonly app: Application,
@@ -256,6 +258,7 @@ export class BoardRenderer {
    *  that a live effect simply reapplies on its next tick). */
   setDesaturation(amount: number): void {
     const clamped = Math.max(0, Math.min(1, amount));
+    this.currentDesaturation = clamped;
     if (clamped <= 0) {
       this.boardLayer.filters = null;
       return;
@@ -263,6 +266,12 @@ export class BoardRenderer {
     this.desaturationFilter ??= new ColorMatrixFilter();
     this.desaturationFilter.saturate(-clamped, false);
     this.boardLayer.filters = [this.desaturationFilter];
+  }
+
+  /** Read-only debug getter (issue #122 QA): the board layer's current
+   *  desaturation amount, 0–1. */
+  desaturation(): number {
+    return this.currentDesaturation;
   }
 
   /** The loaded layout's board-space bounds — what HUD placement fits against
@@ -363,6 +372,7 @@ export class BoardRenderer {
     // it on its very next tick, so this only ever drops a *stale* filter —
     // one a new deal's redraw would otherwise carry into the fresh board.
     this.boardLayer.filters = null;
+    this.currentDesaturation = 0;
     // `{ children: true }` leaves textures alone, which is what keeps the one
     // baked shadow texture alive across every redraw.
     this.boardLayer.removeChildren().forEach((c) => c.destroy({ children: true }));

@@ -196,6 +196,13 @@ async function huntDeadlock(maxDeals) {
       activate(target);
     }
     if (slice.game.status() === 'stuck') {
+      // Issue #122 plays a wash/grey-out/pulse theatre before the stuck
+      // dialog itself opens (STUCK_DIALOG_DELAY_MS, ~1.5s) — same reason the
+      // win and holder-full-loss checks elsewhere in this file wait out
+      // `animating()` (which folds the pending dialog timer in) before
+      // reading dialog state: `focus` in particular only lands on the way
+      // out once that delayed reveal actually runs.
+      while (slice.animating()) await new Promise((r) => setTimeout(r, 10));
       return {
         deal,
         tilesLeft: slice.game.tilesLeft,
@@ -1550,6 +1557,8 @@ for (const vp of VIEWPORTS) {
         charges: window.__slice.boosterCharges(),
         focusIsTile: document.activeElement?.classList.contains('tile-node') === true,
         said: document.getElementById('a11y-status').textContent,
+        washPresent: document.querySelector('.fx-loss-wash') !== null,
+        desaturation: window.__slice.renderer.desaturation(),
       }));
       // Two honest outcomes: the shuffle rescues the deal, or it refuses because
       // this end position has no solvable face assignment (a pair stacked on
@@ -1579,6 +1588,14 @@ for (const vp of VIEWPORTS) {
           { before: stuck.charges, after: rescued.charges },
         );
         check(rescued.overlayVisible, 'the dialog stays up on a still-stuck board', rescued);
+        // Issue #122 follow-up: the still-stuck redraw must not drop the grey
+        // wash back to full colour underneath the still-open dialog.
+        check(rescued.washPresent, 'the grey wash stays present on a still-stuck board', rescued);
+        check(
+          rescued.desaturation > 0,
+          'the board stays desaturated on a still-stuck board',
+          rescued,
+        );
         console.log(
           `${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: shuffle re-rolled a still-stuck position honestly (deal ${stuck.deal + 1}, ${stuck.tilesLeft} tiles left)`,
         );

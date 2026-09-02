@@ -386,3 +386,56 @@ export function slumpFrame(spec: SlumpSpec, tMs: number): SlumpFrame {
     saturation: 1 - u,
   };
 }
+
+// --- Deadlock (issue #122) ------------------------------------------------
+//
+// A deadlock is recoverable — Shuffle or Undo can lift it — so its
+// presentation reads as "paused", not "lost": #121's slam/shake/red-wash hard
+// fail stays reserved for the one terminal state (decision 0009). Here a
+// slate wash and a board-wide grey-out fade in together, up to three
+// near-pairs (game.ts's `nearPairs`) pulse an amber outline once each to hint
+// at why the boosters help, and only then — a beat later still — does the
+// dialog appear. Reduced motion (or a reload of an already-stuck save) skips
+// straight to the resting grey wash with no pulse, same contract as #120/#121.
+
+/** The grey-out's fade duration — deliberately shorter than the dialog delay
+ *  below it, so the wash is fully settled well before the dialog interrupts
+ *  it. */
+export const STUCK_WASH_MS = 900;
+/** Delay before the stuck dialog appears, measured from the tap that
+ *  deadlocked the board — long enough for the wash and every pulse to read,
+ *  gentler than the loss's own LOSS_DIALOG_DELAY_MS on purpose (a deadlock
+ *  is a pause, not a hard fail). */
+export const STUCK_DIALOG_DELAY_MS = 1500;
+
+/** The stuck dialog's timing, collapsed to "now" under reduced motion (or a
+ *  reload of an already-stuck save) — nothing to wait for when the theatre
+ *  itself is skipped. Mirrors `lossSchedule`. */
+export function stuckSchedule(skipTheatre: boolean): { readonly dialogAtMs: number } {
+  return { dialogAtMs: skipTheatre ? 0 : STUCK_DIALOG_DELAY_MS };
+}
+
+/** Board-wide desaturation amount (0 = full colour, 1 = none) at `tMs` into
+ *  the grey-out, monotonic and exactly 1 from STUCK_WASH_MS on — same
+ *  never-left-mid-effect guarantee as `slumpFrame`'s own saturation curve. */
+export function stuckGreyOut(tMs: number): number {
+  return easeOut(clamp01(tMs / STUCK_WASH_MS));
+}
+
+/** Amber-pulse timing: each near-pair gets one triangular ramp (0 → 1 → 0),
+ *  starting once the wash is already underway and staggered pair to pair. */
+export const STUCK_PULSE_START_MS = 300;
+export const STUCK_PULSE_STAGGER_MS = 250;
+export const STUCK_PULSE_MS = 600;
+/** At most this many near-pairs pulse — a hint, not an inventory. */
+export const STUCK_PULSE_MAX = 3;
+
+/** The `index`-th pulsing pair's outline alpha at `tMs` — 0 outside its own
+ *  staggered window, so a pair with `index` beyond what actually pulses (or a
+ *  `tMs` before its start) is simply never drawn. */
+export function stuckPulseAlpha(tMs: number, index: number): number {
+  const local = tMs - STUCK_PULSE_START_MS - index * STUCK_PULSE_STAGGER_MS;
+  if (local <= 0 || local >= STUCK_PULSE_MS) return 0;
+  const u = local / STUCK_PULSE_MS;
+  return u < 0.5 ? u * 2 : (1 - u) * 2;
+}

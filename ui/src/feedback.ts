@@ -24,8 +24,11 @@ import type { Settings } from './settings.js';
  *  just the two existing channels, each honouring its own toggle. Issue #121
  *  adds 'fail': the holder-full loss, the one hard fail in the game — lower
  *  and heavier than 'mismatch' rather than a variant of it, since this ends
- *  the level instead of just refusing a tap. */
-export type Cue = 'select' | 'match' | 'mismatch' | 'win' | 'fail';
+ *  the level instead of just refusing a tap. Issue #122 adds 'stuck': a
+ *  deadlock is recoverable, so its cue is neutral — distinct from both 'fail'
+ *  (which falls further and harder) and 'win' — and fires once on a live
+ *  deadlock only, never replayed on resuming an already-stuck save. */
+export type Cue = 'select' | 'match' | 'mismatch' | 'win' | 'fail' | 'stuck';
 
 export interface CuePlayer {
   play(cue: Cue): void;
@@ -43,6 +46,7 @@ const TONES: Record<Cue, { readonly from: number; readonly to: number; readonly 
   mismatch: { from: 320, to: 240, ms: 130 },
   win: { from: 523, to: 784, ms: 200 },
   fail: { from: 220, to: 140, ms: 240 },
+  stuck: { from: 392, to: 349, ms: 200 },
 };
 
 const PEAK_GAIN = 0.06;
@@ -54,6 +58,7 @@ const HAPTICS: Record<Cue, number | readonly number[]> = {
   mismatch: [10, 40, 10],
   win: 20,
   fail: 40,
+  stuck: 18,
 };
 
 /**

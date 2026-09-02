@@ -9,20 +9,35 @@
 // Input never blocks: nothing here is awaited, and no effect touches game
 // state or the input path.
 
+import { Graphics } from 'pixi.js';
 import type { Container, Ticker } from 'pixi.js';
 import type { TileId } from '@mahjongsolitaire/core';
 import {
   FLIP_MS,
   LOSS_WASH_MS,
   SHAKE_MS,
+  STUCK_PULSE_MS,
+  STUCK_PULSE_STAGGER_MS,
+  STUCK_PULSE_START_MS,
+  STUCK_WASH_MS,
   cascadeDurationMs,
   cascadeFrame,
   flipScaleX,
   shakeOffset,
+  stuckGreyOut,
+  stuckPulseAlpha,
   slumpFrame,
   slumpLayout,
 } from './anim.js';
 import type { Point } from './anim.js';
+import type { Rect } from './geometry.js';
+
+/** The deadlock pulse outline's stroke width (issue #122). */
+const PULSE_OUTLINE_WIDTH = 3;
+/** The near-pair pulse is amber (issue #122) — the holder's last-slot warning
+ *  colour, not the Hint booster's blue: a hint says "tap this", this says
+ *  "these are why you are stuck". */
+const PULSE_COLOR = 0xf59e0b;
 
 interface Effect {
   /** Advance by `dtMs`; false means finished. */
@@ -190,6 +205,103 @@ class SlumpEffect implements Effect {
 }
 
 /**
+ * The deadlock's board-wide grey-out (issue #122): the whole board layer
+ * desaturates over STUCK_WASH_MS, same one-filter approach as the loss's own
+ * SlumpEffect. Unlike SlumpEffect, this still runs under reduced motion (as
+ * an `instant` jump straight to fully grey) — the wash. rather than motion,
+ * is the point of the effect, so reduced motion collapses it rather than
+ * skipping it. `instant` also covers a reload of an already-stuck save.
+ */
+class GreyOutEffect implements Effect {
+  private t: number;
+
+  constructor(
+    private readonly setDesaturation: (amount: number) => void,
+    instant: boolean,
+  ) {
+    this.t = instant ? STUCK_WASH_MS : 0;
+    this.setDesaturation(stuckGreyOut(this.t));
+  }
+
+  advance(dtMs: number): boolean {
+    this.t += dtMs;
+    this.setDesaturation(stuckGreyOut(this.t));
+    return this.t < STUCK_WASH_MS;
+  }
+
+  dispose(): void {
+    this.setDesaturation(0);
+  }
+}
+
+/**
+ * The deadlock's amber near-pair pulse (issue #122): up to a handful of pairs
+ * (game.ts's `nearPairs`), each drawn as an outline `Graphics` child added to
+ * both tile nodes and faded 0 → 1 → 0 once, staggered pair to pair. Like the
+ * other live-node effects, nodes are re-resolved every frame and a tile that
+ * has left the board simply stops getting its outline updated (the outline
+ * itself is destroyed on dispose regardless). An empty pair list finishes on
+ * its first frame and disposes cleanly — a deadlock with no near-pair at all
+ * is not an error, just nothing to point at.
+ */
+class PulseEffect implements Effect {
+  private t = 0;
+  private readonly total: number;
+  private readonly outlines = new Map<TileId, Graphics>();
+
+  constructor(
+    private readonly pairs: ReadonlyArray<readonly [TileId, TileId]>,
+    private readonly tileNode: (id: TileId) => Container | undefined,
+    private readonly tileRect: (id: TileId) => Rect | undefined,
+  ) {
+    this.total =
+      pairs.length === 0
+        ? 0
+        : STUCK_PULSE_START_MS + (pairs.length - 1) * STUCK_PULSE_STAGGER_MS + STUCK_PULSE_MS;
+  }
+
+  advance(dtMs: number): boolean {
+    this.t += dtMs;
+    this.pairs.forEach((pair, index) => {
+      const alpha = stuckPulseAlpha(this.t, index);
+      for (const id of pair) {
+        const node = this.tileNode(id);
+        if (!node) continue;
+        let outline = this.outlines.get(id);
+        // A resize redraw destroys every tile container with
+        // `destroy({children:true})`, which takes the outline down with it —
+        // `outline.destroyed` catches that. The node itself is also a fresh
+        // instance at that point (`tileNode(id)` now resolves to the new
+        // container), so re-adding a *live* outline to it would be wrong too;
+        // simplest correct fix is to always rebuild when either has changed.
+        if (outline && (outline.destroyed || outline.parent !== node)) {
+          if (!outline.destroyed) outline.destroy();
+          outline = undefined;
+        }
+        if (!outline) {
+          const r = this.tileRect(id);
+          if (!r) continue;
+          outline = new Graphics()
+            .rect(r.x, r.y, r.w, r.h)
+            .stroke({ width: PULSE_OUTLINE_WIDTH, color: PULSE_COLOR });
+          this.outlines.set(id, outline);
+          node.addChild(outline);
+        }
+        outline.alpha = alpha;
+      }
+    });
+    return this.t < this.total;
+  }
+
+  dispose(): void {
+    for (const outline of this.outlines.values()) {
+      if (!outline.destroyed) outline.destroy();
+    }
+    this.outlines.clear();
+  }
+}
+
+/**
  * Every live effect, advanced from one ticker callback.
  *
  * Concurrent effects are simply separate entries — nothing queues and nothing
@@ -206,6 +318,8 @@ export class Animator {
       readonly reduced: () => boolean;
       readonly tileNode: (id: TileId) => Container | undefined;
       readonly setDesaturation: (amount: number) => void;
+      /** A tile's top-face rect in board px (issue #122's pulse outline). */
+      readonly tileRect: (id: TileId) => Rect | undefined;
     },
   ) {
     ticker.add(this.onTick);
@@ -239,6 +353,22 @@ export class Animator {
   slump(ids: readonly TileId[]): void {
     if (this.opts.reduced()) return;
     this.effects.push(new SlumpEffect(ids, this.opts.tileNode, this.opts.setDesaturation));
+  }
+
+  /** The deadlock's grey-out (issue #122): the whole board layer desaturates.
+   *  Unlike the other effects here this still runs under reduced motion —
+   *  `instant` is what the caller passes for that (and for a reload of an
+   *  already-stuck save): the grey itself is the point, only the fade is cut. */
+  greyOut(instant: boolean): void {
+    this.effects.push(new GreyOutEffect(this.opts.setDesaturation, instant));
+  }
+
+  /** The deadlock's near-pair hint (issue #122): up to a few pairs pulse an
+   *  amber outline once, staggered. Reduced motion skips it outright — the
+   *  grey-out above already reads as "paused" without it. */
+  pulse(pairs: ReadonlyArray<readonly [TileId, TileId]>): void {
+    if (this.opts.reduced()) return;
+    this.effects.push(new PulseEffect(pairs, this.opts.tileNode, this.opts.tileRect));
   }
 
   /** Drop every live effect — the board underneath them has been replaced. */

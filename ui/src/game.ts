@@ -68,6 +68,7 @@ import type {
   TileId,
 } from '@mahjongsolitaire/core';
 import type { Hit, HitCandidate } from './hit-test.js';
+import { paintOrder } from './geometry.js';
 
 /** `stuck` is the deadlock spec §4 never hard-fails — Shuffle and Undo are
  *  offered against it. `lost` is the one that does hard-fail: a full holder,
@@ -134,6 +135,43 @@ function applySnapshot(level: GeneratedLevel, snapshot: GameSnapshot): Tile[] {
     if (!vocabulary.has(face)) throw new RangeError(`snapshot face ${face} is not in this deal`);
   }
   return tiles.map((t, i) => ({ ...t, face: snapshot.faces[i]!, removed: removed.has(t.id) }));
+}
+
+/** Up to `limit` near-pairs for the deadlock's amber pulse (issue #122): pairs
+ *  of same-face tiles present on the board where *neither* tile is free —
+ *  Shuffle or Undo is what would open one of them up, which is the hint the
+ *  pulse gives. Deliberately not `legalPairs`/`takeablePairs` (those want a
+ *  pair the player can act on *now*; this wants the opposite — pairs blocked
+ *  right now) and never touches `hint()` or its cursor, so it costs no Hint
+ *  charge and does not disturb hint cycling. Concealed tiles are grouped by
+ *  their real face (`board.get(id).face`), not their hidden appearance: the
+ *  pulse is a hint about board structure, not about what is currently
+ *  visible. Same-face tiles are paired off consecutively in paint order
+ *  (roughly top-to-bottom, back-to-front) rather than combinatorially, so a
+ *  face with four blocked copies pulses two independent pairs instead of
+ *  highlighting one tile in three overlapping ones; the pair list itself is
+ *  then paint-ordered and capped at `limit`, so a given stuck board always
+ *  pulses the same pairs in the same order. */
+export function nearPairs(
+  board: Board,
+  limit = 3,
+): ReadonlyArray<readonly [TileId, TileId]> {
+  const byFace = new Map<string, Tile[]>();
+  for (const tile of board.presentTiles()) {
+    if (board.isFree(tile.id)) continue;
+    let tiles = byFace.get(tile.face);
+    if (!tiles) byFace.set(tile.face, (tiles = []));
+    tiles.push(tile);
+  }
+  const pairs: Array<readonly [Tile, Tile]> = [];
+  for (const tiles of byFace.values()) {
+    const ordered = [...tiles].sort((a, b) => paintOrder(a.slot, b.slot));
+    for (let i = 0; i + 1 < ordered.length; i += 2) {
+      pairs.push([ordered[i]!, ordered[i + 1]!]);
+    }
+  }
+  pairs.sort((a, b) => paintOrder(a[0].slot, b[0].slot) || paintOrder(a[1].slot, b[1].slot));
+  return pairs.slice(0, limit).map(([a, b]) => [a.id, b.id] as const);
 }
 
 export class Game {
