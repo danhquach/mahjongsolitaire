@@ -101,7 +101,8 @@ The holder is **one-way** (decision 0009, superseding 0008):
 
 ### 3.3 Matching
 *(reworked by issue #93 / decision 0013 — pairs assemble and clear in the
-holder; selection is no longer a concept)*
+holder; selection is no longer a concept. Amended by issue #124 / decision
+0018 — a peek matches directly on the board.)*
 - **One tap on a revealed free tile sends it to the holder.** No select-first
   step, no deselect, no mismatch: every tap on a playable tile is a move.
 - **If the tapped tile's face matches a tile already in the holder, the pair
@@ -117,8 +118,18 @@ holder; selection is no longer a concept)*
   being tapped, or by the Undo booster returning the newest parked tile
   (issue #100).
 - **Face-down tiles (issue #64):** the first tap reveals the face in place and
-  does nothing else — the holder is never consulted for a hidden face. The
-  second tap sends the now-visible tile to the holder like any other.
+  does nothing else — the holder is never consulted for a hidden face.
+- **While a peek is showing (issue #124):** the board is briefly in "matching
+  against the peek" mode — parking is off the table. A tap on any *other*
+  free tile whose real face matches the peeked tile's clears the pair right
+  there on the board, no trip through the holder — whether the tapped tile
+  was already face-up or was itself face-down (this restores the pre-#93
+  shortcut of matching two concealed tiles in one reveal, issue #77). A tap on
+  a non-matching tile is a **failed match attempt**, not a move: nothing
+  parks, nothing moves — the peek flips back face down and a still-hidden
+  tapped tile stays hidden — same shake/cue as a blocked tap. The peeked tile
+  keeps its own second-tap rule unchanged: tapping it again sends it to the
+  holder like any other visible tile.
 - Note for §7: nothing here is a double-tap gesture. A concealed tile's two
   taps are two ordinary activations with no timing window, and every free
   tile's accessible name spells out what activating it does.

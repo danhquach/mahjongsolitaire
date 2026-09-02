@@ -6,6 +6,12 @@ commit and build time of the running bundle.
 
 ## 2026-09-02
 
+- Peeking a face-down tile and tapping its match now clears the pair right
+  there on the board — no trip through the holder, whether the tapped tile
+  was already face-up or was itself face-down. Tapping a non-matching tile
+  while the peek is showing fails the attempt instead: nothing moves, the
+  peek flips back face down, and a still-hidden tapped tile stays hidden
+  (#124).
 - A deadlock now reads as a pause, not a loss: a slate wash sweeps in left to
   right over the board while the tile pictures desaturate, up to three
   near-pairs (tiles blocking each other) pulse an amber outline once each to

@@ -268,6 +268,58 @@ export class TrayFx {
     this.track(incoming, [flight, clears[1]!]);
   }
 
+  /**
+   * A peek-pair resolving directly on the board (issue #124): unlike
+   * `pairClear`, neither tile ever reaches the holder, so there is no slot to
+   * fly to and no flight — both pictures are already where the player tapped
+   * them. They just dwell in place, then clear together: same dwell/clear
+   * timings, score popup and particle burst as the holder version, anchored
+   * at the midpoint between the two tiles instead of a slot.
+   */
+  pairClearOnBoard(
+    images: { readonly a: string; readonly b: string },
+    boxA: Box,
+    boxB: Box,
+    points: number,
+    onClear: () => void,
+  ): void {
+    const anchor = {
+      x: (boxA.x + boxA.w / 2 + boxB.x + boxB.w / 2) / 2,
+      y: (boxA.y + boxA.h / 2 + boxB.y + boxB.h / 2) / 2,
+    };
+    if (this.reduced()) {
+      onClear();
+      this.scorePop(anchor, points, true);
+      return;
+    }
+    const tileA = tileImg(images.a, boxA);
+    const tileB = tileImg(images.b, boxB);
+    this.layer.append(tileA, tileB);
+    const clear = (node: HTMLElement): Animation =>
+      node.animate(
+        [
+          { transform: 'scale(1)', opacity: 1, offset: 0 },
+          {
+            transform: 'scale(1)',
+            opacity: 1,
+            offset: PAIR_SHOW_MS / (PAIR_SHOW_MS + PAIR_CLEAR_MS),
+          },
+          { transform: `scale(${END_SCALE})`, opacity: 0, offset: 1 },
+        ],
+        { duration: PAIR_SHOW_MS + PAIR_CLEAR_MS, easing: 'linear', fill: 'forwards' },
+      );
+    const clears = [clear(tileA), clear(tileB)];
+    const epoch = this.epoch;
+    window.setTimeout(() => {
+      if (epoch !== this.epoch) return;
+      onClear();
+      this.scorePop(anchor, points, false);
+      this.burst(anchor, (boxA.w + boxB.w) / 2);
+    }, PAIR_SHOW_MS);
+    this.track(tileA, [clears[0]!]);
+    this.track(tileB, [clears[1]!]);
+  }
+
   /** The "+points" popup, rising and fading from the slot (issue #93). Reduced
    *  motion keeps it — it is information, not motion — but only fades it. */
   private scorePop(anchor: { x: number; y: number }, points: number, still: boolean): void {

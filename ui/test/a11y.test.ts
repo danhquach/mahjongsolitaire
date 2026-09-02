@@ -93,6 +93,43 @@ test('with one slot left the label warns that parking loses (issue #63)', () => 
   );
 });
 
+test('with a peek showing, a matching free tile offers the match, not the park (issue #124)', () => {
+  assert.equal(
+    tileAriaLabel({ ...t(0, 0, 0, 0, 'bamboo-3'), peekShowing: true, pairsWithPeek: true }),
+    'Bamboo 3, available, row 1, column 1, activate to match it with the revealed tile',
+  );
+});
+
+test('with a peek showing, a non-matching free tile offers a try, not the park (issue #124)', () => {
+  assert.equal(
+    tileAriaLabel({ ...t(0, 0, 0, 0, 'bamboo-3'), peekShowing: true, pairsWithPeek: false }),
+    'Bamboo 3, available, row 1, column 1, activate to try it against the revealed tile',
+  );
+});
+
+test('with a peek showing, a face-down free tile no longer offers to peek (issue #124)', () => {
+  // A tap on it either matches the peek or fails the attempt — it never
+  // reveals the tile the way a peek with nothing else showing would.
+  assert.equal(
+    tileAriaLabel({
+      ...t(0, 0, 0, 0, 'bamboo-3'),
+      concealed: true,
+      peekShowing: true,
+      pairsWithPeek: false,
+    }),
+    'Face-down tile, available, row 1, column 1, activate to try it against the revealed tile',
+  );
+  assert.equal(
+    tileAriaLabel({
+      ...t(0, 0, 0, 0, 'bamboo-3'),
+      concealed: true,
+      peekShowing: true,
+      pairsWithPeek: true,
+    }),
+    'Face-down tile, available, row 1, column 1, activate to match it with the revealed tile',
+  );
+});
+
 test('tile label rounds half-unit offsets to the nearest whole row/column', () => {
   // Turtle has half-offset slots (odd half-unit coordinates).
   assert.equal(
