@@ -13,7 +13,7 @@
 // equal height cast nothing on each other (the darker outline separates those),
 // while an upper layer detaches from the stack below it.
 
-import { Container, Graphics, Rectangle, Sprite, Text } from 'pixi.js';
+import { ColorMatrixFilter, Container, Graphics, Rectangle, Sprite, Text } from 'pixi.js';
 import type { Application, Texture } from 'pixi.js';
 import type { Tile, TileId } from '@mahjongsolitaire/core';
 import {
@@ -204,6 +204,11 @@ export class BoardRenderer {
   private sizeFactor = 1;
   /** The board palette in force (issue #67): border, side, back, felt. */
   private palette: BoardPalette = LANTERN;
+  /** The holder-full loss's desaturation (issue #121) — one filter on the
+   *  whole board layer rather than per tile (cheaper, and the slump fades
+   *  every tile at the same rate anyway). Created lazily; torn down at 0
+   *  rather than left attached at a no-op amount. */
+  private desaturationFilter: ColorMatrixFilter | null = null;
 
   constructor(
     private readonly app: Application,
@@ -242,6 +247,22 @@ export class BoardRenderer {
 
   get scale(): number {
     return this.viewScale;
+  }
+
+  /** Desaturate the whole board layer by `amount` (0 = full colour, 1 = none)
+   *  — the holder-full loss's slump (issue #121). The next `draw()` resets
+   *  this to 0 unconditionally, so a stale filter never survives a redraw a
+   *  live SlumpEffect isn't driving any more (a new deal, or a resize mid-loss
+   *  that a live effect simply reapplies on its next tick). */
+  setDesaturation(amount: number): void {
+    const clamped = Math.max(0, Math.min(1, amount));
+    if (clamped <= 0) {
+      this.boardLayer.filters = null;
+      return;
+    }
+    this.desaturationFilter ??= new ColorMatrixFilter();
+    this.desaturationFilter.saturate(-clamped, false);
+    this.boardLayer.filters = [this.desaturationFilter];
   }
 
   /** The loaded layout's board-space bounds — what HUD placement fits against
@@ -338,6 +359,10 @@ export class BoardRenderer {
   /** Redraw the whole board (144 tiles is well within budget — spike showed
    *  ~0.2ms/frame with every tile animating). */
   draw(game: Game, state: DrawState): void {
+    // Reset the loss desaturation (issue #121): a live SlumpEffect reapplies
+    // it on its very next tick, so this only ever drops a *stale* filter —
+    // one a new deal's redraw would otherwise carry into the fresh board.
+    this.boardLayer.filters = null;
     // `{ children: true }` leaves textures alone, which is what keeps the one
     // baked shadow texture alive across every redraw.
     this.boardLayer.removeChildren().forEach((c) => c.destroy({ children: true }));

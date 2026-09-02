@@ -11,6 +11,8 @@ import {
   CONFETTI_MS,
   FLIP_MS,
   LANTERN_MS,
+  LOSS_DIALOG_DELAY_MS,
+  LOSS_WASH_MS,
   PAIR_CLEAR_MS,
   PAIR_SHOW_MS,
   PARTICLE_COUNT,
@@ -18,6 +20,7 @@ import {
   SCORE_COUNT_MS,
   SHAKE_AMPLITUDE,
   SHAKE_MS,
+  SLAM_MS,
   TRAY_FLY_MS,
   WIN_DIALOG_DELAY_MS,
   cascadeDurationMs,
@@ -25,13 +28,19 @@ import {
   confettiFrame,
   confettiLayout,
   flipScaleX,
+  holderShakeOffset,
   lanternFrame,
   lanternLayout,
+  lossSchedule,
   particleBurst,
   particleFrame,
   scheduleDialogDelay,
   scoreCountUp,
   shakeOffset,
+  slamProgress,
+  slamSquash,
+  slumpFrame,
+  slumpLayout,
 } from '../src/anim.js';
 
 test('the tray sequence stays inside a fast-play budget (issue #93)', () => {
@@ -191,4 +200,90 @@ test('confetti layout is deterministic given a seed', () => {
   const b = confettiLayout(9);
   assert.deepEqual(a, b);
   assert.notDeepEqual(a, confettiLayout(10));
+});
+
+// --- Holder-full loss (issue #121) --------------------------------------
+
+test('constants: the slam is shorter than a normal park, and the dialog outlasts the wash', () => {
+  assert.ok(SLAM_MS < TRAY_FLY_MS, 'the slam should read as heavier and faster, not slower');
+  assert.ok(LOSS_DIALOG_DELAY_MS > LOSS_WASH_MS, 'the wash should finish well before the dialog');
+});
+
+test('the slam lands exactly at 1 at SLAM_MS and never overshoots on the way there', () => {
+  assert.equal(slamProgress(0), 0);
+  assert.equal(slamProgress(SLAM_MS), 1);
+  assert.equal(slamProgress(SLAM_MS * 2), 1, 'never left mid-flight');
+  let previous = 0;
+  for (let t = 0; t <= SLAM_MS; t += 5) {
+    const p = slamProgress(t);
+    assert.ok(p >= previous && p <= 1, `not monotonic in [0,1] at ${t}ms (${p})`);
+    previous = p;
+  }
+  // Ease-in: the first half covers less than half the distance.
+  assert.ok(slamProgress(SLAM_MS / 2) < 0.5);
+});
+
+test('the landing squash returns to scale 1 at both ends of SLAM_MS and dips in between', () => {
+  assert.equal(slamSquash(0), 1);
+  assert.equal(slamSquash(SLAM_MS), 1, 'never left squashed at the end of the slam');
+  assert.equal(slamSquash(SLAM_MS * 2), 1, 'and not past it either');
+  let sawDip = false;
+  for (let t = 0; t <= SLAM_MS; t += 2) {
+    const s = slamSquash(t);
+    assert.ok(s <= 1, `squash overshot past 1 at ${t}ms (${s})`);
+    if (s < 0.99) sawDip = true;
+  }
+  assert.ok(sawDip, 'the squash never actually compressed');
+});
+
+test('the holder shake returns to 0 at both ends, reusing SHAKE_MS, and swings twice', () => {
+  assert.equal(holderShakeOffset(0), 0);
+  assert.equal(holderShakeOffset(SHAKE_MS), 0);
+  assert.equal(holderShakeOffset(SHAKE_MS + 10), 0);
+  let previous = 0;
+  let peaks = 0;
+  for (let t = 1; t < SHAKE_MS; t++) {
+    const v = holderShakeOffset(t);
+    assert.ok(Math.abs(v) <= SHAKE_AMPLITUDE, `overshoot ${v} at ${t}ms`);
+    if (Math.sign(previous) !== 0 && Math.sign(v) !== Math.sign(previous)) peaks++;
+    previous = v;
+  }
+  // Two swings back and forth cross zero three times inside the span (two
+  // full cycles), which is what makes it read as "twice" rather than once.
+  assert.ok(peaks >= 2, `only ${peaks} direction changes — does not read as two swings`);
+});
+
+test('the loss dialog waits out LOSS_DIALOG_DELAY_MS, or nothing when the theatre is skipped', () => {
+  assert.deepEqual(lossSchedule(false), { dialogAtMs: LOSS_DIALOG_DELAY_MS });
+  assert.deepEqual(lossSchedule(true), { dialogAtMs: 0 });
+});
+
+test('slump layout is deterministic per seed, and signed both ways across seeds', () => {
+  const a = slumpLayout(5);
+  const b = slumpLayout(5);
+  assert.deepEqual(a, b);
+  const seeds = Array.from({ length: 20 }, (_, i) => i + 1);
+  const signs = new Set(seeds.map((seed) => Math.sign(slumpLayout(seed).tiltRad)));
+  assert.ok(signs.has(1) && signs.has(-1), 'every tile tilting the same way would look robotic');
+});
+
+test('a slumping tile drops and desaturates monotonically, exactly final at LOSS_WASH_MS', () => {
+  const spec = slumpLayout(3);
+  const start = slumpFrame(spec, 0);
+  assert.deepEqual(start, { dy: 0, rotationRad: 0, saturation: 1 });
+  const end = slumpFrame(spec, LOSS_WASH_MS);
+  assert.equal(end.saturation, 0, 'fully desaturated by the end of the wash');
+  assert.ok(end.dy > 0, 'settled downward');
+  assert.equal(end.rotationRad, spec.tiltRad, 'tilted all the way to its own spec');
+  // Never left mid-slump past the wash's own duration.
+  assert.deepEqual(slumpFrame(spec, LOSS_WASH_MS * 3), end);
+  let previousDy = -Infinity;
+  let previousSaturation = Infinity;
+  for (let t = 0; t <= LOSS_WASH_MS; t += 25) {
+    const f = slumpFrame(spec, t);
+    assert.ok(f.dy >= previousDy - 1e-9, `dy fell backwards at ${t}ms`);
+    assert.ok(f.saturation <= previousSaturation + 1e-9, `saturation rose at ${t}ms`);
+    previousDy = f.dy;
+    previousSaturation = f.saturation;
+  }
 });

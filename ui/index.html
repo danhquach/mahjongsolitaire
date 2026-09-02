@@ -384,6 +384,15 @@
         border-color: #f59e0b;
         border-width: 3px;
       }
+      /* The holder-full loss (issue #121): every slot reddens, filled ones
+         included — `.filled .tile` above sets `border: none`, so this has to
+         restate the border rather than lean on it. Same specificity as that
+         rule (one id, two classes, one class-selector each); it wins by
+         coming later in the sheet. Cleared with every other end-of-level
+         effect on restart / new deal (main.ts). */
+      #holder.lost .slot .tile {
+        border: 3px solid #b91c1c;
+      }
       /* Pressed state (issue #95): every real control darkens and sinks while
          the pointer or Space key is down, and releases back. The board's tile
          proxies (.tile-node — invisible, the canvas carries their visuals) and
@@ -475,6 +484,22 @@
         height: 14px;
         opacity: 0;
       }
+      /* The holder-full loss's red wash (issue #121): a plain overlay div
+         inside #board, above the win layer (32) and below the dialog (40) —
+         a win always finishes clearing before a loss can happen, but the
+         ordering is defensive either way. loss-fx.ts owns the one child. */
+      #loss-wash-layer {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 33;
+      }
+      #loss-wash-layer .fx-loss-wash {
+        position: absolute;
+        inset: 0;
+        background: #7f1d1d;
+        opacity: 0;
+      }
       #board {
         flex: 1;
         position: relative;
@@ -541,6 +566,19 @@
         border: 1px solid #14532d;
         background: #166534;
         color: #f0fdf4;
+      }
+      /* The holder-full loss's red-tinted card (issue #121) — the one hard
+         fail gets its own colour rather than the green every other dialog
+         shares. Contrast checked: card text 9.2:1, button text 8.3:1 on
+         their own backgrounds, both well past the 4.5:1 body-text minimum. */
+      #overlay.lost .card {
+        background: #fef2f2;
+        color: #7f1d1d;
+      }
+      #overlay.lost .card button {
+        background: #991b1b;
+        border-color: #7f1d1d;
+        color: #ffffff;
       }
 
       /* Settings entry point: a rail-style icon button in the opposite corner
@@ -882,6 +920,7 @@
         <div id="win-fx-layer"></div>
         <div id="board">
           <div id="a11y-layer"></div>
+          <div id="loss-wash-layer"></div>
           <!-- The way into settings lives here rather than in the header: at
                375dp the header is already a full row, and a sixth control there
                wraps it and costs the board 54px of height. Top-right keeps it one

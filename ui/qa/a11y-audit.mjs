@@ -539,9 +539,32 @@ for (const vp of VIEWPORTS) {
       fatal?.label,
     );
 
+    // The announcement itself is synchronous with the fatal tap — showStatus
+    // sets it before presentLossCelebration ever runs (issue #121 delays only
+    // the dialog's own appearance, never the announcement) — so it has to be
+    // read now, not after the wait below. Waiting first risks a genuinely
+    // unrelated announcer.say() landing in between and overwriting the live
+    // region: main.ts also schedules a one-off "Daily bonus" announcement
+    // 1500ms after boot (the login grant), which is close enough to
+    // LOSS_DIALOG_DELAY_MS (~1.4s) that the two can otherwise race.
+    const saidImmediately = await page.evaluate(
+      () => document.getElementById('a11y-status').textContent,
+    );
+    check(
+      /Holder full\. The level is over\./.test(saidImmediately ?? ''),
+      'the loss is announced immediately, with its reason',
+      saidImmediately,
+    );
+
     // …and the dialog that follows is a modal that takes focus, offering only
     // the ways out that exist. Keyboard activation focuses the node itself, so
-    // the focus set inside showStatus sticks with no repair needed.
+    // the focus set inside showStatus sticks with no repair needed — but issue
+    // #121 now plays the slam/shake/wash theatre first and holds the dialog
+    // itself back for LOSS_DIALOG_DELAY_MS (~1.4s), so (like the #120 win
+    // dialog above) the harness has to wait the sequence out before it can see
+    // the dialog's own state. `animating()` already folds the pending timer
+    // in.
+    await page.waitForFunction(() => !window.__slice.animating(), { timeout: 3000 });
     const lost = await page.evaluate(() => ({
       status: window.__slice.game.status(),
       role: document.getElementById('overlay').getAttribute('role'),
@@ -552,7 +575,6 @@ for (const vp of VIEWPORTS) {
       focus: document.activeElement?.id,
       shuffleOffered: !document.getElementById('overlay-shuffle').hidden,
       undoOffered: !document.getElementById('overlay-undo').hidden,
-      said: document.getElementById('a11y-status').textContent,
     }));
     check(lost.status === 'lost', 'the fourth park ends the level', lost);
     check(lost.role === 'dialog' && lost.modal === 'true', 'the loss is a modal dialog', lost);
@@ -563,11 +585,6 @@ for (const vp of VIEWPORTS) {
     );
     check(lost.focus === 'overlay-restart', 'focus moves to the only way out', lost);
     check(!lost.shuffleOffered && !lost.undoOffered, 'no Shuffle, no Undo — it is final', lost);
-    check(
-      /Holder full\. The level is over\./.test(lost.said ?? ''),
-      'and the loss is announced, with its reason',
-      lost.said,
-    );
 
     // Leave the board as it was found.
     await page.click('#overlay-restart');

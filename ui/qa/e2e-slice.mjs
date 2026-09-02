@@ -1191,15 +1191,31 @@ for (const vp of VIEWPORTS) {
       warned?.label,
     );
 
-    // The dialog's focus is repaired on the next task — a tap opens it from
-    // inside `pointerdown`, and the browser's own `mousedown` takes focus to
-    // <body> straight afterwards (see showStatus). Playwright's click resolves
-    // before that task runs, so settle first and then assert.
-    await page
-      .waitForFunction(() => document.getElementById('overlay').contains(document.activeElement), {
-        timeout: 2000,
-      })
-      .catch(() => {});
+    // The announcement is synchronous with the fatal tap — showStatus sets it
+    // before presentLossCelebration ever runs (issue #121 delays only the
+    // dialog's own appearance) — so read it now, before the wait below risks
+    // a genuinely unrelated announcer.say() landing in between and
+    // overwriting the live region: main.ts also schedules a one-off "Daily
+    // bonus" announcement 1500ms after boot (the login grant), close enough
+    // to LOSS_DIALOG_DELAY_MS (~1.4s) that the two can otherwise race.
+    const saidImmediately = await page.evaluate(
+      () => document.getElementById('a11y-status').textContent,
+    );
+    check(
+      /holder full\. the level is over/i.test(saidImmediately ?? ''),
+      'the loss is announced immediately',
+      saidImmediately,
+    );
+
+    // Issue #121 plays the slam/shake/wash theatre before the dialog itself
+    // opens — LOSS_DIALOG_DELAY_MS (~1.4s) — so, like the win dialog
+    // elsewhere in this file, wait the sequence out via `animating()` (which
+    // folds the pending timer in) rather than the dialog's own focus landing:
+    // that used to be enough on its own (a tap opens the dialog from inside
+    // `pointerdown`, and the browser's own `mousedown` default action used to
+    // take focus back to <body> in the same task — see showStatus), but now
+    // the focus move itself is delayed by the same theatre.
+    await page.waitForFunction(() => !window.__slice.animating(), { timeout: 3000 });
     const lost = await page.evaluate(() => ({
       holder: window.__slice.holder(),
       status: window.__slice.game.status(),
@@ -1209,7 +1225,6 @@ for (const vp of VIEWPORTS) {
       undoOffered: !document.getElementById('overlay-undo').hidden,
       railInert: document.getElementById('booster-rail').hasAttribute('inert'),
       focus: document.activeElement?.id,
-      said: document.getElementById('a11y-status').textContent,
       tilesLeft: window.__slice.game.tilesLeft,
     }));
     check(lost.holder.full && lost.status === 'lost', 'the fourth park ends the level', lost);
@@ -1218,7 +1233,6 @@ for (const vp of VIEWPORTS) {
     check(!lost.undoOffered, 'and no Undo', lost);
     check(lost.railInert, 'and the rail behind it is inert, so neither is reachable', lost);
     check(lost.focus === 'overlay-restart', 'focus lands on the way out that exists', lost);
-    check(/holder full\. the level is over/i.test(lost.said ?? ''), 'the loss is announced', lost.said);
     check(lost.tilesLeft > 0, 'tiles are still on the board — this is a loss, not a win', lost);
 
     // A reload is not an escape hatch (issue #63).

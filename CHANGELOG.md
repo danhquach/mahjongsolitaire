@@ -6,6 +6,16 @@ commit and build time of the running bundle.
 
 ## 2026-09-01
 
+- The holder-full loss now lands like the hard fail it is. The fourth tile
+  slams into its slot instead of parking, the holder strip shakes twice and
+  every slot reddens, a dark red wash settles over the board while whatever
+  tiles are left slump, tilt and lose their colour, and only then — a beat
+  later than a win's own celebration — does the dialog appear, tinted red,
+  offering only Restart level and New game. Reduced motion skips the slam,
+  shake and slump and shows the wash at once, at a lower opacity; reopening a
+  save from a level that already ended this way shows the same instant wash
+  at full opacity with no delay, since there is nothing left to replay
+  (#121).
 - Clearing a level now feels like a reward: the remaining tile pictures sweep
   off the board column by column, paper lanterns tinted to the board's own
   colours drift up from the felt, a light gold/cream/green confetti fall plays

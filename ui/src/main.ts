@@ -33,6 +33,16 @@
 // free tile with no match in the holder says that activating it sends it to
 // the last slot and ends the level) and a loss dialog that offers only a
 // restart, because there is nothing else left to offer.
+// Issue #121 gives that loss the presentation its finality deserves — the one
+// hard fail in the game — deliberately harsher than the deadlock treatment
+// (#122): the fourth tile slams into its slot instead of parking, the holder
+// strip shakes and reddens, a dark wash settles over the board while whatever
+// tiles are left slump and lose their colour, and only then does the dialog
+// appear (LOSS_DIALOG_DELAY_MS, longer than the win's own delay). Reduced
+// motion collapses all of it to an instant, lower-opacity wash; a reload of an
+// already-lost save (spec §3.5: reloading is not an escape hatch) shows the
+// same instant wash at full opacity with no delay — the fight already
+// happened, so there is nothing left to replay.
 
 import { Application } from 'pixi.js';
 import {
@@ -72,7 +82,8 @@ import { Animator } from './effects.js';
 import { TrayFx } from './tray-fx.js';
 import type { Box } from './tray-fx.js';
 import { WinFx } from './win-fx.js';
-import { scheduleDialogDelay, scoreCountUp } from './anim.js';
+import { LossFx } from './loss-fx.js';
+import { SLAM_MS, lossSchedule, scheduleDialogDelay, scoreCountUp } from './anim.js';
 import { Feedback, navigatorVibrate, webAudioPlayer } from './feedback.js';
 import type { Cue } from './feedback.js';
 import { faceStyle } from './faces.js';
@@ -192,6 +203,7 @@ async function start(): Promise<void> {
   const profileRowGlyph = el<HTMLElement>('profile-row-glyph');
   const profileRowName = el<HTMLElement>('profile-row-name');
   const overlayGrant = el<HTMLElement>('overlay-grant');
+  const lossWashLayer = el<HTMLDivElement>('loss-wash-layer');
   const dailyButton = el<HTMLButtonElement>('btn-daily');
   const dailyDateEl = el<HTMLElement>('daily-date');
   const dailyStatusEl = el<HTMLElement>('daily-status');
@@ -341,6 +353,7 @@ async function start(): Promise<void> {
   const animator = new Animator(app.ticker, {
     reduced: () => settings.value.reducedMotion || prefersReducedMotion(),
     tileNode: (id) => renderer.tileNode(id),
+    setDesaturation: (amount) => renderer.setDesaturation(amount),
   });
 
   const charges = new BoosterCharges(storage);
@@ -356,11 +369,16 @@ async function start(): Promise<void> {
   let flash: readonly number[] = [];
   let flashToken = 0;
   let overlayVisible = false;
-  /** A win dialog waiting out WIN_DIALOG_DELAY_MS while the celebration plays
-   *  (issue #120) — cancelled if a new level starts first. */
-  let pendingWinTimer: ReturnType<typeof setTimeout> | null = null;
+  /** An end-of-level dialog waiting out its own delay while the win
+   *  celebration (issue #120) or the loss theatre (issue #121) plays —
+   *  cancelled if a new level starts first. Only one is ever pending at a
+   *  time, since 'won' and 'lost' are mutually exclusive statuses. */
+  let pendingDialogTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The loss theatre's slam-landing timer (issue #121): shake/wash/slump start
+   *  when the fourth tile lands. Held so cancelEndCelebration can drop it. */
+  let pendingLossEffects: ReturnType<typeof setTimeout> | null = null;
   /** The score dialog's count-up (issue #120), driven independently of the
-   *  win timer above so it can be cancelled on its own once the dialog is
+   *  timer above so it can be cancelled on its own once the dialog is
    *  already showing. */
   let scoreCountRaf: number | null = null;
   /** Whatever `showStatus` appends after "Final score: N" on a win (the Daily
@@ -425,6 +443,11 @@ async function start(): Promise<void> {
   // The win celebration's DOM half (issue #120): lanterns + confetti, on
   // their own layer so clearing the tray mid-flight never touches them.
   const winFx = new WinFx(el<HTMLDivElement>('win-fx-layer'), () =>
+    settings.value.reducedMotion || prefersReducedMotion(),
+  );
+  // The holder-full loss's DOM half (issue #121): the strip shake and the red
+  // wash, on their own layer like winFx's.
+  const lossFx = new LossFx(lossWashLayer, holderRoot, () =>
     settings.value.reducedMotion || prefersReducedMotion(),
   );
 
@@ -528,7 +551,7 @@ async function start(): Promise<void> {
     overlayUndo.textContent = `Undo (${charges.remaining('undo')})`;
   }
 
-  function showStatus(): void {
+  function showStatus(opts: { readonly fromResume?: boolean } = {}): void {
     const status = game.status();
     if (status === 'playing') {
       hideOverlay();
@@ -551,6 +574,9 @@ async function start(): Promise<void> {
     overlayRestart.hidden = false;
     overlayNew.textContent = daily === null ? 'New game' : 'Back to the ladder';
     overlayGrant.hidden = true;
+    // The red-tinted card (issue #121) — only the holder-full loss gets it;
+    // every other dialog (won, stuck) keeps the default green.
+    overlay.classList.toggle('lost', status === 'lost');
     if (status === 'won') {
       overlayRestart.hidden = true;
       if (daily === null) {
@@ -646,6 +672,8 @@ async function start(): Promise<void> {
           : overlayRestart;
     if (status === 'won') {
       presentWinCelebration(wayOut);
+    } else if (status === 'lost') {
+      presentLossCelebration(wayOut, opts.fromResume ?? false);
     } else {
       overlay.classList.add('visible');
       focusWayOut(wayOut);
@@ -686,7 +714,7 @@ async function start(): Promise<void> {
       winFx.celebrate(cssColor(paletteInPlay().back));
     }
     const reveal = (): void => {
-      pendingWinTimer = null;
+      pendingDialogTimer = null;
       overlay.classList.add('visible');
       if (reduced) {
         overlayText.textContent = `Final score: ${finalScore}${suffix}`;
@@ -697,7 +725,58 @@ async function start(): Promise<void> {
     };
     const delay = scheduleDialogDelay(reduced);
     if (delay <= 0) reveal();
-    else pendingWinTimer = setTimeout(reveal, delay);
+    else pendingDialogTimer = setTimeout(reveal, delay);
+  }
+
+  /**
+   * The holder-full loss (issue #121) — deliberately harsher than the win
+   * above, and than the deadlock dialog (#122): the fourth tile's flight into
+   * its slot is already a slam (finishTap uses `trayFx.slamToSlot`, timed to
+   * SLAM_MS); this schedules everything that follows it on that same beat —
+   * the strip's shake, its slots reddening, the board's red wash, and the
+   * remaining tiles slumping — then the dialog itself after
+   * `LOSS_DIALOG_DELAY_MS`, measured from the tap that filled the holder, not
+   * from the slam's landing (SLAM_MS is small next to it, so the two clocks
+   * agree closely enough not to need a real handoff between trayFx and here).
+   *
+   * `instant` skips the whole theatre and shows its resting state at once —
+   * used for a reload of an already-lost save (`fromResume`, showStatus's
+   * caller at boot): the fight already happened, so there is nothing to
+   * replay, only the result to show. Reduced motion does the same but at a
+   * lower wash opacity, and unlike `instant` still gets its own 'fail' cue —
+   * motion is what reduced motion cuts, not sound or haptics, and only an
+   * actual live loss (never a resume) earns either.
+   * `overlayVisible`/`setBackgroundInert` are already set by the caller.
+   */
+  function presentLossCelebration(wayOut: HTMLButtonElement, instant: boolean): void {
+    const reduced = settings.value.reducedMotion || prefersReducedMotion();
+    const skipTheatre = reduced || instant;
+    if (!instant) feedback.cue('fail');
+    holder.setLost(true);
+    const startEffects = (): void => {
+      if (skipTheatre) {
+        lossFx.wash({ reduced, instant: true });
+      } else {
+        lossFx.shake();
+        animator.slump(game.board.presentTiles().map((t) => t.id));
+        lossFx.wash({ reduced: false, instant: false });
+      }
+    };
+    if (skipTheatre) startEffects();
+    else {
+      pendingLossEffects = setTimeout(() => {
+        pendingLossEffects = null;
+        startEffects();
+      }, SLAM_MS);
+    }
+    const reveal = (): void => {
+      pendingDialogTimer = null;
+      overlay.classList.add('visible');
+      focusWayOut(wayOut);
+    };
+    const { dialogAtMs } = lossSchedule(skipTheatre);
+    if (dialogAtMs <= 0) reveal();
+    else pendingDialogTimer = setTimeout(reveal, dialogAtMs);
   }
 
   /** The tile pictures the cascade sweeps off — whatever is left on the board
@@ -711,7 +790,7 @@ async function start(): Promise<void> {
 
   /** Count the dialog's score line from 0 to `final` (issue #120), rebuilding
    *  "Final score: N<suffix>" every frame so the Daily payout line rides
-   *  along unchanged. Cancelled by `cancelWinCelebration` on a new deal. */
+   *  along unchanged. Cancelled by `cancelEndCelebration` on a new deal. */
   function animateScoreCountUp(final: number, suffix: string): void {
     const start = performance.now();
     const step = (now: number): void => {
@@ -722,19 +801,27 @@ async function start(): Promise<void> {
     scoreCountRaf = requestAnimationFrame(step);
   }
 
-  /** Cancel a win celebration in flight — a new deal or a page-hide before the
-   *  delayed dialog opened (issue #120). Safe to call unconditionally: every
-   *  piece is a no-op when nothing is pending. */
-  function cancelWinCelebration(): void {
-    if (pendingWinTimer !== null) {
-      clearTimeout(pendingWinTimer);
-      pendingWinTimer = null;
+  /** Cancel an end-of-level celebration in flight — a new deal, a booster that
+   *  lifted a deadlock, or a page-hide before the delayed dialog opened
+   *  (issues #120 / #121). Safe to call unconditionally: every piece is a
+   *  no-op when nothing is pending. */
+  function cancelEndCelebration(): void {
+    if (pendingDialogTimer !== null) {
+      clearTimeout(pendingDialogTimer);
+      pendingDialogTimer = null;
+    }
+    if (pendingLossEffects !== null) {
+      clearTimeout(pendingLossEffects);
+      pendingLossEffects = null;
     }
     if (scoreCountRaf !== null) {
       cancelAnimationFrame(scoreCountRaf);
       scoreCountRaf = null;
     }
     winFx.clear();
+    lossFx.clear();
+    animator.clear();
+    holder.setLost(false);
   }
 
   /**
@@ -1251,7 +1338,7 @@ async function start(): Promise<void> {
     if (result.ok && (kind === 'undo' || kind === 'shuffle')) {
       animator.clear();
       trayFx.clear();
-      cancelWinCelebration();
+      cancelEndCelebration();
     }
     redraw();
     if (result.ok) persist();
@@ -1387,11 +1474,21 @@ async function start(): Promise<void> {
         feedback.haptic('match');
       }
     } else if (outcome.kind === 'held') {
+      // A park that fills the last slot ends the level right here (decision
+      // 0009) — game.status() is computed live off the board, so it already
+      // reads 'lost' the moment game.tap() returned outcome. That park gets
+      // the slam instead of the ordinary flight, and no 'select' cue: the
+      // 'fail' cue and everything after it is presentLossCelebration's job,
+      // fired from showStatus below (issue #121).
+      const lost = game.status() === 'lost';
       const slotNode = holder.slotNode(outcome.slot);
       if (slotNode) {
-        trayFx.flyToSlot(tilePicture(outcome.id), tileFlightBox(outcome.id), slotNode, () => {});
+        const box = tileFlightBox(outcome.id);
+        const picture = tilePicture(outcome.id);
+        if (lost) trayFx.slamToSlot(picture, box, slotNode, () => {});
+        else trayFx.flyToSlot(picture, box, slotNode, () => {});
       }
-      feedback.cue(tapCue(outcome)!);
+      if (!lost) feedback.cue(tapCue(outcome)!);
     } else {
       const cue = tapCue(outcome);
       if (cue) feedback.cue(cue);
@@ -1532,7 +1629,7 @@ async function start(): Promise<void> {
     flashToken++;
     animator.clear();
     trayFx.clear();
-    cancelWinCelebration();
+    cancelEndCelebration();
     hintPair = [];
     shuffleCount = 0;
     elapsed.reset();
@@ -1610,12 +1707,16 @@ async function start(): Promise<void> {
       // already correct without them, so drop them (issue #44 / #93).
       animator.clear();
       trayFx.clear();
-      // Not cancelWinCelebration(): a pending win dialog must still open when
-      // the player comes back (a hidden setTimeout keeps running, just
-      // possibly throttled), so only the decorative lanterns/confetti — which
-      // would otherwise sit frozen mid-flight, like the tray flights above —
-      // are dropped here (issue #120).
+      // Not cancelEndCelebration(): a pending end-of-level dialog (win or
+      // loss) must still open when the player comes back (a hidden setTimeout
+      // keeps running, just possibly throttled), so only the decorative
+      // pieces — the lanterns/confetti, and the loss's own shake/wash, which
+      // would otherwise sit frozen mid-flight like the tray flights above —
+      // are dropped here (issue #120 / #121). The holder's red border is left
+      // alone: it is a static class, not an animation, so there is nothing
+      // frozen about it.
       winFx.clear();
+      lossFx.clear();
       persist();
     } else {
       elapsed.resume();
@@ -1632,8 +1733,10 @@ async function start(): Promise<void> {
   applyTileSize(); // fits the board for the stored tile size, then redraws
   if (resumed !== null) {
     announcer.say(`Game resumed. ${game.tilesLeft} tiles left. Score ${game.score}.`);
-    // A deadlocked board can be resumed (see persist): re-offer the way out.
-    showStatus();
+    // A deadlocked or lost board can be resumed (see persist): re-offer the
+    // way out. `fromResume` skips the loss theatre (issue #121) — the fight
+    // already happened before this load, so only its result is shown.
+    showStatus({ fromResume: true });
   } else {
     persist(); // a fresh deal is savable from its first frame
   }
@@ -1742,7 +1845,9 @@ async function start(): Promise<void> {
     },
     /** Whether any board or tray effect is live (issue #44 / #93 QA). */
     animating(): boolean {
-      return animator.busy || trayFx.busy || winFx.busy || pendingWinTimer !== null;
+      return (
+        animator.busy || trayFx.busy || winFx.busy || lossFx.busy || pendingDialogTimer !== null
+      );
     },
     /** The effective reduced-motion decision, OS preference included. */
     reducedMotion(): boolean {

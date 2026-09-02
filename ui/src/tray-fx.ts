@@ -23,9 +23,12 @@ import {
   PAIR_CLEAR_MS,
   PAIR_SHOW_MS,
   SCORE_POP_MS,
+  SLAM_MS,
   TRAY_FLY_MS,
   particleBurst,
   particleFrame,
+  slamProgress,
+  slamSquash,
 } from './anim.js';
 
 /** A page-coordinate box an effect starts from or lands on. */
@@ -126,6 +129,50 @@ export class TrayFx {
       ],
       { duration: TRAY_FLY_MS, easing: 'ease-in', fill: 'forwards' },
     );
+    this.track(copy, [flight], () => {
+      slot.classList.remove('incoming');
+      onArrive();
+    });
+  }
+
+  /**
+   * The fourth tile's landing when it fills the holder and ends the level
+   * (issue #121) — heavier and faster than `flyToSlot`, with a squash on
+   * impact, so it reads as a slam rather than a park. Same `.incoming`
+   * cover-up and reduced-motion short-circuit as `flyToSlot`; the shake, wash
+   * and dialog that follow are main.ts's `presentLossCelebration`, timed off
+   * the same SLAM_MS so they land together without this method knowing about
+   * them.
+   */
+  slamToSlot(image: string, from: Box, slot: HTMLElement, onArrive: () => void): void {
+    if (this.reduced()) {
+      onArrive();
+      return;
+    }
+    const to = slot.getBoundingClientRect();
+    const landing: Box = {
+      x: to.x + (to.width - from.w) / 2,
+      y: to.y + (to.height - from.h) / 2,
+      w: from.w,
+      h: from.h,
+    };
+    slot.classList.add('incoming');
+    const copy = tileImg(image, from);
+    this.layer.appendChild(copy);
+    const dx = landing.x - from.x;
+    const dy = landing.y - from.y;
+    const steps = 12;
+    const keyframes: Keyframe[] = Array.from({ length: steps + 1 }, (_, i) => {
+      const t = (i / steps) * SLAM_MS;
+      const p = slamProgress(t);
+      const s = slamSquash(t);
+      return { transform: `translate(${dx * p}px, ${dy * p}px) scale(${s})` };
+    });
+    const flight = copy.animate(keyframes, {
+      duration: SLAM_MS,
+      easing: 'linear',
+      fill: 'forwards',
+    });
     this.track(copy, [flight], () => {
       slot.classList.remove('incoming');
       onArrive();
