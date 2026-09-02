@@ -1149,12 +1149,67 @@ for (const vp of VIEWPORTS) {
       tabbed,
     );
 
-    // Step 3 highlights a real free pair on this board, spends no Hint charge,
-    // and leaves Next / Skip live — the match is a demonstration, not a gate.
+    // Spotlight (issue #150): the scrim is decoration — hidden from assistive
+    // technology, never a pointer target — and step 1 lights the whole board.
+    const spotReport = () =>
+      page.evaluate(() => {
+        const svg = document.getElementById('spotlight');
+        const card = document.getElementById('tutorial-card').getBoundingClientRect();
+        const spot = window.__slice.spotlight();
+        const pills = [...svg.querySelectorAll('.pill')].map((p) => p.getBoundingClientRect());
+        const overlap = (a, b) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+        return {
+          visible: spot.visible,
+          hidden: svg.getAttribute('aria-hidden'),
+          pointer: getComputedStyle(svg).pointerEvents,
+          kinds: spot.holes.map((h) => h.kind),
+          holeUnderCard: spot.holes.some((h) => overlap(card, { x: h.x, y: h.y, width: h.w, height: h.h })),
+          pillsOverlap: pills.length === 2 && overlap(pills[0], pills[1]),
+          pillTexts: [...svg.querySelectorAll('.pill-text')].map((t) => t.textContent),
+          tiles: spot.tiles,
+          announced: document.getElementById('a11y-status').textContent,
+        };
+      });
+    const spot1 = await spotReport();
+    check(
+      !spot1.visible && spot1.hidden === 'true' && spot1.pointer === 'none',
+      'step 1 shows no scrim; the scrim is aria-hidden and never a pointer target',
+      spot1,
+    );
+
+    // Step 2 rings a free and a blocked tile, tells them apart by tag, and
+    // names both in the announcement. Step 3 highlights a real free pair on
+    // this board, spends no Hint charge, and leaves Next / Skip live — the
+    // match is a demonstration, not a gate.
     await page.click('#tutorial-next');
-    const step2 = await page.evaluate(() => document.getElementById('a11y-status').textContent);
+    const spot2 = await spotReport();
+    const step2 = spot2.announced;
     check(/^Tutorial, step 2 of 6\. /.test(step2), 'step 2 is announced', step2);
+    check(
+      spot2.visible && spot2.kinds.slice().sort().join(',') === 'blocked,free',
+      'step 2 spotlights one free and one blocked tile',
+      spot2,
+    );
+    check(
+      spot2.pillTexts.slice().sort().join(',') === 'BLOCKED,FREE' && !spot2.pillsOverlap,
+      'step 2 tags read FREE and BLOCKED and do not overlap',
+      spot2,
+    );
+    check(!spot2.holeUnderCard, 'step 2: no spotlighted tile sits under the card', spot2);
+    check(/ is free; .* is blocked\.$/.test(step2), 'step 2 announcement names the free and the blocked tile', step2);
+    const freeBlocked = await page.evaluate(() => {
+      const g = window.__slice.game;
+      const { free, blocked } = window.__slice.spotlight().tiles;
+      return { free: g.board.isFree(free), blocked: g.board.isFree(blocked) };
+    });
+    check(freeBlocked.free === true && freeBlocked.blocked === false, 'the FREE tile is free and the BLOCKED tile is not', freeBlocked);
     await page.click('#tutorial-next');
+    const spot3 = await spotReport();
+    check(
+      spot3.visible && spot3.kinds.join(',') === 'pair,pair' && !spot3.holeUnderCard,
+      'step 3 spotlights the two tiles of the pair, neither under the card',
+      spot3,
+    );
     const step3 = await page.evaluate(() => {
       const g = window.__slice.game;
       const pair = window.__slice.hintPair;
@@ -1191,6 +1246,8 @@ for (const vp of VIEWPORTS) {
       pairLen: window.__slice.hintPair.length,
     }));
     check(last.step === 6 && last.nextLabel === 'Done', 'the last step offers Done', last);
+    const spot6 = await spotReport();
+    check(spot6.visible && spot6.kinds.join(',') === 'panel' && !spot6.holeUnderCard, 'step 6 spotlights one panel (the Score chip)', spot6);
     check(/^Tutorial, step 6 of 6\. /.test(last.announced), 'step 6 is announced', last.announced);
     check(last.pairLen === 0, 'the step-3 highlight leaves with the step', last);
     await page.click('#tutorial-next');
