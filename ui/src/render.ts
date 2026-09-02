@@ -33,14 +33,20 @@ import {
 import type { BoardPalette } from './depth.js';
 import { faceStyle } from './faces.js';
 import {
+  FRAME_H,
+  FRAME_INNER_INSET,
+  FRAME_INNER_STROKE,
+  FRAME_RADIUS,
+  FRAME_STROKE,
+  FRAME_W,
+  GLYPH_FONT_SIZE,
   PIP_AREA,
+  RING_STROKE,
   SEASON_GLYPH_POS,
   SEASON_GLYPH_SIZE,
   SEASON_NAME_POS,
   SEASON_NAME_SIZE,
   SEASON_SCATTER_SIZE,
-  TAG_FONT_SIZE,
-  TAG_ORIGIN,
   pipCenter,
   pipMetrics,
 } from './pips.js';
@@ -64,7 +70,7 @@ const TILE_IMAGE_RESOLUTION = 4;
 //
 // A concealed tile is the same tile — same silhouette, sides, shadow, border,
 // highlight outlines — with the face painted as a card back instead of a suit:
-// no glyph, no pips, no tag. Both colours run through the same per-layer
+// no glyph, no pips. Both colours run through the same per-layer
 // darkening as a face does (LAYER_FACE_STEP via depthSteps), so a face-down
 // tile recedes with its layer exactly like its neighbours.
 //
@@ -88,20 +94,24 @@ const BACK_KEYLINE_WIDTH = 2;
 // cannot do. Where each pip goes and how big it may be is pips.ts; this is only
 // how one is drawn.
 
-/** The ring's open centre, as a fraction of its outer radius. */
-const RING_HOLE = 0.38;
-/** End caps: the flat band at each end of a cane segment, and the widest part
- *  of it — as a fraction of the cane's height. */
-const CANE_CAP_H = 0.14;
-/** Half-widths of the body at its widest (mid-bulge) and narrowest (a pinch),
- *  as fractions of the cane's overall width. Keep the ratio near 2:3 — a
- *  deeper waist on a narrow cane stops reading as bamboo and starts reading as
- *  screw thread. */
-const CANE_BULGE = 0.44;
+/** The ring's open centre, as a fraction of its outer radius — what is left
+ *  once the stroke (RING_STROKE of the radius, issue #152) is drawn. */
+const RING_HOLE = 1 - RING_STROKE;
+/** End caps: the flared band at each end of a cane segment — the widest part
+ *  of it, running the cane's full width — as a fraction of the cane's height. */
+const CANE_CAP_H = 0.13;
+/** Half-widths of the body at its widest (mid-bulge) and at the waist, as
+ *  fractions of the cane's overall width. Keep the ratio near 2:3 — a deeper
+ *  waist on a narrow cane stops reading as bamboo and starts reading as screw
+ *  thread. The caps run wider than the bulge, which is the flare. */
+const CANE_BULGE = 0.42;
 const CANE_PINCH = 0.3;
-/** Bulges per cane — three, separated by two pinches, as a segmented cane
- *  reads. */
-const CANE_BULGES = 3;
+/** Bulges per cane — two, meeting at one waist (issue #152: the thicker cane
+ *  has room for a drawn node there, and three bulges on it read as beads). */
+const CANE_BULGES = 2;
+/** The waist node: a thin band in the face colour across the waist, as a
+ *  fraction of the cane's height — a joint on the cane, not a break in it. */
+const CANE_NODE_H = 0.07;
 
 /**
  * A Dots pip: a ring, split two-tone along the traditional taijitu boundary.
@@ -134,11 +144,11 @@ function drawRing(
 }
 
 /**
- * A Bamboo pip: one cane segment — a flat cap at each end and a waisted body
- * of three bulges between them.
+ * A Bamboo pip: one cane segment — a flared cap at each end, a waisted body of
+ * two bulges between them, and a face-coloured node across the waist.
  *
  * The body is a closed path whose sides are quadratic curves pinned at the
- * pinches and bowed out at each bulge's midpoint. A quadratic only reaches
+ * waist and bowed out at each bulge's midpoint. A quadratic only reaches
  * halfway to its control point, so the control offset is solved back from the
  * bulge we actually want, not set to it.
  */
@@ -149,6 +159,7 @@ function drawCane(
   w: number,
   h: number,
   color: number,
+  face: number,
 ): void {
   const capH = h * CANE_CAP_H;
   const top = cy - h / 2;
@@ -174,6 +185,35 @@ function drawCane(
   const capR = capH * 0.45;
   g.roundRect(cx - w / 2, top, w, capH, capR).fill(color);
   g.roundRect(cx - w / 2, bottom - capH, w, capH, capR).fill(color);
+
+  // The node sits on the waist between the two bulges, in the face colour so
+  // it tracks the layer shade like the ring holes do.
+  const nodeH = h * CANE_NODE_H;
+  const waistY = bodyTop + step;
+  g.roundRect(cx - pinch, waistY - nodeH / 2, 2 * pinch, nodeH, nodeH / 2).fill(face);
+}
+
+/**
+ * The White Dragon (issue #152, decision 0023): a white-filled rounded frame
+ * with a slate outline and a thin second outline inside it, centred at (cx,
+ * cy). Built from nested fills rather than strokes so the outer edge is
+ * exactly FRAME_W × FRAME_H — that is what faces.test.ts bounds.
+ */
+function drawFrame(g: Graphics, cx: number, cy: number, ink: number, white: number): void {
+  const x = cx - FRAME_W / 2;
+  const y = cy - FRAME_H / 2;
+  g.roundRect(x, y, FRAME_W, FRAME_H, FRAME_RADIUS).fill(ink);
+  g.roundRect(
+    x + FRAME_STROKE,
+    y + FRAME_STROKE,
+    FRAME_W - 2 * FRAME_STROKE,
+    FRAME_H - 2 * FRAME_STROKE,
+    Math.max(1, FRAME_RADIUS - FRAME_STROKE),
+  ).fill(white);
+  const i = FRAME_INNER_INSET;
+  g.roundRect(x + i, y + i, FRAME_W - 2 * i, FRAME_H - 2 * i, 2).fill(ink);
+  const j = i + FRAME_INNER_STROKE;
+  g.roundRect(x + j, y + j, FRAME_W - 2 * j, FRAME_H - 2 * j, 1).fill(white);
 }
 
 export interface DrawState {
@@ -392,7 +432,7 @@ export class BoardRenderer {
   }
 
   /**
-   * One tile as its own container: shadow, shaded sides, face, ink, tag.
+   * One tile as its own container: shadow, shaded sides, face, ink.
    *
    * A container per tile (rather than everything straight onto boardLayer) is
    * what lets the mismatch shake nudge a single tile between redraws — and it
@@ -450,7 +490,7 @@ export class BoardRenderer {
         r.h - 2 * BACK_INSET,
         Math.max(2, TILE_RADIUS - 2),
       ).stroke({ width: BACK_KEYLINE_WIDTH, color: scaleColor(this.palette.backKeyline, backFactor) });
-      return node; // no glyph, no pips, no tag — that is the point
+      return node; // no glyph, no pips — that is the point
     }
 
     const style = faceStyle(tile.face);
@@ -460,7 +500,7 @@ export class BoardRenderer {
     if (style.pips) {
       // Per-rank pip art (issue #35, redrawn in the traditional idiom for
       // issue #45). Placement and sizing — including staying inside the face
-      // and clear of the corner tag — are pips.ts.
+      // — are pips.ts.
       const pipG = new Graphics();
       const metrics = pipMetrics(style.pips);
       for (const pip of style.pips) {
@@ -471,7 +511,7 @@ export class BoardRenderer {
         // keep one bright half and read as partly lit.
         const accent = pip.accent === undefined ? ink : shade.ink(pip.accent);
         if (style.pipShape === 'cane') {
-          drawCane(pipG, px, py, metrics.caneW, metrics.caneH, accent);
+          drawCane(pipG, px, py, metrics.caneW, metrics.caneH, accent, shade.face);
         } else {
           drawRing(pipG, px, py, metrics.ringR, ink, accent, shade.face);
         }
@@ -497,11 +537,24 @@ export class BoardRenderer {
         node.addChild(at(makeText(g.glyph, SEASON_SCATTER_SIZE), g.x, g.y, g.rotation ?? 0));
       }
       node.addChild(at(makeText(style.name, SEASON_NAME_SIZE), SEASON_NAME_POS.x, SEASON_NAME_POS.y));
+    } else if (style.frame) {
+      // The White Dragon's drawn frame (issue #152). Its white fill recedes
+      // with the face it sits on, so a deep-layer frame stays "white on cream"
+      // rather than lighting up brighter than its own tile.
+      const frameG = new Graphics();
+      drawFrame(
+        frameG,
+        r.x + PIP_AREA.x + PIP_AREA.w / 2,
+        r.y + PIP_AREA.y + PIP_AREA.h / 2,
+        ink,
+        scaleColor(0xffffff, backFactor),
+      );
+      node.addChild(frameG);
     } else {
       const glyph = new Text({
         text: style.glyph,
         style: {
-          fontSize: TILE_H * 0.42,
+          fontSize: GLYPH_FONT_SIZE,
           fill: ink,
           fontFamily: 'sans-serif',
           // Decision 0002 asks for thick, simplified strokes; a font glyph
@@ -511,28 +564,17 @@ export class BoardRenderer {
       });
       glyph.anchor.set(0.5);
       // Centred in the same area the pips use, so a glyph face and a pip face
-      // sit on the same optical line and neither rides under the tag.
+      // sit on the same optical line.
       glyph.position.set(r.x + PIP_AREA.x + PIP_AREA.w / 2, r.y + PIP_AREA.y + PIP_AREA.h / 2);
       node.addChild(glyph);
     }
-    const tag = new Text({
-      text: style.tag,
-      style: {
-        fontSize: TAG_FONT_SIZE,
-        fill: ink,
-        fontFamily: 'sans-serif',
-        fontWeight: 'bold',
-      },
-    });
-    tag.position.set(r.x + TAG_ORIGIN.x, r.y + TAG_ORIGIN.y);
-    node.addChild(tag);
     return node;
   }
 
   /**
    * A parked tile's picture for the holder strip (issue #66): the exact tile
    * the renderer would paint on the board's top layer — face, border, side
-   * depth, pips or glyph, corner tag — extracted once per face and cached as a
+   * depth, pips or glyph — extracted once per face and cached as a
    * data URL. The strip is DOM (its accessibility story), so this is how a
    * slot gets painted from the same material as the board instead of a flat
    * stand-in: art changes flow into the strip with no second implementation.

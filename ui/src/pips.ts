@@ -4,52 +4,56 @@
 // throwing: the first cut of the redrawn pips sized each shape from the gap
 // between pip *centres* and drew it centred there, which let five of the
 // Bamboo ranks hang over the bottom edge of the tile and put eight ranks under
-// the corner tag. Nothing caught it but looking at a screenshot.
+// the (since removed) corner tag. Nothing caught it but looking at a screenshot.
 //
 // So the layout is stated here, as geometry, with two independent guarantees:
 //
-//   1. `PIP_AREA` is a rect that is inside the tile and clear of `TAG_BOX`, and
+//   1. `PIP_AREA` is a rect that is inside the tile, and
 //   2. `pipMetrics` clamps every shape to fit inside PIP_AREA given where the
 //      rank actually puts its pips — so no pip table, however hand-authored,
 //      can overflow.
 //
 // ui/test/pips.test.ts walks the whole 144-tile set and asserts both.
+//
+// Issue #152 removed the corner tag and gave its room to the art: the area is
+// now centred on the face at ~80% of its width and ~83% of its height, the
+// glyph faces grew from 42% to 52% of the tile height, Dots rings and Bamboo
+// canes got heavier, and the White Dragon became a drawn double frame.
 
 import { TILE_H, TILE_W } from './geometry.js';
 import type { Rect } from './geometry.js';
 import type { Pip } from './faces.js';
 
-/** Corner-tag type size. The tag is the rank/initial that pairs with the suit
- *  symbol so identical faces are matchable at a glance (decision 0002). */
-export const TAG_FONT_SIZE = TILE_H * 0.2;
-/** Top-left origin the tag is drawn from. */
-export const TAG_ORIGIN = { x: 5, y: 2 } as const;
-/**
- * The box the tag may occupy. Deliberately generous: the tag is a single
- * character today, but the width is reserved for the widest one a font might
- * hand back rather than measured per glyph — art must not creep under it just
- * because '1' happens to be narrow.
- */
-export const TAG_BOX: Rect = {
-  x: TAG_ORIGIN.x,
-  y: TAG_ORIGIN.y,
-  w: TAG_FONT_SIZE * 0.7,
-  h: TAG_FONT_SIZE * 1.05,
-};
+/** Side and top/bottom margins of the pip area within the tile face. */
+const SIDE_MARGIN = TILE_W * 0.1;
+const END_MARGIN = TILE_H * 0.085;
 
-/** Clearance between the tag and the art below it. */
-const TAG_CLEARANCE = 2;
-/** Side and bottom margins of the pip area within the tile face. */
-const SIDE_MARGIN = TILE_W * 0.09;
-const BOTTOM_MARGIN = TILE_H * 0.055;
-
-/** The region pip art may occupy: inside the face, below the corner tag. */
+/** The region face art may occupy: centred on the face, inside its margins. */
 export const PIP_AREA: Rect = {
   x: SIDE_MARGIN,
-  y: TAG_BOX.y + TAG_BOX.h + TAG_CLEARANCE,
+  y: END_MARGIN,
   w: TILE_W - 2 * SIDE_MARGIN,
-  h: TILE_H - (TAG_BOX.y + TAG_BOX.h + TAG_CLEARANCE) - BOTTOM_MARGIN,
+  h: TILE_H - 2 * END_MARGIN,
 };
+
+/** Type size of a single-glyph face (Characters, Winds, the two typed
+ *  Dragons), centred in PIP_AREA. */
+export const GLYPH_FONT_SIZE = TILE_H * 0.52;
+
+// --- the White Dragon's frame (issue #152, decision 0023) ----------------------
+// A drawn double frame, centred in PIP_AREA: a white-filled rounded rectangle
+// with a slate outline, and a thin second outline just inside it. Stated here
+// so faces.test.ts can bound it like every other piece of face art.
+
+/** Outer frame size. */
+export const FRAME_W = TILE_W * 0.5;
+export const FRAME_H = TILE_H * 0.58;
+/** Outer outline weight; the inner outline is a fraction of it. */
+export const FRAME_STROKE = TILE_W * 0.045;
+export const FRAME_INNER_STROKE = FRAME_STROKE * 0.45;
+/** Where the inner outline's outer edge sits, in from the outer frame's edge. */
+export const FRAME_INNER_INSET = FRAME_STROKE * 2.6;
+export const FRAME_RADIUS = 4;
 
 // --- composed season faces (issue #75, decision 0012) --------------------------
 // The Seasons draw text, not pips, but their layout lives here with the rest of
@@ -61,10 +65,9 @@ export const PIP_AREA: Rect = {
 export const SEASON_GLYPH_SIZE = TILE_H * 0.32;
 /** Scatter companion type size. */
 export const SEASON_SCATTER_SIZE = TILE_H * 0.13;
-/** Season name type size. Floor-tested against TAG_FONT_SIZE: the corner tag
- *  is the established smallest-legible reference, and a whole word carries
- *  more shape than a lone digit, so it may run somewhat smaller — never less
- *  than 70% of it (QA-confirmed legible at the smallest rendered tile). */
+/** Season name type size — the smallest ink on any face now that the corner
+ *  tag is gone (issue #152). QA-confirmed legible at the smallest rendered
+ *  tile; faces.test.ts pins the floor so a retheme cannot shrink it. */
 export const SEASON_NAME_SIZE = TILE_H * 0.14;
 /** Pictogram centre in unit pip-area coordinates — above centre so the name
  *  band underneath stays clear of it. */
@@ -72,30 +75,33 @@ export const SEASON_GLYPH_POS = { x: 0.5, y: 0.36 } as const;
 /** Name-text centre in unit pip-area coordinates. */
 export const SEASON_NAME_POS = { x: 0.5, y: 0.88 } as const;
 
-/** Pip diameter as a fraction of the room it has — just short of touching. */
-const RING_FILL = 0.92;
+/** Pip diameter as a fraction of the room it has. Issue #152 pulled it in
+ *  from 0.92: a bold ring needs more air than a thin one, and this is what
+ *  keeps Dots-9 at ≥ 2 board px between rings (pips.test.ts pins it). */
+const RING_FILL = 0.86;
 /** Ceiling on a ring's radius, for ranks with acres of room (ranks 1 and 2). */
 const RING_R_MAX = TILE_W * 0.2;
+/** Ring stroke as a fraction of the ring's outer radius (issue #152: bold
+ *  rings, up from ≈ 0.42). Rank 9 is the tightest and keeps its gaps because
+ *  the stroke is inside the radius — RING_FILL is what spaces the rings. */
+export const RING_STROKE = 0.7;
 
 /**
  * Cane size as a fraction of the room it has, and its ceilings.
  *
+ * Width (issue #152): ≈ 0.42 of the column pitch, capped at 21% of the pip
+ * area's width. The cap equals 0.42 of a two-column pitch, so Bamboo-3 (one
+ * over two) lands exactly on it and ranks 1–3 share one width; it is also what
+ * stops the sparse ranks ballooning into barrels.
+ *
  * The vertical fill is well short of the room available on purpose: a cane's
- * three bulges are a repeating pattern, so two canes stacked nose to tail read
- * as one cane with six bulges. The gap is what keeps a rank countable.
+ * bulges are a repeating pattern, so two canes stacked nose to tail read as
+ * one long cane. The gap is what keeps a rank countable.
  */
-const CANE_FILL_W = 0.82;
+const CANE_FILL_W = 0.42;
 const CANE_FILL_H = 0.78;
-const CANE_W_MAX = TILE_W * 0.3;
+const CANE_W_MAX = PIP_AREA.w * 0.21;
 const CANE_H_MAX = TILE_H * 0.4;
-/**
- * Widest a cane may be relative to its own height. A cane is a tall segment;
- * the sparse ranks have enough horizontal room to draw one nearly square, and
- * a square cane reads as a barrel. Height is chosen first, then this caps the
- * width — so a rank with generous columns gets a *taller* cane, not a fatter
- * one.
- */
-const CANE_ASPECT = 0.42;
 /** Positions closer than this (in area px) are the same band, not two. */
 const BAND_EPSILON = 0.5;
 
@@ -173,12 +179,7 @@ export function pipMetrics(pips: readonly Pip[]): PipMetrics {
   const caneH = Math.min(minColumnGap * CANE_FILL_H, CANE_H_MAX, 2 * hhRoom * CANE_FILL_H);
   return {
     ringR: Math.min((minDistance * RING_FILL) / 2, RING_R_MAX, hwRoom, hhRoom),
-    caneW: Math.min(
-      minRowGap * CANE_FILL_W,
-      caneH * CANE_ASPECT,
-      CANE_W_MAX,
-      2 * hwRoom * CANE_FILL_W,
-    ),
+    caneW: Math.min(minRowGap * CANE_FILL_W, CANE_W_MAX, 2 * hwRoom * CANE_FILL_W),
     caneH,
   };
 }
