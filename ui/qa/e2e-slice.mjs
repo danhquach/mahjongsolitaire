@@ -2326,8 +2326,76 @@ for (const vp of VIEWPORTS) {
     const replay = await p2.evaluate(() => window.__slice.tutorial());
     check(replay.visible && replay.step === 1, 'Settings → Show tutorial ON replays it from step 1 on the next deal', replay);
 
-    // Next through to Done.
-    for (let i = 0; i < 5; i++) await p2.click('#tutorial-next');
+    // Spotlight (issue #150): on every step the holes as drawn sit exactly on
+    // the actors' on-screen rects — tiles through the app's own geometry, HUD
+    // panels through their boxes — and none is under the card. A viewport
+    // change while a step is up moves the holes with their actors.
+    const spotGeometry = () =>
+      p2.evaluate(() => {
+        const s = window.__slice;
+        const spot = s.spotlight();
+        const canvas = document.querySelector('#board canvas').getBoundingClientRect();
+        const tileRect = (id) => {
+          const r = s.tileCssRect(id);
+          return { x: canvas.x + r.x, y: canvas.y + r.y, w: r.w, h: r.h + 6 };
+        };
+        const panelRect = (el) => {
+          const r = el.getBoundingClientRect();
+          return { x: r.x - 6, y: r.y - 6, w: r.width + 12, h: r.height + 12 };
+        };
+        const step = s.tutorial().step;
+        const expected = [];
+        const { free, blocked, pair } = spot.tiles;
+        if (free !== undefined) expected.push(tileRect(free));
+        if (blocked !== undefined) expected.push(tileRect(blocked));
+        for (const id of pair ?? []) expected.push(tileRect(id));
+        if (step === 4) expected.push(panelRect(document.querySelector('#booster-rail > div')));
+        if (step === 5) expected.push(panelRect(document.getElementById('holder')));
+        if (step === 6) expected.push(panelRect(document.getElementById('score').parentElement));
+        const close = (a, b) => ['x', 'y', 'w', 'h'].every((k) => Math.abs(a[k] - b[k]) < 1.5);
+        const card = document.getElementById('tutorial-card').getBoundingClientRect();
+        const underCard = spot.holes.some(
+          (h) => h.x < card.x + card.width && h.x + h.w > card.x && h.y < card.y + card.height && h.y + h.h > card.y,
+        );
+        return {
+          step,
+          visible: spot.visible,
+          holes: spot.holes.length,
+          matches: expected.length === spot.holes.length && expected.every((e, i) => close(e, spot.holes[i])),
+          underCard,
+          gearInside:
+            step === 4 &&
+            (() => {
+              const g = document.getElementById('btn-settings').getBoundingClientRect();
+              const h = spot.holes[0];
+              return h && g.x >= h.x && g.x + g.width <= h.x + h.w && g.y >= h.y && g.y + g.height <= h.y + h.h;
+            })(),
+        };
+      });
+    const geo1 = await spotGeometry();
+    check(geo1.step === 1 && !geo1.visible && geo1.holes === 0, 'step 1: whole board lit, no scrim', geo1);
+    for (let step = 2; step <= 6; step++) {
+      await p2.click('#tutorial-next');
+      const geo = await spotGeometry();
+      check(geo.step === step && geo.visible && geo.holes > 0 && geo.matches, `step ${step}: holes sit on the actors`, geo);
+      check(!geo.underCard, `step ${step}: no actor under the card`, geo);
+      if (step === 4) check(!geo.gearInside, 'step 4: the Settings gear is outside the boosters hole', geo);
+      if (step === 3) {
+        // Turn the phone: the pair moves, and the holes follow it. No wait
+        // on the spotlight itself is needed: the app re-fits the board and
+        // re-lays the holes synchronously in the same `resize` handler, so
+        // by the time this evaluate runs both are done.
+        const before = await p2.evaluate(() => window.__slice.spotlight().holes.map((h) => [h.x, h.y]));
+        await p2.setViewportSize({ width: vp.height, height: vp.width });
+        await p2.waitForFunction(() => !window.__slice.dealing);
+        const turned = await spotGeometry();
+        const after = await p2.evaluate(() => window.__slice.spotlight().holes.map((h) => [h.x, h.y]));
+        check(turned.visible && turned.matches && !turned.underCard, 'after a viewport change the holes still sit on the pair', turned);
+        check(JSON.stringify(before) !== JSON.stringify(after), 'the holes actually moved with the tiles', { before, after });
+        await p2.setViewportSize({ width: vp.width, height: vp.height });
+        await p2.waitForFunction(() => !window.__slice.dealing);
+      }
+    }
     const last = await p2.evaluate(() => ({
       ...window.__slice.tutorial(),
       nextLabel: document.getElementById('tutorial-next').textContent,
@@ -2339,8 +2407,10 @@ for (const vp of VIEWPORTS) {
       setting: window.__slice.settings().showTutorial,
       status: window.__slice.game.status(),
       hintPair: window.__slice.hintPair.length,
+      scrim: window.__slice.spotlight().visible,
     }));
     check(!done.visible && done.setting === false && done.status === 'playing' && done.hintPair === 0, 'Done returns to a playable board and turns the toggle OFF', done);
+    check(!done.scrim, 'Done takes the spotlight scrim down with the card', done);
 
     // OFF survives a relaunch too.
     await p2.reload();

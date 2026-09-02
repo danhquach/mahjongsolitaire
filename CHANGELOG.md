@@ -6,6 +6,11 @@ commit and build time of the running bundle.
 
 ## 2026-09-02
 
+- The tutorial now points. From step 2 on, everything except the thing the
+  step is talking about goes dark: a free tile and a blocked tile side by side
+  (tagged FREE and BLOCKED, with arrows), the matchable pair, the three
+  boosters, the holder, the score. The tiles it picks are always ones you can
+  see in full, and the card moves out of their way (#150).
 - New players get a short tutorial. The first level opens with a six-step
   walkthrough — the goal, what makes a tile free, a real matchable pair
   highlighted on your own board, the three boosters, the holder, and how

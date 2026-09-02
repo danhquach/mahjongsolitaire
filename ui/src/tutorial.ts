@@ -12,12 +12,22 @@
 // outcome either way, so a player who skipped is not nagged on the next
 // level. Turning the toggle back on in Settings arms it for the next deal.
 
+/**
+ * What a step points at (issue #150): main.ts spotlights it — everything
+ * else goes behind a scrim — and names it in the step's announcement.
+ *   none          the whole board, lit
+ *   free-blocked  one free and one blocked tile, side by side, tagged
+ *   pair          one genuinely matchable free pair on the board in play
+ *   boosters      the Hint / Undo / Shuffle group (not the Settings gear)
+ *   holder        the holder strip
+ *   score         the Score chip
+ */
+export type TutorialActor = 'none' | 'free-blocked' | 'pair' | 'boosters' | 'holder' | 'score';
+
 export interface TutorialStep {
   readonly title: string;
   readonly body: string;
-  /** Step 3: main.ts highlights one genuinely matchable pair on the board in
-   *  front of the player while this step shows. */
-  readonly showPair?: boolean;
+  readonly actor: TutorialActor;
 }
 
 /** The six PM-approved steps, in order (issue #59 body). Step 6 speaks of
@@ -26,29 +36,34 @@ export const TUTORIAL_STEPS: readonly TutorialStep[] = [
   {
     title: 'Clear the board',
     body: 'Match identical tiles in pairs until none are left.',
+    actor: 'none',
   },
   {
     title: 'Free tiles',
     body:
       'A tile is free when nothing covers it and one long side is open. Blocked tiles are dimmed and will not select.',
+    actor: 'free-blocked',
   },
   {
     title: 'Make a match',
     body:
       'The two highlighted tiles are a free pair. Tap one, then the other, to clear them — or carry on and find your own.',
-    showPair: true,
+    actor: 'pair',
   },
   {
     title: 'Boosters',
     body: 'Hint shows a pair, Undo takes back a parked tile, Shuffle rearranges the board. Each costs one charge.',
+    actor: 'boosters',
   },
   {
     title: 'The holder',
     body: 'Park a free tile in a holder slot to reach what is under it. It is free to use and always available.',
+    actor: 'holder',
   },
   {
     title: 'That’s it',
     body: 'Quick matches in a row score more. The board is yours.',
+    actor: 'score',
   },
 ];
 

@@ -30,9 +30,9 @@ function recorder(): { ends: TutorialEnd[]; onEnd: (how: TutorialEnd) => void } 
 test('six PM-approved steps in order; only the match step highlights a pair', () => {
   assert.equal(TUTORIAL_STEPS.length, 6);
   assert.deepEqual(
-    TUTORIAL_STEPS.map((s) => s.showPair === true),
-    [false, false, true, false, false, false],
-    'step 3 is the worked example',
+    TUTORIAL_STEPS.map((s) => s.actor),
+    ['none', 'free-blocked', 'pair', 'boosters', 'holder', 'score'],
+    'each step names what it points at (issue #150); step 3 is the worked example',
   );
   assert.match(TUTORIAL_STEPS[0]!.body, /pairs/i, 'step 1: the goal');
   assert.match(TUTORIAL_STEPS[1]!.body, /free/i, 'step 2: free tiles');

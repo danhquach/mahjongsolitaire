@@ -163,6 +163,17 @@ import { DEFAULT_SETTINGS, SettingsStore, TILE_SIZE_FACTOR, TILE_SIZE_LABEL, TIL
 import type { BooleanSetting, TileSize } from './settings.js';
 import { localKeyValueStorage } from './storage.js';
 import { Tutorial } from './tutorial.js';
+import {
+  cardCoversHole,
+  cardSide,
+  layoutTags,
+  panelHole,
+  pickFreeBlocked,
+  pickVisiblePair,
+  scrimPath,
+  tileHole,
+} from './spotlight.js';
+import type { Hole, SpotTile } from './spotlight.js';
 import type { Hit } from './hit-test.js';
 import type { HintPair, TapOutcome } from './game.js';
 
@@ -201,10 +212,12 @@ function formatDateKey(key: string, style: 'short' | 'long'): string {
   ).format(at);
 }
 
-function el<T extends HTMLElement>(id: string): T {
+function el<T extends Element>(id: string): T {
   const node = document.getElementById(id);
   if (!node) throw new Error(`missing #${id}`);
-  return node as T;
+  // getElementById types as HTMLElement even for an inline <svg>; widen
+  // through Element so an SVG root can be asked for without a double cast.
+  return node as Element as T;
 }
 
 /** Fetch and parse a shipped layout file (issue #79: any of the ten). */
@@ -254,6 +267,11 @@ async function start(): Promise<void> {
   const tutorialText = el<HTMLElement>('tutorial-text');
   const tutorialNext = el<HTMLButtonElement>('tutorial-next');
   const tutorialSkip = el<HTMLButtonElement>('tutorial-skip');
+  // Tutorial spotlight scrim (issue #150).
+  const spotlightSvg = el<SVGSVGElement>('spotlight');
+  const holderDiv = el<HTMLDivElement>('holder');
+  const boostersGroup = boosterRail.querySelector<HTMLElement>('.boosters');
+  const scoreChip = el<HTMLElement>('score').parentElement;
   const profilePanel = el<HTMLDivElement>('profile');
   const profileButton = el<HTMLButtonElement>('btn-profile');
   const profileClose = el<HTMLButtonElement>('profile-close');
@@ -1286,9 +1304,167 @@ async function start(): Promise<void> {
     if (tutorialPending) startTutorial();
   }
 
-  /** Paint the current step and speak it. Step 3 highlights one genuinely
-   *  matchable pair on this board through the same highlight Hint uses — no
-   *  charge is spent, and the highlight leaves with the step. */
+  /** The tiles the current step points at (issue #150), chosen once per
+   *  step so a resize moves the rings with the tiles rather than re-picking. */
+  let spotlightTiles: { readonly free?: TileId; readonly blocked?: TileId; readonly pair?: readonly TileId[] } = {};
+  /** The holes as last drawn, page CSS px (QA reads them back). */
+  let spotlightHoles: readonly Hole[] = [];
+
+  /** Every present tile with its on-screen face rect, for the picker. */
+  function spotTiles(): SpotTile[] {
+    const canvas = app.canvas.getBoundingClientRect();
+    return game.board.presentTiles().map((t) => {
+      const r = tileCssRect(t.slot);
+      return {
+        id: t.id,
+        z: t.slot.z,
+        free: game.board.isFree(t.id),
+        face: t.face,
+        rect: { x: canvas.x + r.x, y: canvas.y + r.y, w: r.w, h: r.h },
+      };
+    });
+  }
+
+  function boardMidY(): number {
+    const b = boardDiv.getBoundingClientRect();
+    return b.y + b.height / 2;
+  }
+
+  /** Pick the step's actors on the board in play. Step 3 keeps the ordinary
+   *  hint highlight on the same pair; the solver's own hint is the fallback
+   *  when no fully visible pair exists (peekHint: the demonstration must not
+   *  advance Hint's cycle). */
+  function pickSpotlightTiles(): void {
+    spotlightTiles = {};
+    const step = tutorial.step;
+    if (step === null) return;
+    if (step.actor === 'free-blocked') {
+      const pick = pickFreeBlocked(spotTiles(), boardMidY());
+      if (pick) spotlightTiles = { free: pick.free.id, blocked: pick.blocked.id };
+    } else if (step.actor === 'pair') {
+      const pick = pickVisiblePair(spotTiles(), boardMidY());
+      if (pick) {
+        spotlightTiles = { pair: [pick[0].id, pick[1].id] };
+        hintPair = spotlightTiles.pair!;
+      } else {
+        // No fully visible pair on this board: the solver's hint is still
+        // highlighted and announced, but not ringed — a ring around a
+        // half-covered tile would break the "fully visible" rule.
+        hintPair = game.peekHint() ?? [];
+      }
+    }
+  }
+
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  function svgNode<K extends keyof SVGElementTagNameMap>(
+    tag: K,
+    attrs: Record<string, string | number>,
+    className = '',
+  ): SVGElementTagNameMap[K] {
+    const node = document.createElementNS(SVG_NS, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v));
+    if (className) node.setAttribute('class', className);
+    return node;
+  }
+
+  /**
+   * Draw the scrim, rings and tags for the current step around wherever the
+   * actors are *now*, and put the card in the half of the board they are not
+   * in. Called on every step and on every resize while the tutorial is up.
+   */
+  function layoutSpotlight(): void {
+    const step = tutorial.step;
+    if (step === null || !tutorialVisible) return;
+    const holes: Hole[] = [];
+    const pageRect = (elm: HTMLElement | null): Hole | null => {
+      if (!elm) return null;
+      const r = elm.getBoundingClientRect();
+      return panelHole({ x: r.x, y: r.y, w: r.width, h: r.height });
+    };
+    const tileRectOnPage = (id: TileId): { x: number; y: number; w: number; h: number } => {
+      const canvas = app.canvas.getBoundingClientRect();
+      const r = tileCssRect(game.board.get(id).slot);
+      return { x: canvas.x + r.x, y: canvas.y + r.y, w: r.w, h: r.h };
+    };
+    if (spotlightTiles.free !== undefined) holes.push(tileHole(tileRectOnPage(spotlightTiles.free), 'free'));
+    if (spotlightTiles.blocked !== undefined) holes.push(tileHole(tileRectOnPage(spotlightTiles.blocked), 'blocked'));
+    for (const id of spotlightTiles.pair ?? []) holes.push(tileHole(tileRectOnPage(id), 'pair'));
+    const panel =
+      step.actor === 'boosters'
+        ? pageRect(boostersGroup)
+        : step.actor === 'holder'
+          ? pageRect(holderDiv)
+          : step.actor === 'score'
+            ? pageRect(scoreChip)
+            : null;
+    if (panel) holes.push(panel);
+    spotlightHoles = holes;
+
+    // Card first: which half it takes decides nothing about the holes, but
+    // the fallback below needs its final rect.
+    const mid = boardMidY();
+    tutorialPanel.classList.toggle('card-top', cardSide(holes, mid) === 'top');
+    tutorialPanel.classList.remove('compact');
+    const card = tutorialCard.getBoundingClientRect();
+    if (cardCoversHole({ x: card.x, y: card.y, w: card.width, h: card.height }, holes)) {
+      tutorialPanel.classList.add('compact');
+    }
+
+    // The scrim only when there is something to spotlight: step 1 lights the
+    // whole board, so it shows none.
+    spotlightSvg.replaceChildren();
+    if (holes.length === 0) {
+      spotlightSvg.classList.remove('visible');
+      return;
+    }
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    spotlightSvg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    spotlightSvg.append(svgNode('path', { d: scrimPath(W, H, holes) }, 'scrim'));
+    for (const h of holes) {
+      spotlightSvg.append(svgNode('rect', { x: h.x, y: h.y, width: h.w, height: h.h, rx: h.r }, `ring ${h.kind}`));
+    }
+    const tags = layoutTags(holes, 0);
+    if (tags.length > 0) {
+      const defs = svgNode('defs', {});
+      const marker = svgNode('marker', {
+        id: 'spotlight-arrow',
+        viewBox: '0 0 10 10',
+        refX: 9,
+        refY: 5,
+        markerWidth: 7,
+        markerHeight: 7,
+        orient: 'auto-start-reverse',
+      });
+      marker.append(svgNode('path', { d: 'M0,0L10,5L0,10z' }, 'arrow'));
+      defs.append(marker);
+      spotlightSvg.append(defs);
+      for (const t of tags) {
+        spotlightSvg.append(
+          svgNode(
+            'line',
+            { x1: t.from.x, y1: t.from.y, x2: t.to.x, y2: t.to.y, 'marker-end': 'url(#spotlight-arrow)' },
+            'leader',
+          ),
+        );
+        spotlightSvg.append(svgNode('rect', { x: t.x, y: t.y, width: t.w, height: t.h, rx: t.h / 2 }, `pill ${t.kind}`));
+        const text = svgNode('text', { x: t.x + t.w / 2, y: t.y + 16 }, 'pill-text');
+        text.textContent = t.text;
+        spotlightSvg.append(text);
+      }
+    }
+    spotlightSvg.classList.add('visible');
+  }
+
+  /** Where a tile is, in the a11y layer's words: "row 3 column 7". */
+  function whereIs(id: TileId): string {
+    const { row, col } = slotPosition(game.board.get(id).slot);
+    return `row ${row} column ${col}`;
+  }
+
+  /** Paint the current step and speak it. Step 2 rings a free and a blocked
+   *  tile; step 3 rings one genuinely matchable pair and highlights it the
+   *  way Hint does — no charge is spent, and both leave with the step. */
   function renderTutorialStep(): void {
     const step = tutorial.step;
     if (step === null) return;
@@ -1297,26 +1473,32 @@ async function start(): Promise<void> {
     tutorialTitle.textContent = step.title;
     tutorialText.textContent = step.body;
     tutorialNext.textContent = tutorial.isLast ? 'Done' : 'Next';
-    let where = '';
-    if (step.showPair) {
-      // peekHint, not hint(): the demonstration must not advance Hint's cycle,
-      // or the player's own first press would get the second-ranked pair.
-      const pair = game.peekHint();
-      hintPair = pair ?? [];
-      if (pair !== null) where = ` Highlighted: ${describePair(pair)}.`;
-    } else {
-      hintPair = [];
-    }
+    hintPair = [];
+    pickSpotlightTiles();
     redraw();
+    layoutSpotlight();
+    // The scrim is visual only: the announcement names what it points at.
+    let where = '';
+    if (spotlightTiles.free !== undefined && spotlightTiles.blocked !== undefined) {
+      where =
+        ` ${label(spotlightTiles.free)} at ${whereIs(spotlightTiles.free)} is free;` +
+        ` ${label(spotlightTiles.blocked)} at ${whereIs(spotlightTiles.blocked)} is blocked.`;
+    } else if (step.actor === 'pair' && hintPair.length === 2) {
+      where = ` Highlighted: ${describePair([hintPair[0]!, hintPair[1]!])}.`;
+    }
     announcer.say(`Tutorial, step ${n} of ${tutorial.stepCount}. ${step.title}. ${step.body}${where}`);
   }
 
-  /** Take the card down and hand the board back: highlight cleared, background
-   *  live again, focus on the board's current tile. */
+  /** Take the card down and hand the board back: highlight and scrim cleared,
+   *  background live again, focus on the board's current tile. */
   function closeTutorialCard(): void {
     if (!tutorialVisible) return;
     tutorialVisible = false;
-    tutorialPanel.classList.remove('visible');
+    tutorialPanel.classList.remove('visible', 'card-top', 'compact');
+    spotlightSvg.classList.remove('visible');
+    spotlightSvg.replaceChildren();
+    spotlightTiles = {};
+    spotlightHoles = [];
     hintPair = [];
     redraw();
     setBackgroundInert(false);
@@ -2843,7 +3025,11 @@ async function start(): Promise<void> {
   //
   // Not only when the edge moved (issue #125): a size-only change can leave
   // the canvas and #board disagreeing too — see settleBoardFit.
-  window.addEventListener('resize', () => settleBoardFit());
+  window.addEventListener('resize', () => {
+    settleBoardFit();
+    // The tiles have moved; the tutorial's rings and tags follow them (#150).
+    layoutSpotlight();
+  });
 
   boosterUi.hint.button.addEventListener('click', () => useBooster('hint'));
   boosterUi.undo.button.addEventListener('click', () => useBooster('undo'));
@@ -3039,6 +3225,15 @@ async function start(): Promise<void> {
     /** Tutorial card state (issue #59 QA): shown, and which step (1-based). */
     tutorial(): { visible: boolean; step: number; count: number } {
       return { visible: tutorialVisible, step: tutorial.stepIndex + 1, count: tutorial.stepCount };
+    },
+    /** Spotlight state (issue #150 QA): the chosen tiles and the holes as
+     *  drawn, page CSS px. */
+    spotlight(): {
+      tiles: { free?: TileId; blocked?: TileId; pair?: readonly TileId[] };
+      holes: readonly Hole[];
+      visible: boolean;
+    } {
+      return { tiles: spotlightTiles, holes: spotlightHoles, visible: spotlightSvg.classList.contains('visible') };
     },
   };
 }

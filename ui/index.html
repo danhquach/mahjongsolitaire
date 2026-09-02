@@ -590,6 +590,12 @@
         background: #7f1d1d;
         opacity: 0;
       }
+      /* #board (and #play-area / #app above it) must never gain a
+         stacking-context-creating property — transform, opacity, filter,
+         will-change, isolation. The tutorial card (#tutorial, z 35) and the
+         spotlight scrim (#spotlight, fixed, z 34) live inside it and are
+         ordered against #fx-layer (30), #win-fx-layer (32) and #overlay (40)
+         in the root context; a transform here would silently re-stack them. */
       #board {
         flex: 1;
         position: relative;
@@ -758,9 +764,96 @@
         align-items: flex-end;
         justify-content: center;
         pointer-events: none;
+        /* Above the spotlight scrim (34) and the fx layers, below the
+           end-of-level dialog (40). */
+        z-index: 35;
       }
       #tutorial.visible {
         display: flex;
+      }
+      /* Issue #150: the card takes whichever half of the board holds no
+         spotlighted actor — top when the actor is in the lower half. */
+      #tutorial.card-top {
+        align-items: flex-start;
+      }
+      #tutorial.card-top .card {
+        margin: 12px 0 0;
+      }
+      /* Fallback when an actor would still sit under the card: tighter type
+         and padding so the card leaves more board. */
+      #tutorial.compact .card {
+        padding: 10px 14px;
+        font-size: 16px;
+      }
+      #tutorial.compact h2 {
+        margin: 0 0 4px;
+        font-size: 18px;
+      }
+      #tutorial.compact .tutorial-actions {
+        margin-top: 8px;
+      }
+      /* The spotlight scrim (issue #150): fixed to the viewport so one
+         coordinate space covers HUD, holder, board and rail. Hidden until the
+         tutorial fills it. Fades in with the card; no fade under reduced
+         motion, and holes always move instantly. */
+      #spotlight {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: none;
+        pointer-events: none;
+        z-index: 34;
+        animation: tutorial-in 180ms ease-out;
+      }
+      #spotlight.visible {
+        display: block;
+      }
+      #spotlight .scrim {
+        fill: rgba(0, 0, 0, 0.6);
+        fill-rule: evenodd;
+      }
+      #spotlight .ring {
+        fill: none;
+        stroke-width: 3;
+      }
+      #spotlight .ring.pair,
+      #spotlight .ring.panel {
+        stroke: #fbbf24;
+      }
+      #spotlight .ring.free {
+        stroke: #4ade80;
+      }
+      #spotlight .ring.blocked {
+        stroke: #f87171;
+        stroke-dasharray: 6 5;
+      }
+      #spotlight .pill.free {
+        fill: #4ade80;
+      }
+      #spotlight .pill.blocked {
+        fill: #f87171;
+      }
+      #spotlight .pill-text {
+        font: 700 12px system-ui, sans-serif;
+        fill: #052e16;
+        text-anchor: middle;
+      }
+      #spotlight .leader {
+        stroke: #f0fdf4;
+        stroke-width: 2.5;
+        fill: none;
+      }
+      #spotlight .arrow {
+        fill: #f0fdf4;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #spotlight {
+          animation: none;
+        }
+      }
+      #app[data-motion='reduced'] #spotlight {
+        animation: none;
       }
       #tutorial .card {
         pointer-events: auto;
@@ -1738,6 +1831,12 @@
                highlights a real pair on the board behind it — but the
                background is inert while the card is up, and the card itself
                takes focus so the dialog's name and text are read first. -->
+          <!-- Tutorial spotlight (issue #150): a viewport-sized scrim with the
+               step's actor cut out, plus rings and the step-2 FREE / BLOCKED
+               tags. Filled by main.ts. Purely visual — hidden from assistive
+               technology (the step announcement names the actor) and never a
+               pointer target. -->
+          <svg id="spotlight" aria-hidden="true" focusable="false"></svg>
           <div
             id="tutorial"
             role="dialog"
