@@ -1076,11 +1076,21 @@
            screen-reader announcements still speak the count. -->
       <header id="app-header">
         <!-- A named player's chip reads "NAME · LEVEL" (issue #106); a guest's
-             stays plain "Level" — main.ts owns the text via #level-label. -->
-        <span class="stat">
+             stays plain "Level" — main.ts owns the text via #level-label. The
+             chip is a button (issue #137): level is the player's progression,
+             so tapping it opens the profile, where progression is shown.
+             main.ts keeps the aria-label in step with the visible text. -->
+        <button
+          id="btn-level"
+          type="button"
+          class="stat level"
+          data-action="Profile"
+          title="Profile"
+          aria-label="Level 1, opens your profile"
+        >
           <span class="stat-label" id="level-label">Level</span>
           <strong class="stat-value" id="level">1</strong>
-        </span>
+        </button>
         <span class="stat score">
           <span class="stat-label">Score</span>
           <strong class="stat-value" id="score">0</strong>

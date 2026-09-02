@@ -207,6 +207,7 @@ async function start(): Promise<void> {
   const overlayRestart = el<HTMLButtonElement>('overlay-restart');
   const overlayNew = el<HTMLButtonElement>('overlay-new');
   const levelEl = el<HTMLElement>('level');
+  const levelButton = el<HTMLButtonElement>('btn-level');
   const overlayShuffle = el<HTMLButtonElement>('overlay-shuffle');
   const overlayUndo = el<HTMLButtonElement>('overlay-undo');
   const a11yRoot = el<HTMLDivElement>('a11y-layer');
@@ -1052,8 +1053,11 @@ async function start(): Promise<void> {
     // decade milestone it is "Milestone" over the number (issue #67) — the
     // words that go with the palette, so colour never carries it alone.
     const what = daily !== null ? 'Daily' : bandForLevel(progress.level).spike ? 'Milestone' : 'Level';
-    el<HTMLElement>('level-label').textContent =
-      profile.value.choice === 'named' ? `${profile.value.name} · ${what}` : what;
+    const label = profile.value.choice === 'named' ? `${profile.value.name} · ${what}` : what;
+    el<HTMLElement>('level-label').textContent = label;
+    // The chip is a button into the profile (issue #137): its name is what
+    // the chip shows, plus where it goes.
+    levelButton.setAttribute('aria-label', `${label} ${levelEl.textContent}, opens your profile`);
   }
 
   /** Mirror the in-app Reduced motion toggle onto the DOM (issue #95): the
@@ -1234,8 +1238,14 @@ async function start(): Promise<void> {
     el<HTMLElement>('record-trophies').textContent = String(record.value.trophies);
   }
 
-  function openProfile(): void {
+  /** Where focus goes back to when the profile closes: the control that
+   *  opened it — the Settings gear (the Settings row's route) or the HUD's
+   *  Level chip (issue #137). */
+  let profileOpener: HTMLElement = settingsButton;
+
+  function openProfile(opener: HTMLElement = settingsButton): void {
     if (profileVisible) return;
+    profileOpener = opener;
     // Opened from inside Settings: that panel steps aside rather than stacking.
     closeSettings();
     syncProfileControls();
@@ -1254,7 +1264,7 @@ async function start(): Promise<void> {
     profileVisible = false;
     profilePanel.classList.remove('visible');
     setBackgroundInert(false);
-    settingsButton.focus();
+    profileOpener.focus();
   }
 
   // --- feedback form (issue #118) ----------------------------------------------
@@ -1666,6 +1676,8 @@ async function start(): Promise<void> {
     settingsButton.addEventListener('click', () => openSettings());
     // The HUD's Daily chip (issue #136) deals today's board in one tap.
     dailyButton.addEventListener('click', () => void startDaily());
+    // The Level chip opens the profile (issue #137); focus comes back to it.
+    levelButton.addEventListener('click', () => openProfile(levelButton));
     // Escape is the expected way out of a modal, and the only one for a
     // keyboard player who tabbed past the Done button. Listened for on the
     // document, not the panel: clicking the card's own text blurs focus to
