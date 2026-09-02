@@ -161,3 +161,159 @@ test('line breaks in the summary never reach the subject line', async () => {
   assert.equal(res.status, 202);
   assert.equal(sent.subject, '[Lantern Tiles feedback] line one Bcc: x');
 });
+
+// --- attachments (issue #130) --------------------------------------------------
+
+/** A base64 string that decodes to exactly `bytes` bytes (all 'A's, i.e. zero
+ *  bytes — the handler never decodes, it only measures). */
+function base64OfSize(bytes) {
+  const full = Math.floor(bytes / 3);
+  const rest = bytes % 3;
+  return 'A'.repeat(full * 4) + (rest === 1 ? 'AA==' : rest === 2 ? 'AAA=' : '');
+}
+
+const PNG = { name: 'shot.png', type: 'image/png', content: base64OfSize(300) };
+const MP4 = { name: 'clip.mp4', type: 'video/mp4', content: base64OfSize(500) };
+
+function reqWithAttachments(attachments, init) {
+  return req({ summary: 'Tiles overlap', body: 'See attached.', context: VALID_CONTEXT, attachments }, init);
+}
+
+async function sendAndCapture(request) {
+  let sent;
+  const res = await handleFeedback(request, VALID_ENV, {
+    rateLimitStore: new Map(),
+    fetch: async (_url, init) => {
+      sent = JSON.parse(init.body);
+      return new Response('{}', { status: 200 });
+    },
+  });
+  return { res, sent };
+}
+
+test('attachments are forwarded to Resend as filename + base64 content, and listed in the text', async () => {
+  const { res, sent } = await sendAndCapture(reqWithAttachments([PNG, MP4]));
+  assert.equal(res.status, 202);
+  assert.deepEqual(sent.attachments, [
+    { filename: 'shot.png', content: PNG.content },
+    { filename: 'clip.mp4', content: MP4.content },
+  ]);
+  assert.match(sent.text, /Attachments: 2 — shot\.png \(1 KB\), clip\.mp4 \(1 KB\)/);
+});
+
+test('no attachments field -> no attachments key sent and no Attachments line', async () => {
+  const { res, sent } = await sendAndCapture(req({ summary: 'hi', body: 'hello', context: VALID_CONTEXT }));
+  assert.equal(res.status, 202);
+  assert.equal('attachments' in sent, false);
+  assert.doesNotMatch(sent.text, /Attachments:/);
+});
+
+test('an empty attachments array is fine and sends nothing extra', async () => {
+  const { res, sent } = await sendAndCapture(reqWithAttachments([]));
+  assert.equal(res.status, 202);
+  assert.equal('attachments' in sent, false);
+});
+
+test('a fourth attachment is rejected as an invalid payload', async () => {
+  const res = await handleFeedback(reqWithAttachments([PNG, PNG, PNG, PNG]), VALID_ENV, { rateLimitStore: new Map() });
+  assert.equal(res.status, 400);
+});
+
+test('an attachment type outside the allow-list (HEIC, text, svg) is rejected', async () => {
+  for (const type of ['image/heic', 'text/plain', 'image/svg+xml', 'application/octet-stream', undefined]) {
+    const res = await handleFeedback(reqWithAttachments([{ ...PNG, type }]), VALID_ENV, { rateLimitStore: new Map() });
+    assert.equal(res.status, 400, `type ${type}`);
+  }
+});
+
+test('malformed attachment entries are rejected', async () => {
+  const bad = [
+    [null],
+    [{ ...PNG, name: '' }],
+    [{ ...PNG, name: 'x'.repeat(201) }],
+    [{ ...PNG, content: '' }],
+    [{ ...PNG, content: 'abc' }], // length not a multiple of 4
+    [{ ...PNG, content: 42 }],
+    'not-an-array',
+  ];
+  for (const attachments of bad) {
+    const res = await handleFeedback(reqWithAttachments(attachments), VALID_ENV, { rateLimitStore: new Map() });
+    assert.equal(res.status, 400, JSON.stringify(attachments).slice(0, 60));
+  }
+});
+
+test('an image over 10 MB is 413 attachment_too_large; one at exactly 10 MB is accepted', async () => {
+  const over = await handleFeedback(
+    reqWithAttachments([{ ...PNG, content: base64OfSize(10 * 1024 * 1024 + 1) }]),
+    VALID_ENV,
+    { rateLimitStore: new Map(), fetch: okFetch() },
+  );
+  assert.equal(over.status, 413);
+  assert.deepEqual(await over.json(), { error: 'attachment_too_large' });
+  const exact = await handleFeedback(
+    reqWithAttachments([{ ...PNG, content: base64OfSize(10 * 1024 * 1024) }]),
+    VALID_ENV,
+    { rateLimitStore: new Map(), fetch: okFetch() },
+  );
+  assert.equal(exact.status, 202);
+});
+
+test('a video over 25 MB is 413; one at 25 MB (over the image cap) is accepted because it is video', async () => {
+  const over = await handleFeedback(
+    reqWithAttachments([{ ...MP4, content: base64OfSize(25 * 1024 * 1024 + 3) }]),
+    VALID_ENV,
+    { rateLimitStore: new Map(), fetch: okFetch() },
+  );
+  assert.equal(over.status, 413);
+  const exact = await handleFeedback(
+    reqWithAttachments([{ ...MP4, content: base64OfSize(25 * 1024 * 1024) }]),
+    VALID_ENV,
+    { rateLimitStore: new Map(), fetch: okFetch() },
+  );
+  assert.equal(exact.status, 202);
+});
+
+test('three images that individually fit but total over 25 MB are 413', async () => {
+  const nine = { ...PNG, content: base64OfSize(9 * 1024 * 1024) };
+  const res = await handleFeedback(reqWithAttachments([nine, nine, nine]), VALID_ENV, {
+    rateLimitStore: new Map(),
+    fetch: okFetch(),
+  });
+  assert.equal(res.status, 413);
+});
+
+test('a body over 36 MB is 413 before parsing, via Content-Length', async () => {
+  const request = new Request('https://lantern-tiles.example.workers.dev/api/feedback', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'Content-Length': String(37 * 1024 * 1024) },
+    body: '{}',
+  });
+  const res = await handleFeedback(request, VALID_ENV, { rateLimitStore: new Map() });
+  assert.equal(res.status, 413);
+});
+
+test('a text-only body over 8 KB is still 413 even though the attachment allowance is larger', async () => {
+  const res = await handleFeedback(
+    req({ summary: 'x', body: 'y', context: VALID_CONTEXT, attachments: [], pad: 'p'.repeat(9000) }),
+    VALID_ENV,
+    { rateLimitStore: new Map(), fetch: okFetch() },
+  );
+  assert.equal(res.status, 413);
+});
+
+test('a body over 8 KB that carries an attachment is accepted', async () => {
+  const res = await handleFeedback(
+    reqWithAttachments([{ ...PNG, content: base64OfSize(12 * 1024) }]),
+    VALID_ENV,
+    { rateLimitStore: new Map(), fetch: okFetch() },
+  );
+  assert.equal(res.status, 202);
+});
+
+test('path separators and control characters are scrubbed from the filename', async () => {
+  const { res, sent } = await sendAndCapture(
+    reqWithAttachments([{ ...PNG, name: '../..\\evil name\r\n.png' }]),
+  );
+  assert.equal(res.status, 202);
+  assert.equal(sent.attachments[0].filename, '.._.._evil name__.png');
+});

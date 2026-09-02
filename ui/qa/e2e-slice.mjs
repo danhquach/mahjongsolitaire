@@ -1925,6 +1925,77 @@ for (const vp of VIEWPORTS) {
     const filledDisabled = await page.evaluate(() => document.getElementById('feedback-send').disabled);
     check(!filledDisabled, 'Send enables once both fields are filled', { filledDisabled });
 
+    // Attachments (issue #130). A JPEG with an EXIF segment spliced in stands
+    // for a phone photo: it must come out the other end without it. A fake
+    // 11 MB "PNG" and a text file must be refused with a message and change
+    // nothing else; a small fake MP4 rides through untouched (video is not
+    // decoded, only capped).
+    const jpegRaw = await page.screenshot({ type: 'jpeg', clip: { x: 0, y: 0, width: 48, height: 48 } });
+    const exifSegment = Buffer.concat([
+      Buffer.from([0xff, 0xe1, 0x00, 0x12]),
+      Buffer.from('Exif\0\0', 'latin1'),
+      Buffer.from([0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]),
+    ]);
+    const jpegWithExif = Buffer.concat([jpegRaw.subarray(0, 2), exifSegment, jpegRaw.subarray(2)]);
+    check(jpegWithExif.includes('Exif'), 'test fixture: the source JPEG carries an EXIF segment');
+    const fakeMp4 = Buffer.alloc(1024, 7);
+    await page.setInputFiles('#feedback-file', [
+      { name: 'IMG_0001.jpeg', mimeType: 'image/jpeg', buffer: jpegWithExif },
+      { name: 'huge.png', mimeType: 'image/png', buffer: Buffer.alloc(11 * 1024 * 1024) },
+      { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('hello') },
+      { name: 'clip.mp4', mimeType: 'video/mp4', buffer: fakeMp4 },
+    ]);
+    await page.waitForFunction(() => document.querySelectorAll('#feedback-attachments li').length === 2);
+    const attachState = () =>
+      page.evaluate(() => ({
+        names: [...document.querySelectorAll('#feedback-attachments .name')].map((n) => n.textContent),
+        previews: [...document.querySelectorAll('#feedback-attachments li > :first-child')].map((n) => n.tagName),
+        attachStatus: document.getElementById('feedback-attach-status').textContent,
+        addDisabled: document.getElementById('feedback-attach').disabled,
+        summary: document.getElementById('feedback-summary').value,
+        body: document.getElementById('feedback-body').value,
+        sendDisabled: document.getElementById('feedback-send').disabled,
+      }));
+    const picked = await attachState();
+    check(
+      picked.names.join(',') === 'IMG_0001.jpg,clip.mp4',
+      'the image (re-encoded, renamed .jpg) and the video are attached; the refused files are not',
+      picked,
+    );
+    check(picked.previews.join(',') === 'IMG,VIDEO', 'thumbnails: <img> for the image, <video> for the clip', picked);
+    check(
+      /Only images/.test(picked.attachStatus),
+      'the last refusal (unsupported type) is shown as a short message',
+      picked,
+    );
+    check(
+      picked.summary === 'Tiles overlap' && picked.body === 'The bamboo tile clips the dot tile.' && !picked.sendDisabled,
+      'refused files leave the rest of the form untouched',
+      picked,
+    );
+    // Over-limit on its own, so its message is the one left showing.
+    await page.setInputFiles('#feedback-file', { name: 'huge2.png', mimeType: 'image/png', buffer: Buffer.alloc(11 * 1024 * 1024) });
+    await page.waitForFunction(() => /Too big/.test(document.getElementById('feedback-attach-status').textContent));
+    const overLimit = await attachState();
+    check(overLimit.names.length === 2, 'an over-limit file is refused and adds no thumbnail', overLimit);
+    // A third fills the report; a fourth is refused as too many, and Add disables at three.
+    const png = await page.screenshot({ type: 'png', clip: { x: 0, y: 0, width: 24, height: 24 } });
+    await page.setInputFiles('#feedback-file', [
+      { name: 'third.png', mimeType: 'image/png', buffer: png },
+      { name: 'fourth.png', mimeType: 'image/png', buffer: png },
+    ]);
+    await page.waitForFunction(() => document.querySelectorAll('#feedback-attachments li').length === 3);
+    const full = await attachState();
+    check(full.names.length === 3 && /Up to 3/.test(full.attachStatus), 'a fourth file is refused: up to 3 per report', full);
+    check(full.addDisabled, 'Add disables once three are attached', full);
+    await page.click('#feedback-attachments li:nth-child(3) .remove');
+    const afterRemove = await attachState();
+    check(
+      afterRemove.names.join(',') === 'IMG_0001.jpg,clip.mp4' && !afterRemove.addDisabled,
+      'Remove (×) drops that one thumbnail and re-enables Add',
+      afterRemove,
+    );
+
     // Failure path: the Worker endpoint mocked as unavailable (503).
     await page.route('**/api/feedback', (route) => route.fulfill({ status: 503, body: '{}' }));
     await page.click('#feedback-send');
@@ -1937,7 +2008,21 @@ for (const vp of VIEWPORTS) {
       body: document.getElementById('feedback-body').value,
       mailtoHidden: document.getElementById('feedback-mailto').hidden,
       mailtoHref: document.getElementById('feedback-mailto').getAttribute('href'),
+      attachmentCount: document.querySelectorAll('#feedback-attachments li').length,
+      noteHidden: document.getElementById('feedback-mailto-note').hidden,
+      noteText: document.getElementById('feedback-mailto-note').textContent,
     }));
+    check(failed.attachmentCount === 2, 'a failed send keeps the attachments too', failed);
+    check(
+      !failed.noteHidden && /Attachments couldn't be included/.test(failed.noteText),
+      'with attachments pending, the mailto fallback says they could not be included',
+      failed,
+    );
+    check(
+      failed.mailtoHref !== null && !failed.mailtoHref.includes('IMG_0001'),
+      'the mailto body carries no attachment data',
+      failed,
+    );
     check(/Couldn't send/.test(failed.status), 'failure shows the try-again message', failed);
     check(
       failed.summary === 'Tiles overlap' && failed.body === 'The bamboo tile clips the dot tile.',
@@ -1952,17 +2037,52 @@ for (const vp of VIEWPORTS) {
     );
     await page.unroute('**/api/feedback');
 
-    // Success path: the Worker endpoint mocked as accepting the submission.
-    await page.route('**/api/feedback', (route) => route.fulfill({ status: 202, body: '{}' }));
+    // Success path: the Worker endpoint mocked as accepting the submission;
+    // the request body is captured to check what actually left the browser.
+    let posted = null;
+    await page.route('**/api/feedback', (route) => {
+      posted = JSON.parse(route.request().postData());
+      return route.fulfill({ status: 202, body: '{}' });
+    });
     await page.click('#feedback-send');
     await page.waitForFunction(() =>
       document.getElementById('feedback-status').textContent.includes('Thanks'),
     );
-    const sent = await page.evaluate(() => document.getElementById('feedback-status').textContent);
-    check(/Thanks, your feedback was sent/.test(sent), 'success shows the thanks message', sent);
+    const sent = await page.evaluate(() => ({
+      status: document.getElementById('feedback-status').textContent,
+      attachmentCount: document.querySelectorAll('#feedback-attachments li').length,
+      noteHidden: document.getElementById('feedback-mailto-note').hidden,
+    }));
+    check(/Thanks, your feedback was sent/.test(sent.status), 'success shows the thanks message', sent);
+    check(sent.attachmentCount === 0 && sent.noteHidden, 'a successful send clears the attachments', sent);
+    const postedShape = posted && {
+      count: posted.attachments?.length,
+      names: posted.attachments?.map((a) => a.name),
+      types: posted.attachments?.map((a) => a.type),
+    };
+    check(
+      postedShape && postedShape.count === 2 && postedShape.names.join(',') === 'IMG_0001.jpg,clip.mp4',
+      'the request carries both attachments by name',
+      postedShape,
+    );
+    check(
+      postedShape && postedShape.types.join(',') === 'image/jpeg,video/mp4',
+      'attachment types travel with the files',
+      postedShape,
+    );
+    if (posted) {
+      const image = Buffer.from(posted.attachments[0].content, 'base64');
+      const video = Buffer.from(posted.attachments[1].content, 'base64');
+      check(
+        image[0] === 0xff && image[1] === 0xd8 && !image.includes('Exif'),
+        'the image arrives as a JPEG with its EXIF segment stripped',
+        { bytes: image.length, hasExif: image.includes('Exif') },
+      );
+      check(video.equals(fakeMp4), 'the video arrives byte-for-byte as picked', { bytes: video.length });
+    }
     await page.unroute('**/api/feedback');
 
-    console.log(`${failures === before ? 'ok' : 'FAIL'} — feedback form: send disabled/failure/success`);
+    console.log(`${failures === before ? 'ok' : 'FAIL'} — feedback form: send disabled/attachments/failure/success`);
   }
 
   await ctx.close();
