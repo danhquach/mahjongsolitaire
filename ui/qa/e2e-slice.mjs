@@ -424,6 +424,13 @@ for (const vp of VIEWPORTS) {
     // Issue #105: a never-asked player gets the welcome gate over the board,
     // which swallows every click below. Answer it as a guest up front.
     localStorage.setItem('mahjong.profile.v1', JSON.stringify({ choice: 'guest' }));
+    // Issue #59: a fresh install boots into the tutorial card, which inerts the
+    // board the sections below drive. Take it as already seen; section 8 opens
+    // its own fresh context to check the first-run path itself. Seeded only
+    // when missing — section 7 changes settings and reloads on purpose.
+    if (localStorage.getItem('mahjong.settings.v1') === null) {
+      localStorage.setItem('mahjong.settings.v1', JSON.stringify({ showTutorial: false }));
+    }
   });
   // Issue #51: the booster checks below assert exact balances from the 5/5/5
   // grant, so take today's daily-login grant as already paid, and mark level
@@ -2237,6 +2244,115 @@ for (const vp of VIEWPORTS) {
     await page.unroute('**/api/feedback');
 
     console.log(`${failures === before ? 'ok' : 'FAIL'} — feedback form: send disabled/attachments/failure/success`);
+  }
+
+  // 8. First-run tutorial (issue #59). A genuinely fresh install — no settings
+  //    record at all — boots into step 1; Skip and Done both turn "Show
+  //    tutorial" OFF and that survives a reload; Settings → ON replays it on
+  //    the next deal, not mid-level; and the whole thing costs the player
+  //    nothing: same charges, same board, save still there.
+  {
+    const before = failures;
+    const fresh = await browser.newContext({
+      viewport: { width: vp.width, height: vp.height },
+      deviceScaleFactor: vp.dpr,
+      hasTouch: true,
+    });
+    const p2 = await fresh.newPage();
+    p2.on('pageerror', (e) => {
+      console.error(`  page error: ${e.message}`);
+      failures++;
+    });
+    await fresh.addInitScript(() => {
+      localStorage.setItem('mahjong.progress.v1', JSON.stringify({ level: 47 }));
+      localStorage.setItem('mahjong.profile.v1', JSON.stringify({ choice: 'guest' }));
+    });
+    await p2.goto(url);
+    await p2.waitForFunction(() => window.__slice !== undefined);
+    const boot = await p2.evaluate(() => ({
+      ...window.__slice.tutorial(),
+      setting: window.__slice.settings().showTutorial,
+      charges: window.__slice.boosterCharges(),
+      saved: window.__slice.savedState() !== null,
+      hash: window.__slice.stateHash(),
+      boardInert: document.getElementById('a11y-layer').hasAttribute('inert'),
+    }));
+    check(boot.visible && boot.step === 1 && boot.setting && boot.boardInert, 'a fresh install boots into step 1 of the tutorial', boot);
+
+    // Skip from step 2.
+    await p2.click('#tutorial-next');
+    await p2.click('#tutorial-skip');
+    const skipped = await p2.evaluate(() => ({
+      ...window.__slice.tutorial(),
+      setting: window.__slice.settings().showTutorial,
+      charges: window.__slice.boosterCharges(),
+      saved: window.__slice.savedState() !== null,
+      hash: window.__slice.stateHash(),
+      status: window.__slice.game.status(),
+      boardInert: document.getElementById('a11y-layer').hasAttribute('inert'),
+    }));
+    check(!skipped.visible && !skipped.boardInert && skipped.setting === false, 'Skip closes the card and turns Show tutorial OFF', skipped);
+    check(
+      JSON.stringify(skipped.charges) === JSON.stringify(boot.charges) &&
+        skipped.hash === boot.hash &&
+        skipped.saved &&
+        skipped.status === 'playing',
+      'the tutorial cost nothing: charges, board and save untouched, level playable',
+      { boot, skipped },
+    );
+
+    // A reload is the closest a browser gets to a relaunch: no auto-start.
+    await p2.reload();
+    await p2.waitForFunction(() => window.__slice !== undefined);
+    const again = await p2.evaluate(() => ({
+      ...window.__slice.tutorial(),
+      setting: window.__slice.settings().showTutorial,
+    }));
+    check(!again.visible && again.setting === false, 'after a skip the tutorial does not auto-start on a relaunch', again);
+
+    // Settings: the toggle reads OFF; ON arms the next deal, not the current one.
+    await p2.click('#btn-settings');
+    const reads = await p2.evaluate(() => document.getElementById('set-show-tutorial').checked);
+    check(reads === false, 'the Show tutorial toggle reads OFF after a skip', { checked: reads });
+    await p2.click('#set-show-tutorial');
+    await p2.click('#settings-close');
+    const midLevel = await p2.evaluate(() => ({
+      ...window.__slice.tutorial(),
+      setting: window.__slice.settings().showTutorial,
+    }));
+    check(!midLevel.visible && midLevel.setting === true, 'turning the toggle on arms the tutorial without opening it mid-level', midLevel);
+    await p2.click('#btn-new');
+    await p2.waitForFunction(() => !window.__slice.dealing);
+    const replay = await p2.evaluate(() => window.__slice.tutorial());
+    check(replay.visible && replay.step === 1, 'Settings → Show tutorial ON replays it from step 1 on the next deal', replay);
+
+    // Next through to Done.
+    for (let i = 0; i < 5; i++) await p2.click('#tutorial-next');
+    const last = await p2.evaluate(() => ({
+      ...window.__slice.tutorial(),
+      nextLabel: document.getElementById('tutorial-next').textContent,
+    }));
+    check(last.step === 6 && last.count === 6 && last.nextLabel === 'Done', 'Next advances one step at a time to Done on step 6', last);
+    await p2.click('#tutorial-next');
+    const done = await p2.evaluate(() => ({
+      ...window.__slice.tutorial(),
+      setting: window.__slice.settings().showTutorial,
+      status: window.__slice.game.status(),
+      hintPair: window.__slice.hintPair.length,
+    }));
+    check(!done.visible && done.setting === false && done.status === 'playing' && done.hintPair === 0, 'Done returns to a playable board and turns the toggle OFF', done);
+
+    // OFF survives a relaunch too.
+    await p2.reload();
+    await p2.waitForFunction(() => window.__slice !== undefined);
+    const after = await p2.evaluate(() => ({
+      ...window.__slice.tutorial(),
+      setting: window.__slice.settings().showTutorial,
+    }));
+    check(!after.visible && after.setting === false, 'the completed state survives a relaunch', after);
+
+    await fresh.close();
+    console.log(`${failures === before ? 'ok' : 'FAIL'} — tutorial: fresh install / skip / replay / done`);
   }
 
   await ctx.close();

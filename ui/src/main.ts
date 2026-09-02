@@ -160,8 +160,9 @@ import {
 } from './leaderboard.js';
 import type { DailyBoard } from './leaderboard.js';
 import { DEFAULT_SETTINGS, SettingsStore, TILE_SIZE_FACTOR, TILE_SIZE_LABEL, TILE_SIZES } from './settings.js';
-import type { TileSize } from './settings.js';
+import type { BooleanSetting, TileSize } from './settings.js';
 import { localKeyValueStorage } from './storage.js';
+import { Tutorial } from './tutorial.js';
 import type { Hit } from './hit-test.js';
 import type { HintPair, TapOutcome } from './game.js';
 
@@ -245,6 +246,14 @@ async function start(): Promise<void> {
   const changelogBody = el<HTMLDivElement>('changelog-body');
   const changelogClose = el<HTMLButtonElement>('changelog-close');
   const welcomePanel = el<HTMLDivElement>('welcome');
+  // First-run tutorial card (issue #59).
+  const tutorialPanel = el<HTMLDivElement>('tutorial');
+  const tutorialCard = el<HTMLDivElement>('tutorial-card');
+  const tutorialStepEl = el<HTMLElement>('tutorial-step');
+  const tutorialTitle = el<HTMLElement>('tutorial-title');
+  const tutorialText = el<HTMLElement>('tutorial-text');
+  const tutorialNext = el<HTMLButtonElement>('tutorial-next');
+  const tutorialSkip = el<HTMLButtonElement>('tutorial-skip');
   const profilePanel = el<HTMLDivElement>('profile');
   const profileButton = el<HTMLButtonElement>('btn-profile');
   const profileClose = el<HTMLButtonElement>('profile-close');
@@ -490,6 +499,11 @@ async function start(): Promise<void> {
    *  inside that second cannot have a stale timer close the new dialog. */
   let feedbackCloseTimer: ReturnType<typeof setTimeout> | null = null;
   let welcomeVisible = false;
+  /** The tutorial card (issue #59) is up over the board. */
+  let tutorialVisible = false;
+  /** A tutorial that wanted to start while another panel (the welcome gate,
+   *  the profile it may open) was up; it starts when that panel closes. */
+  let tutorialPending = false;
   /** True while a submit is in flight — Send stays disabled regardless of
    *  field content so a slow request cannot be fired twice (issue #118). */
   let feedbackSending = false;
@@ -1041,7 +1055,7 @@ async function start(): Promise<void> {
    */
   const settingsToggles: ReadonlyArray<{
     readonly input: HTMLInputElement;
-    readonly key: 'audio' | 'haptics' | 'ads' | 'highlightFree' | 'reducedMotion';
+    readonly key: BooleanSetting;
     readonly name: string;
   }> = [
     { input: el<HTMLInputElement>('set-audio'), key: 'audio', name: 'Sound effects' },
@@ -1056,6 +1070,11 @@ async function start(): Promise<void> {
       input: el<HTMLInputElement>('set-reduced-motion'),
       key: 'reducedMotion',
       name: 'Reduced motion',
+    },
+    {
+      input: el<HTMLInputElement>('set-show-tutorial'),
+      key: 'showTutorial',
+      name: 'Show tutorial',
     },
   ];
   // Tile size is a slider over TILE_SIZES (issue #139): value = stop index.
@@ -1203,7 +1222,8 @@ async function start(): Promise<void> {
       changelogVisible ||
       profileVisible ||
       feedbackVisible ||
-      welcomeVisible
+      welcomeVisible ||
+      tutorialVisible
     )
       return;
     syncSettingsControls();
@@ -1220,6 +1240,95 @@ async function start(): Promise<void> {
     settingsPanel.classList.remove('visible');
     setBackgroundInert(false);
     settingsButton.focus();
+  }
+
+  // --- first-run tutorial (issue #59) -------------------------------------------
+
+  /** Both ends write the toggle OFF: a skipped tutorial is not re-offered on
+   *  the next level any more than a completed one is. */
+  const tutorial = new Tutorial((how) => {
+    settings.set('showTutorial', false);
+    syncSettingsControls();
+    closeTutorialCard();
+    announcer.say(how === 'done' ? 'Tutorial finished. The board is yours.' : 'Tutorial skipped. The board is yours.');
+  });
+
+  /**
+   * Open the card on step 1 over the dealt board. While another panel is up —
+   * the welcome gate on a fresh install, or the profile screen it opens — the
+   * start is deferred, and `startPendingTutorial` runs it as that panel closes.
+   */
+  function startTutorial(): void {
+    if (
+      welcomeVisible ||
+      profileVisible ||
+      settingsVisible ||
+      changelogVisible ||
+      feedbackVisible ||
+      leaderboardVisible ||
+      overlayVisible
+    ) {
+      tutorialPending = true;
+      return;
+    }
+    tutorialPending = false;
+    tutorial.start();
+    tutorialVisible = true;
+    tutorialPanel.classList.add('visible');
+    setBackgroundInert(true);
+    renderTutorialStep();
+    // The card itself takes focus (not a button) so the dialog's name and
+    // description are read first; Tab reaches Skip and Next from there.
+    tutorialCard.focus();
+  }
+
+  function startPendingTutorial(): void {
+    if (tutorialPending) startTutorial();
+  }
+
+  /** Paint the current step and speak it. Step 3 highlights one genuinely
+   *  matchable pair on this board through the same highlight Hint uses — no
+   *  charge is spent, and the highlight leaves with the step. */
+  function renderTutorialStep(): void {
+    const step = tutorial.step;
+    if (step === null) return;
+    const n = tutorial.stepIndex + 1;
+    tutorialStepEl.textContent = `Step ${n} of ${tutorial.stepCount}`;
+    tutorialTitle.textContent = step.title;
+    tutorialText.textContent = step.body;
+    tutorialNext.textContent = tutorial.isLast ? 'Done' : 'Next';
+    let where = '';
+    if (step.showPair) {
+      // peekHint, not hint(): the demonstration must not advance Hint's cycle,
+      // or the player's own first press would get the second-ranked pair.
+      const pair = game.peekHint();
+      hintPair = pair ?? [];
+      if (pair !== null) where = ` Highlighted: ${describePair(pair)}.`;
+    } else {
+      hintPair = [];
+    }
+    redraw();
+    announcer.say(`Tutorial, step ${n} of ${tutorial.stepCount}. ${step.title}. ${step.body}${where}`);
+  }
+
+  /** Take the card down and hand the board back: highlight cleared, background
+   *  live again, focus on the board's current tile. */
+  function closeTutorialCard(): void {
+    if (!tutorialVisible) return;
+    tutorialVisible = false;
+    tutorialPanel.classList.remove('visible');
+    hintPair = [];
+    redraw();
+    setBackgroundInert(false);
+    a11y.focusActive();
+  }
+
+  function wireTutorial(): void {
+    tutorialNext.addEventListener('click', () => {
+      tutorial.next();
+      if (tutorial.active) renderTutorialStep();
+    });
+    tutorialSkip.addEventListener('click', () => tutorial.skip());
   }
 
   // --- version + changelog (issue #81) ----------------------------------------
@@ -1347,6 +1456,9 @@ async function start(): Promise<void> {
     profilePanel.classList.remove('visible');
     setBackgroundInert(false);
     profileOpener.focus();
+    // "Create profile" on the welcome gate opens this screen; a first install's
+    // tutorial (issue #59) waits behind it too.
+    startPendingTutorial();
   }
 
   // --- cloud sync (issue #138) -------------------------------------------------
@@ -2129,6 +2241,8 @@ async function start(): Promise<void> {
       closeWelcome();
       settingsButton.focus();
       announcer.say('Playing as guest.');
+      // A first install's tutorial (issue #59) waited behind the gate.
+      startPendingTutorial();
     });
   }
 
@@ -2194,7 +2308,10 @@ async function start(): Promise<void> {
       // Topmost first, and only one: the leaderboard (issue #70) opens *over*
       // the profile and over the win screen, so a flat list of ifs would
       // close the panel underneath it in the same keystroke.
-      if (leaderboardVisible) closeLeaderboard();
+      // The tutorial card (issue #59) is only ever up over the bare board —
+      // every other panel is guarded against it — so Escape there is Skip.
+      if (tutorialVisible) tutorial.skip();
+      else if (leaderboardVisible) closeLeaderboard();
       else if (feedbackVisible) closeFeedback();
       else if (changelogVisible) closeChangelog();
       else if (profileVisible) closeProfile();
@@ -2624,6 +2741,7 @@ async function start(): Promise<void> {
           ? `Back to the ladder. Level ${progress.level}${milestoneNote()}. ${game.tilesLeft} tiles.`
           : `New game dealt. Level ${progress.level}${milestoneNote()}. ${game.tilesLeft} tiles.`,
     );
+    startTutorialIfArmed();
   }
 
   /** ", a milestone level" on a decade spike (issue #67) — the spoken half
@@ -2652,6 +2770,7 @@ async function start(): Promise<void> {
     announcer.say(
       `Daily Challenge for ${formatDateKey(key, 'long')}. ${game.tilesLeft} tiles. Everyone gets this board today.`,
     );
+    startTutorialIfArmed();
   }
 
   /** Load `wantedLayoutId` if it is not on the table. False when the fetch
@@ -2699,6 +2818,14 @@ async function start(): Promise<void> {
     if (fromDialog) a11y.focusActive();
   }
 
+  /** The toggle arms the tutorial for the next level start (issue #59) — ON
+   *  for a fresh install, or turned back on in Settings for a refresher. Called
+   *  by the deal paths *after* their own announcement, so the step-1 line is
+   *  the last thing written to the live region, not the one overwritten. */
+  function startTutorialIfArmed(): void {
+    if (settings.value.showTutorial) startTutorial();
+  }
+
   app.canvas.addEventListener('pointerdown', (ev) => {
     if (game.status() !== 'playing') return;
     const p = renderer.toBoardPoint(ev.offsetX, ev.offsetY);
@@ -2736,6 +2863,7 @@ async function start(): Promise<void> {
   wireProfile();
   wireFeedback();
   wireWelcome();
+  wireTutorial();
   applyMotionPreference();
   el<HTMLElement>('version').textContent = versionLabel(
     __APP_VERSION__,
@@ -2795,6 +2923,10 @@ async function start(): Promise<void> {
   // Never asked who's playing (issue #105): ask now, over the dealt board.
   // The stored answer — named or guest — means this shows at most once.
   if (profile.value.choice === null) openWelcome();
+
+  // First-run tutorial (issue #59): on a fresh deal only — resuming a saved
+  // game never starts it. Behind the welcome gate it waits until that closes.
+  if (resumed === null && settings.value.showTutorial) startTutorial();
 
   // Daily first-launch grant (issue #51): +1 of each, once per local calendar
   // day. The badges already show it (syncBoosterButtons ran in the redraw
@@ -2903,6 +3035,10 @@ async function start(): Promise<void> {
     /** The effective reduced-motion decision, OS preference included. */
     reducedMotion(): boolean {
       return settings.value.reducedMotion || prefersReducedMotion();
+    },
+    /** Tutorial card state (issue #59 QA): shown, and which step (1-based). */
+    tutorial(): { visible: boolean; step: number; count: number } {
+      return { visible: tutorialVisible, step: tutorial.stepIndex + 1, count: tutorial.stepCount };
     },
   };
 }
