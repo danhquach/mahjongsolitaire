@@ -664,6 +664,25 @@
       }
       /* Star rating on the win dialog (issue #19): the same gold as the score
          chip, big enough to read at arm's length. */
+      /* Booster grants on the win dialog (issue #51): the payout line reads
+         like the score line; the three pick buttons are a row of smaller
+         outlined options, distinct from the filled primary actions below. */
+      #overlay-grant {
+        margin: 8px 0 4px;
+        color: #3f6212;
+      }
+      #grant-choice {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-bottom: 8px;
+      }
+      #overlay .card #grant-choice button {
+        font-size: 16px;
+        background: #f0fdf4;
+        color: #14532d;
+      }
       #overlay-stars {
         margin: 0 0 8px;
         font-size: 36px;
@@ -921,6 +940,15 @@
                    dialog. -->
               <p id="overlay-stars" role="img" hidden></p>
               <p id="overlay-text"></p>
+              <!-- Booster grants (issue #51): what a first clear or milestone
+                   paid, and — for the first-clear grant — the player's pick of
+                   type. Hidden on every other dialog and on a replay. -->
+              <p id="overlay-grant" hidden></p>
+              <div id="grant-choice" role="group" aria-label="Pick a booster to earn a charge" hidden>
+                <button id="grant-hint" type="button">+1 Hint</button>
+                <button id="grant-undo" type="button">+1 Undo</button>
+                <button id="grant-shuffle" type="button">+1 Shuffle</button>
+              </div>
               <!-- Deadlock way out (spec §4: never hard-fail the player); shown
                    only for the stuck dialog, hidden on a win. -->
               <button id="overlay-shuffle" type="button" data-action="Shuffle" hidden>Shuffle</button>

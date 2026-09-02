@@ -219,6 +219,19 @@ export function parsePlayerRecord(record: unknown): PlayerRecord {
   };
 }
 
+/** Has this ladder level ever been cleared? Every ladder win writes a star
+ *  rating, so the stars map is the clear record (issue #51 keys first-clear
+ *  grants off it). */
+export function hasCleared(record: PlayerRecord, level: number): boolean {
+  return String(level) in record.stars;
+}
+
+/** Distinct ladder levels cleared — what the milestone grant counts
+ *  (issue #51), never completions. */
+export function clearedLevelCount(record: PlayerRecord): number {
+  return Object.keys(record.stars).length;
+}
+
 /** Stars earned across the ladder — the profile's headline star count. */
 export function totalStars(record: PlayerRecord): number {
   return Object.values(record.stars).reduce((n, s) => n + s, 0);

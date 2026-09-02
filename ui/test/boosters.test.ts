@@ -69,6 +69,7 @@ test('an empty store starts a fresh grant and only writes once spent', () => {
     hint: STARTING_GRANT,
     undo: STARTING_GRANT,
     shuffle: STARTING_GRANT - 1,
+    lastLoginGrant: null, // issue #51: the daily-login date rides in the same record
   });
 });
 

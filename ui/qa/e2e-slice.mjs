@@ -418,6 +418,23 @@ for (const vp of VIEWPORTS) {
     // which swallows every click below. Answer it as a guest up front.
     localStorage.setItem('mahjong.profile.v1', JSON.stringify({ choice: 'guest' }));
   });
+  // Issue #51: the booster checks below assert exact balances from the 5/5/5
+  // grant, so take today's daily-login grant as already paid, and mark level
+  // 47 as cleared before so the win pays no first-clear grant (which the win
+  // section asserts directly — a replay must not mint charges).
+  // Init scripts re-run on every navigation, reloads included, so seed only a
+  // missing record — the persistence checks below reload on purpose.
+  await ctx.addInitScript((today) => {
+    if (localStorage.getItem('mahjong.boosters.v1') === null) {
+      localStorage.setItem(
+        'mahjong.boosters.v1',
+        JSON.stringify({ hint: 5, undo: 5, shuffle: 5, lastLoginGrant: today }),
+      );
+    }
+    if (localStorage.getItem('mahjong.record.v1') === null) {
+      localStorage.setItem('mahjong.record.v1', JSON.stringify({ stars: { 47: 1 } }));
+    }
+  }, dailyDateKey());
   await page.goto(url);
   await page.waitForFunction(() => window.__slice !== undefined);
 
@@ -1250,11 +1267,23 @@ for (const vp of VIEWPORTS) {
     score: window.__slice.game.score,
     overlay: document.getElementById('overlay-title').textContent,
     overlayVisible: document.getElementById('overlay').classList.contains('visible'),
+    grant: window.__slice.grantState(),
+    charges: window.__slice.boosterCharges(),
   }));
+  // Issue #51: level 47 is seeded as already cleared, so this win is a
+  // replay and must pay no first-clear grant — no pick offered, no payout
+  // line, balances untouched.
+  const noGrant =
+    !result.grant.pending &&
+    result.grant.text === null &&
+    result.charges.hint === 5 &&
+    result.charges.undo === 5 &&
+    result.charges.shuffle === 5;
   const ok =
     result.tilesLeft === 0 &&
     result.status === 'won' &&
     result.overlayVisible &&
+    noGrant &&
     /^Level \d+ complete!$/.test(result.overlay ?? '');
   if (!ok) {
     console.error(`  END-TO-END FAIL:`, result);
@@ -1581,8 +1610,15 @@ for (const vp of VIEWPORTS) {
   //    unshufflable.
   {
     const before = failures;
-    await page.evaluate(() =>
-      localStorage.setItem('mahjong.boosters.v1', JSON.stringify({ hint: 0, undo: 5, shuffle: 0 })),
+    // The login date rides along (issue #51), or the reload would pay the
+    // daily bonus and hand Shuffle a charge back.
+    await page.evaluate(
+      (today) =>
+        localStorage.setItem(
+          'mahjong.boosters.v1',
+          JSON.stringify({ hint: 0, undo: 5, shuffle: 0, lastLoginGrant: today }),
+        ),
+      dailyDateKey(),
     );
     await page.reload();
     await page.waitForFunction(() => window.__slice !== undefined);
