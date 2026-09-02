@@ -420,8 +420,8 @@ for (const vp of VIEWPORTS) {
   });
   // Issue #51: the booster checks below assert exact balances from the 5/5/5
   // grant, so take today's daily-login grant as already paid, and mark level
-  // 47 as cleared before so the win pays no first-clear grant (which the win
-  // section asserts directly — a replay must not mint charges).
+  // 47 as cleared before so the win is a replay and pays no grant (which the
+  // win section asserts directly — a replay must not mint charges).
   // Init scripts re-run on every navigation, reloads included, so seed only a
   // missing record — the persistence checks below reload on purpose.
   await ctx.addInitScript((today) => {
@@ -1267,15 +1267,13 @@ for (const vp of VIEWPORTS) {
     score: window.__slice.game.score,
     overlay: document.getElementById('overlay-title').textContent,
     overlayVisible: document.getElementById('overlay').classList.contains('visible'),
-    grant: window.__slice.grantState(),
+    grant: window.__slice.grantText(),
     charges: window.__slice.boosterCharges(),
   }));
-  // Issue #51: level 47 is seeded as already cleared, so this win is a
-  // replay and must pay no first-clear grant — no pick offered, no payout
-  // line, balances untouched.
+  // Issue #51/#117: level 47 is seeded as already cleared, so this win is a
+  // replay and must pay no grant — no payout line, balances untouched.
   const noGrant =
-    !result.grant.pending &&
-    result.grant.text === null &&
+    result.grant === null &&
     result.charges.hint === 5 &&
     result.charges.undo === 5 &&
     result.charges.shuffle === 5;

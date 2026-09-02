@@ -1,21 +1,22 @@
-// Booster replenishment (issue #51, spec §5): three ads-independent grant
-// channels — first clear, milestone, daily login — under a 99 cap, persisted
-// with the balances. The acceptance criteria are tested one by one below.
+// Booster replenishment (issue #51, spec §5; rules revised in issue #117):
+// ads-independent grant channels — every third distinct clear (random type),
+// milestone level (one of each), daily login — under a 99 cap, persisted with the balances. The acceptance criteria are tested one by
+// one below.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { dailyDateKey } from '@mahjongsolitaire/core';
+import { bandForLevel, dailyDateKey } from '@mahjongsolitaire/core';
 import {
   BOOSTER_CAP,
   BOOSTER_KINDS,
   BoosterCharges,
   CHARGES_STORAGE_KEY,
   DAILY_LOGIN_GRANT,
-  FIRST_CLEAR_GRANT,
-  MILESTONE_EVERY,
-  MILESTONE_GRANT,
+  MILESTONE_LEVEL_GRANT,
   STARTING_GRANT,
-  milestoneDue,
+  THIRD_CLEAR_EVERY,
+  THIRD_CLEAR_GRANT,
+  thirdClearDue,
 } from '../src/boosters.js';
 import type { BoosterKind, ChargeStorage } from '../src/boosters.js';
 import { RecordStore, clearedLevelCount, hasCleared } from '../src/profile.js';
@@ -36,11 +37,11 @@ function balances(c: BoosterCharges): Record<BoosterKind, number> {
   return { hint: c.remaining('hint'), undo: c.remaining('undo'), shuffle: c.remaining('shuffle') };
 }
 
-test('PM numbers: cap 99, first clear +1, milestone +3 every 3, daily +1 each', () => {
+test('PM numbers (#117): cap 99, +1 random every 3 new levels, milestone level +1 each, daily +1 each', () => {
   assert.equal(BOOSTER_CAP, 99);
-  assert.equal(FIRST_CLEAR_GRANT, 1);
-  assert.equal(MILESTONE_GRANT, 3);
-  assert.equal(MILESTONE_EVERY, 3);
+  assert.equal(THIRD_CLEAR_GRANT, 1);
+  assert.equal(THIRD_CLEAR_EVERY, 3);
+  assert.equal(MILESTONE_LEVEL_GRANT, 1);
   assert.equal(DAILY_LOGIN_GRANT, 1);
 });
 
@@ -61,34 +62,74 @@ test('grant adds and reports what landed; the cap clamps rather than rejects', (
 test('no combination of channels exceeds the cap; a stored count above it is clamped on read', () => {
   const charges = new BoosterCharges(fakeStorage(JSON.stringify({ hint: 98, undo: 150, shuffle: 99 })));
   assert.deepEqual(balances(charges), { hint: 98, undo: 99, shuffle: 99 });
-  charges.grantSplit(MILESTONE_GRANT, () => 0); // all three onto hint
+  charges.grantSplit(THIRD_CLEAR_GRANT, () => 0); // onto hint
+  charges.grantEach(MILESTONE_LEVEL_GRANT);
   charges.grantDailyLogin('2026-09-01');
   charges.grant('shuffle', 5);
   assert.deepEqual(balances(charges), { hint: 99, undo: 99, shuffle: 99 });
 });
 
-// --- milestone split -------------------------------------------------------------
+// --- random grants ---------------------------------------------------------------
 
-test('the milestone split is driven by the injected source and totals exactly 3', () => {
-  const rolls = [0.1, 0.5, 0.9]; // → hint, undo, shuffle
-  const charges = new BoosterCharges();
-  const got = charges.grantSplit(MILESTONE_GRANT, () => rolls.shift()!);
-  assert.deepEqual(got, { hint: 1, undo: 1, shuffle: 1 });
-  assert.equal(got.hint + got.undo + got.shuffle, 3);
-  const skewed = new BoosterCharges();
-  assert.deepEqual(skewed.grantSplit(MILESTONE_GRANT, () => 0.999), { hint: 0, undo: 0, shuffle: 3 });
+test('the random grant is driven by the injected source and lands exactly one charge', () => {
+  for (const [roll, kind] of [[0.1, 'hint'], [0.5, 'undo'], [0.9, 'shuffle']] as const) {
+    const charges = new BoosterCharges();
+    const got = charges.grantSplit(THIRD_CLEAR_GRANT, () => roll);
+    assert.equal(got.hint + got.undo + got.shuffle, 1);
+    assert.equal(got[kind], 1);
+    assert.equal(charges.remaining(kind), STARTING_GRANT + 1);
+  }
   // A random source that returns exactly 1 (out of contract) still lands on a real type.
   assert.deepEqual(new BoosterCharges().grantSplit(1, () => 1), { hint: 0, undo: 0, shuffle: 1 });
 });
 
-test('milestoneDue fires on every third distinct clear and never on zero', () => {
-  assert.equal(milestoneDue(0), false);
-  assert.equal(milestoneDue(1), false);
-  assert.equal(milestoneDue(2), false);
-  assert.equal(milestoneDue(3), true);
-  assert.equal(milestoneDue(4), false);
-  assert.equal(milestoneDue(6), true);
-  assert.equal(milestoneDue(150), true);
+test('thirdClearDue fires on every third distinct clear and never on zero', () => {
+  assert.equal(thirdClearDue(0), false);
+  assert.equal(thirdClearDue(1), false);
+  assert.equal(thirdClearDue(2), false);
+  assert.equal(thirdClearDue(3), true);
+  assert.equal(thirdClearDue(4), false);
+  assert.equal(thirdClearDue(6), true);
+  assert.equal(thirdClearDue(150), true);
+});
+
+// --- milestone level: one of each ------------------------------------------------
+
+test('grantEach adds n of every booster, clamped per type, and reports what landed', () => {
+  const charges = new BoosterCharges(fakeStorage(JSON.stringify({ hint: 0, undo: 5, shuffle: 99 })));
+  assert.deepEqual(charges.grantEach(MILESTONE_LEVEL_GRANT), { hint: 1, undo: 1, shuffle: 0 });
+  assert.deepEqual(balances(charges), { hint: 1, undo: 6, shuffle: 99 });
+  assert.throws(() => charges.grantEach(-1), RangeError);
+});
+
+test('the grants applied per main.ts: a plain first clear pays nothing; every third pays one; a milestone pays one of each', () => {
+  const record = new RecordStore(fakeStorage());
+  const charges = new BoosterCharges();
+  // Mirror of the win branch in main.ts: every third distinct clear pays a
+  // random charge; a decade level pays one of each; nothing else pays.
+  const winLevel = (level: number, roll: number): Record<BoosterKind, number> => {
+    const firstClear = !hasCleared(record.value, level);
+    record.recordWin(100, { level, stars: 3 });
+    const got: Record<BoosterKind, number> = { hint: 0, undo: 0, shuffle: 0 };
+    if (!firstClear) return got;
+    const add = (part: Record<BoosterKind, number>): void => {
+      for (const k of BOOSTER_KINDS) got[k] += part[k];
+    };
+    if (thirdClearDue(clearedLevelCount(record.value))) add(charges.grantSplit(THIRD_CLEAR_GRANT, () => roll));
+    if (bandForLevel(level).spike) add(charges.grantEach(MILESTONE_LEVEL_GRANT));
+    return got;
+  };
+  assert.deepEqual(winLevel(8, 0.1), { hint: 0, undo: 0, shuffle: 0 }); // 1st distinct clear: nothing
+  assert.deepEqual(winLevel(9, 0.1), { hint: 0, undo: 0, shuffle: 0 }); // 2nd: nothing
+  // Level 10: the 3rd distinct clear *and* a milestone level — both stack:
+  // third-clear +1 shuffle, then one of each.
+  assert.deepEqual(winLevel(10, 0.9), { hint: 1, undo: 1, shuffle: 2 });
+  assert.deepEqual(balances(charges), { hint: STARTING_GRANT + 1, undo: STARTING_GRANT + 1, shuffle: STARTING_GRANT + 2 });
+  // Replaying the milestone pays nothing at all.
+  assert.deepEqual(winLevel(10, 0.9), { hint: 0, undo: 0, shuffle: 0 });
+  assert.deepEqual(balances(charges), { hint: STARTING_GRANT + 1, undo: STARTING_GRANT + 1, shuffle: STARTING_GRANT + 2 });
+  // Level 20: the 4th distinct clear — milestone set only.
+  assert.deepEqual(winLevel(20, 0.1), { hint: 1, undo: 1, shuffle: 1 });
 });
 
 // --- first clear vs replay (the record decides) -----------------------------------
@@ -99,39 +140,35 @@ test('replaying a level is never a first clear, and the milestone counter does n
   record.recordWin(100, { level: 5, stars: 2 });
   assert.equal(hasCleared(record.value, 5), true);
   assert.equal(clearedLevelCount(record.value), 1);
-  // Three more clears of the same level: still one distinct level, no milestone.
+  // Three more clears of the same level: still one distinct level, no third-clear bonus.
   for (let i = 0; i < 3; i++) record.recordWin(100, { level: 5, stars: 3 });
   assert.equal(clearedLevelCount(record.value), 1);
-  assert.equal(milestoneDue(clearedLevelCount(record.value)), false);
+  assert.equal(thirdClearDue(clearedLevelCount(record.value)), false);
   // Two *different* levels bring the distinct count to three.
   record.recordWin(100, { level: 6, stars: 1 });
   record.recordWin(100, { level: 7, stars: 1 });
   assert.equal(clearedLevelCount(record.value), 3);
-  assert.equal(milestoneDue(clearedLevelCount(record.value)), true);
+  assert.equal(thirdClearDue(clearedLevelCount(record.value)), true);
   // A Daily clear (no level) is not a ladder clear.
   record.recordWin(100);
   assert.equal(clearedLevelCount(record.value), 3);
 });
 
-test('the first-clear grant applied per main.ts: a replay leaves the balance alone', () => {
+test('the every-third grant applied per main.ts: a replay leaves the balance alone', () => {
   const record = new RecordStore(fakeStorage());
   const charges = new BoosterCharges();
-  const winLevel = (level: number, pick: BoosterKind): void => {
+  const winLevel = (level: number): void => {
     const firstClear = !hasCleared(record.value, level);
     record.recordWin(100, { level, stars: 3 });
-    if (firstClear) charges.grant(pick, FIRST_CLEAR_GRANT);
+    if (firstClear && thirdClearDue(clearedLevelCount(record.value))) charges.grantSplit(THIRD_CLEAR_GRANT, () => 0.5); // → undo
   };
-  winLevel(1, 'undo');
+  winLevel(1);
+  winLevel(2);
+  winLevel(3);
   assert.equal(charges.remaining('undo'), STARTING_GRANT + 1);
-  winLevel(1, 'undo');
-  winLevel(1, 'undo');
+  winLevel(3);
+  winLevel(3);
   assert.equal(charges.remaining('undo'), STARTING_GRANT + 1);
-});
-
-test('scarcest picks the lowest balance, ties in rail order', () => {
-  const charges = new BoosterCharges(fakeStorage(JSON.stringify({ hint: 3, undo: 1, shuffle: 1 })));
-  assert.equal(charges.scarcest(), 'undo');
-  assert.equal(new BoosterCharges().scarcest(), 'hint');
 });
 
 // --- daily login ------------------------------------------------------------------

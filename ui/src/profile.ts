@@ -226,7 +226,7 @@ export function hasCleared(record: PlayerRecord, level: number): boolean {
   return String(level) in record.stars;
 }
 
-/** Distinct ladder levels cleared — what the milestone grant counts
+/** Distinct ladder levels cleared — what the every-third-clear grant counts
  *  (issue #51), never completions. */
 export function clearedLevelCount(record: PlayerRecord): number {
   return Object.keys(record.stars).length;
