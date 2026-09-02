@@ -271,6 +271,7 @@ async function start(): Promise<void> {
   const boardOpenButton = el<HTMLButtonElement>('board-open');
   const boardStatus = el<HTMLElement>('board-status');
   const overlayLeaderboard = el<HTMLButtonElement>('overlay-leaderboard');
+  const leaderboardButton = el<HTMLButtonElement>('btn-leaderboard');
   const leaderboardPanel = el<HTMLDivElement>('leaderboard');
   const leaderboardList = el<HTMLOListElement>('leaderboard-list');
   const leaderboardDateLine = el<HTMLElement>('leaderboard-date');
@@ -1757,6 +1758,12 @@ async function start(): Promise<void> {
 
   boardOpenButton.addEventListener('click', () => {
     void openLeaderboard(dailyDateKey(), boardOpenButton);
+  });
+
+  leaderboardButton.addEventListener('click', () => {
+    // Always today's board, whatever is on the table: the header button is the
+    // route to the Daily board, not to the current game's.
+    void openLeaderboard(dailyDateKey(), leaderboardButton);
   });
 
   overlayLeaderboard.addEventListener('click', () => {
