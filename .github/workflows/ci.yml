@@ -26,6 +26,8 @@ jobs:
           npm test
       - name: Bench harness tests
         run: node --test bench/test/*.test.mjs
+      - name: Feedback Worker tests (issue #118)
+        run: node --test worker/test/*.test.mjs
 
   # Issue #17 — the spec §11.1 release gate: 10,000 seeds × every shipped layout
   # must generate a provably solvable deal. ~40 s per layout, so it shards one

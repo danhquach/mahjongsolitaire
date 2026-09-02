@@ -31,5 +31,13 @@ export default defineConfig({
   build: { outDir: 'dist-web' },
   // Honour PORT so two checkouts (or two agent sessions) can run `npm run dev`
   // side by side instead of fighting over 5173.
-  server: process.env['PORT'] ? { port: Number(process.env['PORT']) } : {},
+  server: {
+    ...(process.env['PORT'] ? { port: Number(process.env['PORT']) } : {}),
+    // Issue #118: the feedback form posts to /api/feedback, served in
+    // production by the Worker script (worker/index.mjs) alongside the
+    // static assets. `vite dev` has no such route, so proxy it to
+    // `wrangler dev` (`npx wrangler dev` from the repo root, default port
+    // 8787) for local testing.
+    proxy: { '/api': 'http://127.0.0.1:8787' },
+  },
 });

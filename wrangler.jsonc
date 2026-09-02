@@ -8,5 +8,20 @@
   // before deploying, so local and CI deploys upload identical trees.
   "assets": {
     "directory": "./ui/dist-web/"
+  },
+  // Issue #118 — the deploy is no longer assets-only: `main` adds a Worker
+  // script alongside `assets`. With both set, a request that matches a file
+  // under `assets.directory` is served as a static asset; only a request with
+  // no matching asset (e.g. `POST /api/feedback`) reaches the script. This is
+  // the default routing (`run_worker_first` is intentionally left unset —
+  // turning it on globally would send every request, including plain page
+  // loads, through the Worker first).
+  "main": "worker/index.mjs",
+  "vars": {
+    // Resend's shared test sender (docs/decisions/0019): it can only deliver
+    // to the Resend account's own address, so the account must be created
+    // with this inbox, or a verified sending domain used instead.
+    "FEEDBACK_TO": "dqtgametesting@gmail.com",
+    "FEEDBACK_FROM": "Lantern Tiles <onboarding@resend.dev>"
   }
 }

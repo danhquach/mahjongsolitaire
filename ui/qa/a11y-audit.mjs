@@ -19,6 +19,9 @@
 //   6. the settings screen (issue #14, plus issue #45's Highlight free tiles
 //      and issue #44's Reduced motion) is a labelled modal, reachable in one
 //      tap, every control named and ≥ 48dp, and Escape returns focus to it.
+//   7. the feedback form (issue #118) is a labelled modal reachable from
+//      Settings, its fields are labelled and ≥ 48dp, Send starts disabled,
+//      and Escape returns focus to the row that opened it.
 //
 // Real VoiceOver/TalkBack device passes remain a Phase 5 manual item; this
 // audit is the automated gate that keeps the semantics from regressing.
@@ -846,11 +849,12 @@ for (const vp of VIEWPORTS) {
       settingsControls.filter((c) => c.small),
     );
 
-    // Thirteen controls: the profile row (issue #69), the Daily Challenge row
+    // Fourteen controls: the profile row (issue #69), the Daily Challenge row
     // (issue #19), five toggles (issue #45 added Highlight free tiles, issue
     // #44 added Reduced motion; the timer toggle was retired 2026-09-01), four
-    // tile sizes, the version row (issue #81), and Done.
-    check(settingsControls.length === 13, 'settings screen exposes all thirteen controls', {
+    // tile sizes, the Send feedback row (issue #118), the version row
+    // (issue #81), and Done.
+    check(settingsControls.length === 14, 'settings screen exposes all fourteen controls', {
       count: settingsControls.length,
     });
 
@@ -865,6 +869,72 @@ for (const vp of VIEWPORTS) {
     check(!closed.visible, 'Escape closes the settings screen', closed);
     check(closed.focus === 'btn-settings', 'focus returns to the settings button', closed);
     check(!closed.boardInert, 'closing settings gives the board back', closed);
+  }
+
+  // --- 7. Feedback form is a labelled modal, its fields are named and ------
+  //        48dp, Send starts disabled, and Escape returns focus (issue #118).
+  {
+    await page.click('#btn-settings');
+    await page.click('#btn-feedback');
+    const open = await page.evaluate(() => {
+      const panel = document.getElementById('feedback');
+      const summary = document.getElementById('feedback-summary');
+      const body = document.getElementById('feedback-body');
+      const summaryLabel = document.querySelector('label[for="feedback-summary"]');
+      const bodyLabel = document.querySelector('label[for="feedback-body"]');
+      const send = document.getElementById('feedback-send');
+      return {
+        role: panel.getAttribute('role'),
+        modal: panel.getAttribute('aria-modal'),
+        labelled: panel.getAttribute('aria-labelledby'),
+        focus: document.activeElement?.id,
+        boardInert: document.getElementById('a11y-layer').hasAttribute('inert'),
+        settingsInert: document.getElementById('btn-settings').hasAttribute('inert'),
+        hasSummaryLabel: summaryLabel !== null && summaryLabel.textContent.trim().length > 0,
+        hasBodyLabel: bodyLabel !== null && bodyLabel.textContent.trim().length > 0,
+        sendDisabled: send.disabled,
+        summaryH: Math.round(summary.getBoundingClientRect().height),
+        bodyH: Math.round(body.getBoundingClientRect().height),
+        sendH: Math.round(send.getBoundingClientRect().height),
+      };
+    });
+    check(
+      open.role === 'dialog' && open.modal === 'true' && open.labelled === 'feedback-title',
+      'feedback form is a labelled modal dialog',
+      open,
+    );
+    check(open.focus === 'feedback-summary', 'focus moves into the Summary field', open);
+    check(
+      open.boardInert && open.settingsInert,
+      'board and Settings are inert while the feedback form is open',
+      open,
+    );
+    check(open.hasSummaryLabel && open.hasBodyLabel, 'Summary and Body are both labelled', open);
+    check(open.sendDisabled, 'Send starts disabled with both fields empty', open);
+    check(
+      open.summaryH >= MIN_TOUCH_TARGET && open.bodyH >= MIN_TOUCH_TARGET && open.sendH >= MIN_TOUCH_TARGET,
+      `Summary, Body and Send are all ≥ ${MIN_TOUCH_TARGET}dp`,
+      open,
+    );
+
+    // Filling both fields enables Send; the value is read from the DOM
+    // (`input` events), matching how a real keyboard or IME would type.
+    await page.fill('#feedback-summary', 'Tiles overlap');
+    await page.fill('#feedback-body', 'The bamboo tile clips the dot tile.');
+    const filled = await page.evaluate(() => document.getElementById('feedback-send').disabled);
+    check(!filled, 'Send enables once both fields have content', { disabled: filled });
+
+    // Escape is the keyboard way out, and focus must land back on the
+    // Settings button that Send feedback led away from — not <body>.
+    await page.keyboard.press('Escape');
+    const closed = await page.evaluate(() => ({
+      visible: document.getElementById('feedback').classList.contains('visible'),
+      focus: document.activeElement?.id,
+      summaryValue: document.getElementById('feedback-summary').value,
+    }));
+    check(!closed.visible, 'Escape closes the feedback form', closed);
+    check(closed.focus === 'btn-settings', 'focus returns to the settings button', closed);
+    check(closed.summaryValue === 'Tiles overlap', 'Escape keeps the typed text, not just discards it', closed);
   }
 
   await ctx.close();

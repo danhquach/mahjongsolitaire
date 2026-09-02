@@ -6,6 +6,11 @@ commit and build time of the running bundle.
 
 ## 2026-09-02
 
+- Settings gains a "Send feedback" row: a short Summary + Body form that
+  emails the QA inbox directly from the game, with the build version, current
+  level, and platform attached automatically. If the connection fails, the
+  typed feedback stays on screen and an "Email it instead" link opens the
+  same message in your mail app, so nothing is lost (#118).
 - The settings gear moved into the booster rail, as its last control, instead
   of floating top-right inside the board — on narrow phones it could sit on
   top of the board's own top-right tiles. The rail's band is reserved space

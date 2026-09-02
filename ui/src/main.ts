@@ -106,6 +106,15 @@ import type { HudCandidate, HudPlacement } from './hud-fit.js';
 import { BoardRenderer } from './render.js';
 import { parseChangelog, versionLabel } from './changelog.js';
 import changelogMd from '../../CHANGELOG.md?raw';
+import {
+  FEEDBACK_INBOX,
+  buildFeedbackPayload,
+  canSend as canSendFeedback,
+  feedbackSubject,
+  feedbackText,
+  mailtoUrl,
+  sendFeedback,
+} from './feedback-form.js';
 import { ProgressStore } from './progress.js';
 import {
   AVATARS,
@@ -214,6 +223,14 @@ async function start(): Promise<void> {
   const dailyButton = el<HTMLButtonElement>('btn-daily');
   const dailyDateEl = el<HTMLElement>('daily-date');
   const dailyStatusEl = el<HTMLElement>('daily-status');
+  const feedbackPanel = el<HTMLDivElement>('feedback');
+  const feedbackButton = el<HTMLButtonElement>('btn-feedback');
+  const feedbackSummaryInput = el<HTMLInputElement>('feedback-summary');
+  const feedbackBodyInput = el<HTMLTextAreaElement>('feedback-body');
+  const feedbackStatus = el<HTMLElement>('feedback-status');
+  const feedbackSend = el<HTMLButtonElement>('feedback-send');
+  const feedbackCancel = el<HTMLButtonElement>('feedback-cancel');
+  const feedbackMailto = el<HTMLAnchorElement>('feedback-mailto');
 
   // One storage handle for every persisted concern (charges, settings, save,
   // ladder progress). Created before the layout is chosen: the save and the
@@ -399,7 +416,14 @@ async function start(): Promise<void> {
   let settingsVisible = false;
   let changelogVisible = false;
   let profileVisible = false;
+  let feedbackVisible = false;
+  /** The success state's auto-close (issue #118); held so a Cancel-and-reopen
+   *  inside that second cannot have a stale timer close the new dialog. */
+  let feedbackCloseTimer: ReturnType<typeof setTimeout> | null = null;
   let welcomeVisible = false;
+  /** True while a submit is in flight — Send stays disabled regardless of
+   *  field content so a slow request cannot be fired twice (issue #118). */
+  let feedbackSending = false;
   /** Tiles the last Hint pointed at — highlighted until the board changes. */
   let hintPair: readonly TileId[] = [];
   /** Shuffles taken on this deal; feeds the shuffle seed so a given
@@ -1048,7 +1072,14 @@ async function start(): Promise<void> {
   }
 
   function openSettings(): void {
-    if (settingsVisible || overlayVisible || changelogVisible || profileVisible || welcomeVisible)
+    if (
+      settingsVisible ||
+      overlayVisible ||
+      changelogVisible ||
+      profileVisible ||
+      feedbackVisible ||
+      welcomeVisible
+    )
       return;
     syncSettingsControls();
     settingsVisible = true;
@@ -1176,6 +1207,121 @@ async function start(): Promise<void> {
     settingsButton.focus();
   }
 
+  // --- feedback form (issue #118) ----------------------------------------------
+
+  /** The current level string sent as feedback context: the ladder level, or
+   *  the Daily's date — never the profile name (no player-identifying data
+   *  beyond what the player typed). */
+  function currentLevelLabel(): string {
+    return daily === null ? `Level ${progress.level}` : `Daily ${daily}`;
+  }
+
+  /** Send is enabled once both fields have content, and only when nothing is
+   *  already in flight (issue #118: no double-submit on a slow request). */
+  function updateFeedbackSendEnabled(): void {
+    feedbackSend.disabled =
+      feedbackSending || !canSendFeedback(feedbackSummaryInput.value, feedbackBodyInput.value);
+  }
+
+  /** Clear the status line and hide the mailto fallback — the start of every
+   *  open and every fresh submit attempt. */
+  function resetFeedbackStatus(): void {
+    feedbackStatus.textContent = '';
+    feedbackStatus.className = '';
+    feedbackMailto.hidden = true;
+  }
+
+  function clearFeedbackCloseTimer(): void {
+    if (feedbackCloseTimer !== null) {
+      clearTimeout(feedbackCloseTimer);
+      feedbackCloseTimer = null;
+    }
+  }
+
+  function openFeedback(): void {
+    if (feedbackVisible) return;
+    clearFeedbackCloseTimer();
+    // Opened from inside Settings: that panel steps aside rather than stacking.
+    closeSettings();
+    resetFeedbackStatus();
+    updateFeedbackSendEnabled();
+    feedbackVisible = true;
+    feedbackPanel.classList.add('visible');
+    setBackgroundInert(true);
+    feedbackSummaryInput.focus();
+    announcer.say('Send feedback.');
+  }
+
+  /** Fields are deliberately left as they are on close — Cancel/Escape keeps
+   *  whatever the player typed for the rest of the session (issue #118); only
+   *  a successful send clears them. */
+  function closeFeedback(): void {
+    if (!feedbackVisible) return;
+    clearFeedbackCloseTimer();
+    feedbackVisible = false;
+    feedbackPanel.classList.remove('visible');
+    setBackgroundInert(false);
+    settingsButton.focus();
+  }
+
+  /** POST to the Worker endpoint (worker/index.mjs); on failure — network
+   *  error or non-2xx — offer the mailto fallback so the feedback is never
+   *  lost, with the typed text kept in the fields either way. */
+  async function submitFeedback(): Promise<void> {
+    if (feedbackSend.disabled) return;
+    feedbackSending = true;
+    updateFeedbackSendEnabled();
+    resetFeedbackStatus();
+    const payload = buildFeedbackPayload({
+      summary: feedbackSummaryInput.value,
+      body: feedbackBodyInput.value,
+      version: versionLabel(__APP_VERSION__, __BUILD_COMMIT__, __BUILD_TIME__),
+      level: currentLevelLabel(),
+      ua: navigator.userAgent,
+      date: new Date().toISOString(),
+    });
+    const result = await sendFeedback(payload, (input, init) => fetch(input, init));
+    feedbackSending = false;
+    if (result === 'sent') {
+      feedbackStatus.textContent = 'Thanks, your feedback was sent';
+      feedbackStatus.className = 'success';
+      announcer.say('Thanks, your feedback was sent.');
+      feedbackSummaryInput.value = '';
+      feedbackBodyInput.value = '';
+      updateFeedbackSendEnabled();
+      // Leave the confirmation up for a beat before closing, so it is
+      // perceivable rather than an instant swap back to Settings.
+      feedbackCloseTimer = setTimeout(() => {
+        feedbackCloseTimer = null;
+        closeFeedback();
+      }, 1000);
+    } else {
+      feedbackStatus.textContent = "Couldn't send, try again";
+      feedbackStatus.className = 'error';
+      announcer.say("Couldn't send. Try again, or email it instead.");
+      feedbackMailto.href = mailtoUrl(
+        FEEDBACK_INBOX,
+        feedbackSubject(payload.summary),
+        feedbackText(payload),
+      );
+      feedbackMailto.hidden = false;
+      updateFeedbackSendEnabled();
+    }
+  }
+
+  function wireFeedback(): void {
+    feedbackButton.addEventListener('click', () => openFeedback());
+    feedbackCancel.addEventListener('click', () => closeFeedback());
+    feedbackSend.addEventListener('click', () => void submitFeedback());
+    feedbackSummaryInput.addEventListener('input', () => updateFeedbackSendEnabled());
+    feedbackBodyInput.addEventListener('input', () => updateFeedbackSendEnabled());
+    // Tapping the dimmed backdrop dismisses the panel, same as Settings
+    // (issue #107) — text is kept, same as Cancel.
+    feedbackPanel.addEventListener('click', (ev) => {
+      if (ev.target === feedbackPanel) closeFeedback();
+    });
+  }
+
   // --- welcome gate (issue #105) -------------------------------------------------
 
   /** First launch only: the player picks an identity before playing. Required
@@ -1271,6 +1417,7 @@ async function start(): Promise<void> {
       if (settingsVisible && ev.key === 'Escape') closeSettings();
       if (changelogVisible && ev.key === 'Escape') closeChangelog();
       if (profileVisible && ev.key === 'Escape') closeProfile();
+      if (feedbackVisible && ev.key === 'Escape') closeFeedback();
     });
   }
 
@@ -1806,6 +1953,7 @@ async function start(): Promise<void> {
 
   wireSettings();
   wireProfile();
+  wireFeedback();
   wireWelcome();
   applyMotionPreference();
   el<HTMLElement>('version').textContent = versionLabel(

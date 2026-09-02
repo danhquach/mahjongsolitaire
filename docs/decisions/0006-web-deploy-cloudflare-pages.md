@@ -91,6 +91,13 @@ command is now the bare word `deploy`: the Worker name and asset directory come 
 
 To rename the Worker, change `wrangler.jsonc` — the workflow does not mention the name.
 
+## Update (2026-09-02, issue #118)
+
+The deploy is no longer assets-only: `wrangler.jsonc` now also sets `main`, so
+the same Worker runs a small script (`worker/index.mjs`) for the one route a
+static asset can't answer (`POST /api/feedback`) alongside serving
+`ui/dist-web/` for everything else. See decision 0019.
+
 ## Consequences
 
 - The playtest URL is a third-party dependency; a Cloudflare outage blocks playtesting, not the build.
