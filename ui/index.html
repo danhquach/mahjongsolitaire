@@ -680,6 +680,7 @@
       #changelog,
       #profile,
       #feedback,
+      #leaderboard,
       #welcome {
         position: absolute;
         inset: 0;
@@ -692,6 +693,7 @@
       #changelog.visible,
       #profile.visible,
       #feedback.visible,
+      #leaderboard.visible,
       #welcome.visible {
         display: flex;
       }
@@ -699,6 +701,7 @@
       #changelog .card,
       #profile .card,
       #feedback .card,
+      #leaderboard .card,
       #welcome .card {
         background: #f0fdf4;
         color: #14532d;
@@ -714,6 +717,7 @@
       #changelog h2,
       #profile h2,
       #feedback h2,
+      #leaderboard h2,
       #welcome h2 {
         margin: 0 0 12px;
         font-size: 24px;
@@ -833,6 +837,7 @@
       #feedback .card > button,
       #feedback .card > a,
       #feedback .attach-row > button,
+      #leaderboard .card > button,
       #welcome .card > button {
         margin-top: 16px;
         display: block;
@@ -967,6 +972,65 @@
         font-size: 18px;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         margin-top: 4px;
+      }
+
+      /* --- Daily leaderboard (issue #70) -------------------------------------
+         One row per entry: rank, avatar, name, score. The name is the only
+         part that may be long, so it is the part that truncates. */
+      #leaderboard ol {
+        list-style: none;
+        margin: 8px 0 0;
+        padding: 0;
+      }
+      #leaderboard li {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 44px;
+        padding: 6px 4px;
+        font-size: 17px;
+      }
+      #leaderboard li + li {
+        border-top: 1px solid #d1fae5;
+      }
+      /* The player's own row has to be findable at a glance in a list of
+         strangers — that is the whole point of showing nearby entries. */
+      #leaderboard li.you {
+        background: #dcfce7;
+        border-radius: 8px;
+        font-weight: bold;
+      }
+      #leaderboard li.gap {
+        justify-content: center;
+        min-height: 24px;
+        color: #3f6212;
+        letter-spacing: 4px;
+      }
+      #leaderboard .rank {
+        min-width: 2.5em;
+        text-align: right;
+        color: #3f6212;
+        font-variant-numeric: tabular-nums;
+      }
+      #leaderboard .who {
+        flex: 1 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #leaderboard .score {
+        font-variant-numeric: tabular-nums;
+      }
+      #leaderboard .time {
+        color: #3f6212;
+        font-size: 15px;
+        font-variant-numeric: tabular-nums;
+      }
+      #leaderboard #leaderboard-date,
+      #leaderboard #leaderboard-status:not(:empty) {
+        margin: 4px 0 0;
+        font-size: 15px;
+        color: #3f6212;
       }
 
       /* --- Feedback form (issue #118) ---------------------------------------
@@ -1352,6 +1416,9 @@
                    only for the stuck dialog, hidden on a win. -->
               <button id="overlay-shuffle" type="button" data-action="Shuffle" hidden>Shuffle</button>
               <button id="overlay-undo" type="button" data-action="Undo" hidden>Undo</button>
+              <!-- Issue #70: only on a Daily win. Reading a board needs no
+                   account, so this shows whether or not sync is on. -->
+              <button id="overlay-leaderboard" type="button" class="secondary" hidden>Leaderboard</button>
               <button id="overlay-restart" type="button">Restart level</button>
               <button id="overlay-new" type="button">New game</button>
             </div>
@@ -1444,7 +1511,43 @@
                 </div>
                 <span id="sync-status" aria-live="polite"></span>
               </fieldset>
+              <!-- Daily leaderboard (issue #70). A second consent, not a
+                   second copy of the first: sync gives the profile a home,
+                   this puts the name in front of strangers. Off by default,
+                   and turning it off withdraws every entry. -->
+              <fieldset id="board-section">
+                <legend>Daily leaderboard</legend>
+                <label class="row" for="board-opt-in">
+                  <input type="checkbox" id="board-opt-in" />
+                  <span>
+                    Show me on the leaderboard
+                    <span class="hint" id="board-opt-in-hint"
+                      >Your name and avatar appear next to your Daily score. Turning this
+                      off removes every score you have posted.</span
+                    >
+                  </span>
+                </label>
+                <div class="sync-actions">
+                  <button id="board-open" type="button" class="secondary">View today's board</button>
+                </div>
+                <span id="board-status" aria-live="polite"></span>
+              </fieldset>
               <button id="profile-close" type="button">Done</button>
+            </div>
+          </div>
+          <!-- Daily leaderboard (issue #70). Its own dialog rather than a
+               section of the profile: it is a list that can be long, and it
+               is opened from the Daily win screen as well as from Settings. -->
+          <div id="leaderboard" role="dialog" aria-modal="true" aria-labelledby="leaderboard-title">
+            <div class="card">
+              <h2 id="leaderboard-title">Daily leaderboard</h2>
+              <p id="leaderboard-date"></p>
+              <ol id="leaderboard-list" aria-labelledby="leaderboard-title"></ol>
+              <p id="leaderboard-empty" hidden>
+                No scores posted for this board yet — clear the Daily Challenge to be first.
+              </p>
+              <span id="leaderboard-status" aria-live="polite"></span>
+              <button id="leaderboard-close" type="button">Done</button>
             </div>
           </div>
           <!-- Feedback (issue #118): Summary + Body, delivered by email via

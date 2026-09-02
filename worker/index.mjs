@@ -10,8 +10,9 @@
 // would pay for a Worker invocation first.
 //
 // This file is the Worker's entry point and its router. `POST /api/feedback`
-// is handled below; `/api/profile*` (issue #138) lives in profile.mjs, and the
-// shared JSON/cross-site/rate-limit helpers in http.mjs.
+// is handled below; `/api/profile*` (issue #138) lives in profile.mjs,
+// `/api/leaderboard*` (issue #70) in leaderboard.mjs, and the shared
+// JSON/cross-site/rate-limit helpers in http.mjs.
 //
 // The feedback route forwards to Resend
 // (https://resend.com) so the shipped bundle never carries an email API key —
@@ -27,7 +28,8 @@
 // ones the client enforces in ui/src/feedback-form.ts — keep them in step.
 
 import { callerKey, createRateLimitStore, isCrossSite, json, rateLimited } from './http.mjs';
-import { handleProfile } from './profile.mjs';
+import { handleLeaderboard } from './leaderboard.mjs';
+import { authenticate, handleProfile } from './profile.mjs';
 
 /** Text-only body cap (issue #118); a body carrying attachments is allowed
  *  up to MAX_BODY_BYTES_WITH_ATTACHMENTS instead. */
@@ -245,6 +247,11 @@ export async function handleRequest(request, env) {
   if (pathname === '/api/feedback') return handleFeedback(request, env);
   if (pathname === '/api/profile' || pathname.startsWith('/api/profile/')) {
     return handleProfile(request, env);
+  }
+  if (pathname.startsWith('/api/leaderboard/')) {
+    // The leaderboard borrows the profile's bearer-code check rather than
+    // repeating it (issue #70).
+    return handleLeaderboard(request, env, { authenticate });
   }
   return json(404, { error: 'not_found' });
 }

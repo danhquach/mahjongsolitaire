@@ -31,6 +31,9 @@
 //   POST /api/profile/sync      {avatar, record}        -> {profile}      (Bearer code)
 //   POST /api/profile/name      {name}                  -> {profile}      (Bearer code)
 //   GET  /api/profile                                   -> {profile}      (Bearer code)
+//
+// `authenticate` is exported for the leaderboard routes (issue #70), which
+// hang off the same bearer code.
 
 import { callerKey, createRateLimitStore, isCrossSite, json, rateLimited } from './http.mjs';
 
@@ -362,8 +365,10 @@ async function readBody(request) {
   }
 }
 
-/** The authenticated player, or a Response explaining why there isn't one. */
-async function authenticate(request, db) {
+/** The authenticated player, or a Response explaining why there isn't one.
+ *  Exported because the leaderboard (issue #70) has to answer the same
+ *  question and must not grow a second idea of who a player is. */
+export async function authenticate(request, db) {
   const header = request.headers.get('Authorization') ?? '';
   const code = normalizeCode(header.startsWith('Bearer ') ? header.slice(7) : '');
   if (code === null) return { error: json(401, { error: 'unauthorized' }) };

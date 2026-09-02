@@ -138,6 +138,9 @@ const boundFetch: typeof fetch = (...args) => globalThis.fetch(...args);
  *  dead endpoint does not leave the panel spinning. */
 const TIMEOUT_MS = 8000;
 
+/** The bound global, for callers outside this module (leaderboard.ts). */
+export const defaultFetch = boundFetch;
+
 /** Map an endpoint status onto the reason the UI explains. A 4xx we did not
  *  name is a client bug, not something the player can act on — report it as
  *  `unavailable` rather than inventing a message per status code. */
@@ -148,15 +151,21 @@ function failureFor(status: number): SyncFailure {
   return 'unavailable';
 }
 
-interface CallOptions {
+export interface CallOptions {
   readonly fetchImpl: typeof fetch;
   readonly path: string;
-  readonly method: 'GET' | 'POST';
+  readonly method: 'GET' | 'POST' | 'DELETE';
   readonly code?: string;
   readonly body?: unknown;
 }
 
-async function call(options: CallOptions): Promise<SyncResult<unknown>> {
+/**
+ * One request to the game's own API, with the failure taxonomy above applied.
+ * Exported for leaderboard.ts (issue #70), which talks to the same Worker with
+ * the same credential and must fail in exactly the same ways — a second copy
+ * of this would be a second set of failure semantics for the player.
+ */
+export async function apiRequest(options: CallOptions): Promise<SyncResult<unknown>> {
   let response: Response;
   try {
     response = await options.fetchImpl(options.path, {
@@ -214,7 +223,7 @@ export async function registerProfile(
   input: { readonly name: string; readonly avatar: string; readonly record: PlayerRecord },
   deps: SyncDeps = {},
 ): Promise<SyncResult<Registration>> {
-  const result = await call({
+  const result = await apiRequest({
     fetchImpl: deps.fetchImpl ?? boundFetch,
     path: `${BASE}/register`,
     method: 'POST',
@@ -243,7 +252,7 @@ export async function pushRecord(
   deps: SyncDeps = {},
 ): Promise<SyncResult<RemoteProfile>> {
   return profileResult(
-    await call({
+    await apiRequest({
       fetchImpl: deps.fetchImpl ?? boundFetch,
       path: `${BASE}/sync`,
       method: 'POST',
@@ -261,7 +270,7 @@ export async function pushName(
   deps: SyncDeps = {},
 ): Promise<SyncResult<RemoteProfile>> {
   return profileResult(
-    await call({
+    await apiRequest({
       fetchImpl: deps.fetchImpl ?? boundFetch,
       path: `${BASE}/name`,
       method: 'POST',
@@ -277,7 +286,7 @@ export async function fetchProfile(
   deps: SyncDeps = {},
 ): Promise<SyncResult<RemoteProfile>> {
   return profileResult(
-    await call({ fetchImpl: deps.fetchImpl ?? boundFetch, path: BASE, method: 'GET', code }),
+    await apiRequest({ fetchImpl: deps.fetchImpl ?? boundFetch, path: BASE, method: 'GET', code }),
   );
 }
 

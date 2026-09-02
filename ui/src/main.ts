@@ -148,6 +148,17 @@ import {
   writeCredentials,
 } from './sync.js';
 import type { RemoteProfile, SyncCredentials, SyncFailure } from './sync.js';
+import {
+  boardRows,
+  compactHistory,
+  fetchDailyBoard,
+  formatBoardTime,
+  readOptIn,
+  submitDailyScore,
+  withdrawFromBoard,
+  writeOptIn,
+} from './leaderboard.js';
+import type { DailyBoard } from './leaderboard.js';
 import { DEFAULT_SETTINGS, SettingsStore, TILE_SIZE_FACTOR, TILE_SIZE_LABEL, TILE_SIZES } from './settings.js';
 import type { TileSize } from './settings.js';
 import { localKeyValueStorage } from './storage.js';
@@ -255,6 +266,17 @@ async function start(): Promise<void> {
   const syncTag = el<HTMLElement>('sync-tag');
   const syncCodeValue = el<HTMLElement>('sync-code');
   const syncStatus = el<HTMLElement>('sync-status');
+  const boardOptInInput = el<HTMLInputElement>('board-opt-in');
+  const boardOptInHint = el<HTMLElement>('board-opt-in-hint');
+  const boardOpenButton = el<HTMLButtonElement>('board-open');
+  const boardStatus = el<HTMLElement>('board-status');
+  const overlayLeaderboard = el<HTMLButtonElement>('overlay-leaderboard');
+  const leaderboardPanel = el<HTMLDivElement>('leaderboard');
+  const leaderboardList = el<HTMLOListElement>('leaderboard-list');
+  const leaderboardDateLine = el<HTMLElement>('leaderboard-date');
+  const leaderboardEmpty = el<HTMLElement>('leaderboard-empty');
+  const leaderboardStatus = el<HTMLElement>('leaderboard-status');
+  const leaderboardClose = el<HTMLButtonElement>('leaderboard-close');
   const overlayGrant = el<HTMLElement>('overlay-grant');
   const lossWashLayer = el<HTMLDivElement>('loss-wash-layer');
   const dailyButton = el<HTMLButtonElement>('btn-daily');
@@ -683,6 +705,8 @@ async function start(): Promise<void> {
     // The red-tinted card (issue #121) — only the holder-full loss gets it;
     // every other dialog (won, stuck) keeps the default green.
     overlay.classList.toggle('lost', status === 'lost');
+    // Shown again only by the Daily-win branch below.
+    overlayLeaderboard.hidden = true;
     if (status === 'won') {
       overlayRestart.hidden = true;
       if (daily === null) {
@@ -736,6 +760,10 @@ async function start(): Promise<void> {
         overlayText.textContent = `Final score: ${game.score}${winScoreSuffix}`;
         overlayNew.textContent = 'Back to the ladder';
         announcer.say(`Daily Challenge complete. Final score ${game.score}. ${payout}`);
+        // Issue #70: the Daily is the one board where every player played the
+        // same tiles, so this is the only win that has somewhere to go.
+        overlayLeaderboard.hidden = false;
+        submitDailyResult(daily, game.score, elapsed.ms);
       }
       // The record just moved; push it up if sync is on (issue #138). Nothing
       // here waits on it.
@@ -1282,6 +1310,7 @@ async function start(): Promise<void> {
     el<HTMLElement>('record-streak').textContent = String(liveStreak(record.value, dailyDateKey()));
     el<HTMLElement>('record-trophies').textContent = String(record.value.trophies);
     renderSyncSection();
+    renderBoardSection();
   }
 
   /** Where focus goes back to when the profile closes: the control that
@@ -1450,6 +1479,9 @@ async function start(): Promise<void> {
       // down, and this is the moment they are being told to.
       syncCodeShown = true;
       renderSyncSection();
+      // The leaderboard opt-in is gated on sync being on, so it has to be
+      // re-rendered here too — the panel is already open.
+      renderBoardSection();
       setSyncStatus('Sync is on. Write your recovery code down — it is the only way back.');
       announcer.say('Sync is on. Your recovery code is shown in your profile.');
     });
@@ -1539,10 +1571,200 @@ async function start(): Promise<void> {
     forgetCredentials(storage);
     syncCredentials = null;
     renderSyncSection();
+    renderBoardSection();
     setSyncStatus('Sync is off here. Your profile is still saved — enter your code to reconnect.');
     announcer.say('Sync turned off on this device.');
     syncEnableButton.focus();
   });
+
+  // --- Daily leaderboard (issue #70) -------------------------------------------
+
+  /** A second consent, separate from sync: syncing gives the profile a home,
+   *  this puts the player's name in front of strangers. Off by default. */
+  let boardOptIn = readOptIn(storage);
+  let leaderboardVisible = false;
+  /** Where focus returns to — the Settings route, or the win screen's own
+   *  Leaderboard button. */
+  let leaderboardOpener: HTMLElement = settingsButton;
+
+  /** The same failures as sync, said in the leaderboard's own terms: the
+   *  reassurance a failed profile sync needs ("your progress is safe on this
+   *  device") is meaningless next to a board that would not load. */
+  const BOARD_FAILURE_TEXT: Readonly<Record<SyncFailure, string>> = {
+    offline: 'No connection — the leaderboard needs one. Your game is unaffected.',
+    unavailable: 'The leaderboard is unavailable right now. Your game is unaffected.',
+    unauthorized: 'Your profile could not be verified — check Cloud sync above.',
+    name_rejected: "That name can't be shown to other players — pick another one.",
+    rate_limited: 'Too many requests. Try again in a few minutes.',
+  };
+
+  function setBoardStatus(text: string): void {
+    boardStatus.textContent = text;
+  }
+
+  /** The opt-in only means anything once there is a profile to attach an
+   *  entry to, so it follows the sync state rather than standing alone. */
+  function renderBoardSection(): void {
+    const synced = syncCredentials !== null;
+    boardOptInInput.checked = boardOptIn && synced;
+    boardOptInInput.disabled = !synced;
+    boardOptInHint.textContent = synced
+      ? 'Your name and avatar appear next to your Daily score. Turning this off removes every score you have posted.'
+      : 'Turn on Cloud sync first — a score on the board needs a profile to belong to.';
+  }
+
+  /** One row per entry, plus the break marker when the player's neighbourhood
+   *  does not touch the top of the board. */
+  function renderLeaderboard(board: DailyBoard): void {
+    const rows = boardRows(board);
+    leaderboardList.replaceChildren();
+    leaderboardEmpty.hidden = rows.length > 0;
+    for (const row of rows) {
+      const li = document.createElement('li');
+      if (row.kind === 'gap') {
+        li.className = 'gap';
+        li.textContent = '···';
+        // A visual break carries no information for a screen reader, and
+        // announcing it as a row would imply an entry that is not there.
+        li.setAttribute('aria-hidden', 'true');
+        leaderboardList.append(li);
+        continue;
+      }
+      const { entry } = row;
+      const mine = board.you !== null && entry.playerId === board.you.playerId;
+      if (mine) li.className = 'you';
+      const rank = document.createElement('span');
+      rank.className = 'rank';
+      rank.textContent = `${entry.rank}.`;
+      const glyph = document.createElement('span');
+      glyph.setAttribute('aria-hidden', 'true');
+      glyph.textContent = avatarGlyph(entry.avatar);
+      const who = document.createElement('span');
+      who.className = 'who';
+      who.textContent = entry.name;
+      const score = document.createElement('span');
+      score.className = 'score';
+      score.textContent = String(entry.score);
+      const time = document.createElement('span');
+      time.className = 'time';
+      time.textContent = formatBoardTime(entry.elapsedMs);
+      // One label per row: a screen reader reading five loose spans in a list
+      // gives no sense of a table.
+      li.setAttribute(
+        'aria-label',
+        `${mine ? 'You, ' : ''}rank ${entry.rank}, ${entry.name}, ${entry.score} points, ${formatBoardTime(entry.elapsedMs)}`,
+      );
+      li.append(rank, glyph, who, score, time);
+      leaderboardList.append(li);
+    }
+    // The player's own rank is the reason they opened this, and on a phone a
+    // full board puts it below the fold. Instant, not smooth: this is the
+    // starting position of the list, not an animation.
+    leaderboardList.querySelector('.you')?.scrollIntoView({ block: 'center' });
+  }
+
+  function closeLeaderboard(): void {
+    if (!leaderboardVisible) return;
+    leaderboardVisible = false;
+    leaderboardPanel.classList.remove('visible');
+    overlay.removeAttribute('inert');
+    // The win screen may still be up behind it, and it wants the board inert.
+    setBackgroundInert(overlayVisible);
+    leaderboardOpener.focus();
+  }
+
+  async function openLeaderboard(date: string, opener: HTMLElement): Promise<void> {
+    if (leaderboardVisible) return;
+    leaderboardOpener = opener;
+    leaderboardVisible = true;
+    leaderboardPanel.classList.add('visible');
+    setBackgroundInert(true);
+    // Opened from the win screen: that dialog is behind this one, so its
+    // buttons must not stay reachable by Tab.
+    overlay.setAttribute('inert', '');
+    leaderboardDateLine.textContent = `Daily Challenge · ${date}`;
+    leaderboardList.replaceChildren();
+    leaderboardEmpty.hidden = true;
+    leaderboardStatus.textContent = 'Loading the board…';
+    leaderboardClose.focus();
+    announcer.say('Daily leaderboard.');
+    // Reading a board needs no profile — an entry does. A player with sync
+    // off still sees the top of the board, just not a rank of their own.
+    const result = await fetchDailyBoard(date, syncCredentials);
+    // Closed while the request was in flight: whatever came back is stale.
+    if (!leaderboardVisible) return;
+    if (!result.ok) {
+      leaderboardStatus.textContent = BOARD_FAILURE_TEXT[result.reason];
+      return;
+    }
+    leaderboardStatus.textContent =
+      result.value.you === null && boardOptIn
+        ? 'Clear the Daily Challenge to take a place on this board.'
+        : '';
+    renderLeaderboard(result.value);
+  }
+
+  /** Post a finished Daily, if the player asked to be on the board. Silent
+   *  and fire-and-forget like the profile push: the win screen never waits on
+   *  the network, and a failed post is the next Daily's problem.
+   *
+   *  The move history goes with it. Nothing reads it yet — the server stores
+   *  it against the day a later build can verify a score by replaying it
+   *  (decision 0022). Sending it from the first day the board is open is the
+   *  whole point: a history that only starts when the verifier ships leaves
+   *  every earlier entry uncheckable. It is deliberately the *whole* deal —
+   *  layout, seed, shuffle count and the move records — so a replay has
+   *  everything the client knows. */
+  function submitDailyResult(date: string, score: number, elapsedMs: number): void {
+    if (syncCredentials === null || !boardOptIn) return;
+    void submitDailyScore(syncCredentials, {
+      date,
+      score,
+      elapsedMs,
+      history: {
+        layoutId: game.level.layoutId,
+        seed: game.level.seed,
+        shuffles: shuffleCount,
+        moves: compactHistory(game.snapshot().stack.moves as unknown as Record<string, unknown>[]),
+      },
+    });
+  }
+
+  boardOptInInput.addEventListener('change', () => {
+    boardOptIn = boardOptInInput.checked;
+    writeOptIn(storage, boardOptIn);
+    if (boardOptIn) {
+      setBoardStatus('You will appear on the board next time you clear a Daily Challenge.');
+      announcer.say('Leaderboard on.');
+      return;
+    }
+    announcer.say('Leaderboard off.');
+    // Off means removed, not hidden — anything less would be a lie about what
+    // the checkbox does.
+    if (syncCredentials === null) {
+      setBoardStatus('');
+      return;
+    }
+    setBoardStatus('Removing your scores…');
+    void withdrawFromBoard(syncCredentials).then((result) => {
+      setBoardStatus(
+        result.ok
+          ? 'Your scores have been removed from the leaderboard.'
+          : BOARD_FAILURE_TEXT[result.reason],
+      );
+    });
+  });
+
+  boardOpenButton.addEventListener('click', () => {
+    void openLeaderboard(dailyDateKey(), boardOpenButton);
+  });
+
+  overlayLeaderboard.addEventListener('click', () => {
+    // Only ever shown on a Daily win, so `daily` is the board just finished.
+    if (daily !== null) void openLeaderboard(daily, overlayLeaderboard);
+  });
+
+  leaderboardClose.addEventListener('click', closeLeaderboard);
 
   // --- feedback form (issue #118) ----------------------------------------------
 
@@ -1961,10 +2183,15 @@ async function start(): Promise<void> {
     // document, not the panel: clicking the card's own text blurs focus to
     // <body>, and a panel-scoped handler would never see the key.
     document.addEventListener('keydown', (ev) => {
-      if (settingsVisible && ev.key === 'Escape') closeSettings();
-      if (changelogVisible && ev.key === 'Escape') closeChangelog();
-      if (profileVisible && ev.key === 'Escape') closeProfile();
-      if (feedbackVisible && ev.key === 'Escape') closeFeedback();
+      if (ev.key !== 'Escape') return;
+      // Topmost first, and only one: the leaderboard (issue #70) opens *over*
+      // the profile and over the win screen, so a flat list of ifs would
+      // close the panel underneath it in the same keystroke.
+      if (leaderboardVisible) closeLeaderboard();
+      else if (feedbackVisible) closeFeedback();
+      else if (changelogVisible) closeChangelog();
+      else if (profileVisible) closeProfile();
+      else if (settingsVisible) closeSettings();
     });
   }
 
