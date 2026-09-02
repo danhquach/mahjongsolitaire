@@ -6,6 +6,14 @@ commit and build time of the running bundle.
 
 ## 2026-09-02
 
+- The phone header is one row again. The New game and Restart buttons used to
+  wrap under the stat chips and the two half-empty rows cost the board about
+  50 px of height; now the chips and the two buttons share one row at every
+  phone width, and a named player's chip shows the name over the level number
+  without the word "Level" (the spoken name still says it). The Leaderboard
+  button moved to the bottom bar beside Settings, so the bar is two groups:
+  the three boosters on the left, Leaderboard and Settings on the right. The
+  board grows into the height that frees up (#153).
 - Tile faces lost their small corner letters and numbers. The West Wind and
   the White Dragon both carried a "W", and on a phone that corner was often
   the only part of a covered tile you could see — so it looked like a pair

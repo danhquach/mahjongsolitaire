@@ -2428,6 +2428,115 @@ for (const vp of VIEWPORTS) {
   await ctx.close();
 }
 
+// Issue #153: the phone header is one row at every phone width, with a
+// five-digit score and a 12-character name on the table, and the bottom bar
+// is two groups — boosters flush left, Leaderboard and Settings flush right —
+// with the board's reserved band still keeping every tile clear of it.
+{
+  const before = failures;
+  for (const width of [360, 390, 430]) {
+    const ctx = await browser.newContext({
+      viewport: { width, height: 800 },
+      deviceScaleFactor: 3,
+      isMobile: true,
+      hasTouch: true,
+    });
+    await ctx.addInitScript(() => {
+      if (localStorage.getItem('mahjong.settings.v1') === null) {
+        localStorage.setItem('mahjong.settings.v1', JSON.stringify({ showTutorial: false }));
+      }
+      if (localStorage.getItem('mahjong.record.v1') === null) {
+        localStorage.setItem('mahjong.record.v1', JSON.stringify({ cleared: [47] }));
+      }
+    });
+    const page = await ctx.newPage();
+    await page.goto(url);
+    await page.waitForFunction(() => window.__slice !== undefined && !window.__slice.dealing);
+    const hud = await page.evaluate(() => {
+      // The worst case the ticket names, written straight into the chips: a
+      // five-digit score and a 12-character name. Layout only — no profile
+      // plumbing is under test here.
+      document.getElementById('score').textContent = '12,340';
+      document.getElementById('level-label').textContent = 'Bartholomew1';
+      const rect = (id) => document.getElementById(id).getBoundingClientRect();
+      const header = rect('app-header');
+      const controls = ['btn-level', 'btn-daily', 'btn-new', 'btn-restart'].map(rect);
+      const tops = new Set(controls.map((r) => Math.round(r.y + r.height / 2)));
+      const rail = rect('booster-rail');
+      const boosters = document.querySelector('#booster-rail .boosters').getBoundingClientRect();
+      const meta = document.querySelector('#booster-rail .meta').getBoundingClientRect();
+      const bar = ['btn-hint', 'btn-undo', 'btn-shuffle', 'btn-leaderboard', 'btn-settings'].map(rect);
+      const canvas = document.querySelector('#board canvas').getBoundingClientRect();
+      const slice = window.__slice;
+      const tileBottom = Math.max(
+        ...slice.game.board.presentTiles().map((t) => {
+          const r = slice.tileCssRect(t.id);
+          return canvas.y + r.y + r.h;
+        }),
+      );
+      return {
+        headerH: header.height,
+        oneRow: tops.size === 1,
+        levelLabel: document.getElementById('level-label').textContent,
+        boostersLeft: boosters.left,
+        metaRight: meta.right,
+        railLeft: rail.left,
+        railRight: rail.right,
+        viewport: innerWidth,
+        allTargets48: bar.every((r) => r.width >= 48 && r.height >= 48),
+        boostersGroup: [...document.querySelectorAll('[aria-label="Boosters"] button')].map((b) => b.id),
+        barClearsTiles: tileBottom <= rail.top,
+        tileW: slice.tileCssRect(slice.game.hitCandidates()[0].id).w,
+      };
+    });
+    check(hud.oneRow && hud.headerH <= 70, `one-row header at ${width}px (want ≤ 70px)`, hud);
+    check(
+      hud.boostersLeft === hud.railLeft && hud.metaRight === hud.railRight && hud.railLeft <= 12 + 1,
+      `boosters flush left, Leaderboard + Settings flush right at ${width}px`,
+      hud,
+    );
+    check(hud.allTargets48, `bottom-bar controls are ≥ 48dp at ${width}px`, hud);
+    check(
+      hud.boostersGroup.join() === 'btn-hint,btn-undo,btn-shuffle',
+      'the Boosters group wraps exactly the three boosters',
+      hud,
+    );
+    check(hud.barClearsTiles, `no tile sits under the bottom bar at ${width}px`, hud);
+    await ctx.close();
+  }
+
+  // The chip itself, through the real profile path this time: a named player
+  // on an ordinary level sees the name alone over the number, and the spoken
+  // name keeps the word — "NAME · Level N, opens your profile".
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3 });
+    await ctx.addInitScript(() => {
+      localStorage.setItem('mahjong.progress.v1', JSON.stringify({ level: 47 }));
+      localStorage.setItem(
+        'mahjong.profile.v1',
+        JSON.stringify({ name: 'Bartholomew1', avatar: 'lantern', choice: 'named' }),
+      );
+      localStorage.setItem('mahjong.settings.v1', JSON.stringify({ showTutorial: false }));
+    });
+    const page = await ctx.newPage();
+    await page.goto(url);
+    await page.waitForFunction(() => window.__slice !== undefined && !window.__slice.dealing);
+    const chip = await page.evaluate(() => ({
+      label: document.getElementById('level-label').textContent,
+      level: document.getElementById('level').textContent,
+      aria: document.getElementById('btn-level').getAttribute('aria-label'),
+    }));
+    check(chip.label === 'Bartholomew1', 'a named player sees the name alone over the level number', chip);
+    check(
+      chip.aria === `Bartholomew1 · Level ${chip.level}, opens your profile`,
+      'the chip is still spoken as "NAME · Level N, opens your profile"',
+      chip,
+    );
+    await ctx.close();
+  }
+  console.log(`${failures === before ? 'ok' : 'FAIL'} — one-row phone header + split bottom bar (issue #153)`);
+}
+
 await browser.close();
 server.close();
 if (failures > 0) {

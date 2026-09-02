@@ -1153,19 +1153,24 @@ async function start(): Promise<void> {
     syncHudIdentity();
   }
 
-  /** The Level chip carries the player's name (issue #106): "Dan · Level" for
-   *  a named player, plain "Level" for a guest or before the welcome gate is
-   *  answered — a guest chose to stay anonymous. */
+  /** The Level chip carries the player's name (issue #106). Issue #153: for a
+   *  named player on an ordinary level the visible label is the name alone —
+   *  the big number under it is self-evidently the level, and the word cost
+   *  the one-row phone header its width. A guest (no name) keeps "Level"; a
+   *  Daily or Milestone board keeps its word after the name, since that word
+   *  goes with the palette (colour never carries it alone). */
   function syncHudIdentity(): void {
     // On a Daily board the chip is "Daily" over the date (issue #19); on a
-    // decade milestone it is "Milestone" over the number (issue #67) — the
-    // words that go with the palette, so colour never carries it alone.
+    // decade milestone it is "Milestone" over the number (issue #67).
     const what = daily !== null ? 'Daily' : bandForLevel(progress.level).spike ? 'Milestone' : 'Level';
-    const label = profile.value.choice === 'named' ? `${profile.value.name} · ${what}` : what;
-    el<HTMLElement>('level-label').textContent = label;
-    // The chip is a button into the profile (issue #137): its name is what
-    // the chip shows, plus where it goes.
-    levelButton.setAttribute('aria-label', `${label} ${levelEl.textContent}, opens your profile`);
+    const named = profile.value.choice === 'named';
+    const spoken = named ? `${profile.value.name} · ${what}` : what;
+    const shown = named && what === 'Level' ? profile.value.name : spoken;
+    el<HTMLElement>('level-label').textContent = shown;
+    // The chip is a button into the profile (issue #137): its name is the
+    // full form — name, word and number — plus where it goes, so a
+    // screen-reader user loses nothing when the visible word goes.
+    levelButton.setAttribute('aria-label', `${spoken} ${levelEl.textContent}, opens your profile`);
   }
 
   /** Mirror the in-app Reduced motion toggle onto the DOM (issue #95): the
