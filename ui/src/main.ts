@@ -82,12 +82,19 @@ import { Animator } from './effects.js';
 import { TrayFx } from './tray-fx.js';
 import type { Box } from './tray-fx.js';
 import { WinFx } from './win-fx.js';
-import { LossFx } from './loss-fx.js';
-import { SLAM_MS, lossSchedule, scheduleDialogDelay, scoreCountUp } from './anim.js';
+import { LossFx, STUCK_WASH_COLOR, STUCK_WASH_OPACITY, STUCK_WASH_OPACITY_REDUCED } from './loss-fx.js';
+import {
+  SLAM_MS,
+  STUCK_WASH_MS,
+  lossSchedule,
+  scheduleDialogDelay,
+  scoreCountUp,
+  stuckSchedule,
+} from './anim.js';
 import { Feedback, navigatorVibrate, webAudioPlayer } from './feedback.js';
 import type { Cue } from './feedback.js';
 import { faceStyle } from './faces.js';
-import { Game } from './game.js';
+import { Game, nearPairs } from './game.js';
 import { HolderStrip } from './holder.js';
 import { BOARD_FELT, PALETTES, cssColor } from './depth.js';
 import type { BoardPalette } from './depth.js';
@@ -354,6 +361,7 @@ async function start(): Promise<void> {
     reduced: () => settings.value.reducedMotion || prefersReducedMotion(),
     tileNode: (id) => renderer.tileNode(id),
     setDesaturation: (amount) => renderer.setDesaturation(amount),
+    tileRect: (id) => tileRect(game.board.get(id).slot),
   });
 
   const charges = new BoosterCharges(storage);
@@ -675,8 +683,7 @@ async function start(): Promise<void> {
     } else if (status === 'lost') {
       presentLossCelebration(wayOut, opts.fromResume ?? false);
     } else {
-      overlay.classList.add('visible');
-      focusWayOut(wayOut);
+      presentStuckCelebration(wayOut, opts.fromResume ?? false);
     }
   }
 
@@ -775,6 +782,48 @@ async function start(): Promise<void> {
       focusWayOut(wayOut);
     };
     const { dialogAtMs } = lossSchedule(skipTheatre);
+    if (dialogAtMs <= 0) reveal();
+    else pendingDialogTimer = setTimeout(reveal, dialogAtMs);
+  }
+
+  /**
+   * The deadlock's presentation (issue #122) — deliberately gentler than the
+   * holder-full loss above: Shuffle or Undo can lift a deadlock, so it reads
+   * as "paused" rather than "lost", and there is no slam to wait out, so the
+   * wash/grey-out/pulse start right away rather than on a delayed beat.
+   * The slate wash and the board-wide grey-out fade in together over
+   * STUCK_WASH_MS, up to three near-pairs (`nearPairs`) each pulse an amber
+   * outline once, staggered, and the dialog itself follows after
+   * STUCK_DIALOG_DELAY_MS.
+   *
+   * `instant` (a reload of an already-stuck save) and reduced motion both
+   * collapse straight to the resting grey wash with no pulse and reveal the
+   * dialog at once; reduced motion still fires the 'stuck' cue (motion is
+   * what it cuts, not sound/haptics) but `instant` fires neither — the
+   * deadlock already happened before this load, so only its result is shown.
+   * `overlayVisible`/`setBackgroundInert` are already set by the caller.
+   */
+  function presentStuckCelebration(wayOut: HTMLButtonElement, instant: boolean): void {
+    const reduced = settings.value.reducedMotion || prefersReducedMotion();
+    const skipTheatre = reduced || instant;
+    if (!instant) feedback.cue('stuck');
+    lossFx.wash({
+      reduced,
+      instant: skipTheatre,
+      color: STUCK_WASH_COLOR,
+      opacity: STUCK_WASH_OPACITY,
+      reducedOpacity: STUCK_WASH_OPACITY_REDUCED,
+      durationMs: STUCK_WASH_MS,
+      sweep: true,
+    });
+    animator.greyOut(skipTheatre);
+    if (!skipTheatre) animator.pulse(nearPairs(game.board));
+    const reveal = (): void => {
+      pendingDialogTimer = null;
+      overlay.classList.add('visible');
+      focusWayOut(wayOut);
+    };
+    const { dialogAtMs } = stuckSchedule(skipTheatre);
     if (dialogAtMs <= 0) reveal();
     else pendingDialogTimer = setTimeout(reveal, dialogAtMs);
   }
@@ -1332,16 +1381,45 @@ async function start(): Promise<void> {
     if (result.ok) {
       charges.spend(kind);
     }
+    // A rescue attempt (Undo/Shuffle) that leaves the board still 'stuck'
+    // (issue #122 follow-up): the "No moves left" dialog stays open, so the
+    // full end-of-level teardown (which would drop the grey wash and reveal
+    // the board back in full colour underneath it) must not run. Only the
+    // pulses are dropped — the near-pairs they pointed at may no longer be
+    // accurate — and the instant wash/grey-out is reapplied below, after
+    // redraw() (which resets desaturation on every call).
+    const stillStuck = fromDialog && (kind === 'undo' || kind === 'shuffle') && game.status() === 'stuck';
     // Undo puts a parked tile back on the board and Shuffle repaints every
     // face: a copy still flying from the old board would paint over the new
     // one (issue #44).
     if (result.ok && (kind === 'undo' || kind === 'shuffle')) {
-      animator.clear();
       trayFx.clear();
-      cancelEndCelebration();
+      // cancelEndCelebration() already calls animator.clear(); a direct call
+      // here too would be redundant. The still-stuck branch skips
+      // cancelEndCelebration (it would drop the wash), so it clears the
+      // animator itself.
+      if (stillStuck) animator.clear();
+      else cancelEndCelebration();
     }
     redraw();
     if (result.ok) persist();
+    if (stillStuck) {
+      // No cue, no re-announcement: the dialog never closed, this only
+      // restores the grey-out and wash that redraw() just erased. wash()
+      // replaces its own node rather than stacking, so this does not
+      // re-fade anything — it lands straight on the same final opacity.
+      const reduced = settings.value.reducedMotion || prefersReducedMotion();
+      lossFx.wash({
+        reduced,
+        instant: true,
+        color: STUCK_WASH_COLOR,
+        opacity: STUCK_WASH_OPACITY,
+        reducedOpacity: STUCK_WASH_OPACITY_REDUCED,
+        durationMs: STUCK_WASH_MS,
+        sweep: true,
+      });
+      animator.greyOut(true);
+    }
     // Undo and Shuffle can lift a deadlock: showStatus closes the dialog once
     // the board is playable again.
     showStatus();

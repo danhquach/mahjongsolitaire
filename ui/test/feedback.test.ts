@@ -99,3 +99,37 @@ test('the fail cue is silent on both channels when both toggles are off', () => 
   assert.deepEqual(played, []);
   assert.equal(vibrated.length, 0);
 });
+
+// Issue #122: the deadlock's 'stuck' cue, same two-channel gate — neutral and
+// distinct from 'fail' (the holder-full loss falls further and harder).
+test('the stuck cue sounds and vibrates when both channels are on', () => {
+  const { player, vibrate, played, vibrated } = spies();
+  const feedback = new Feedback(() => BASE, player, vibrate);
+  feedback.cue('stuck');
+  assert.deepEqual(played, ['stuck']);
+  assert.equal(vibrated.length, 1);
+});
+
+test('the stuck cue respects the audio toggle independently of haptics', () => {
+  const { player, vibrate, played, vibrated } = spies();
+  const feedback = new Feedback(() => ({ ...BASE, audio: false }), player, vibrate);
+  feedback.cue('stuck');
+  assert.deepEqual(played, []);
+  assert.equal(vibrated.length, 1);
+});
+
+test('the stuck cue respects the haptics toggle independently of audio', () => {
+  const { player, vibrate, played, vibrated } = spies();
+  const feedback = new Feedback(() => ({ ...BASE, haptics: false }), player, vibrate);
+  feedback.cue('stuck');
+  assert.deepEqual(played, ['stuck'], 'audio still fires on its own toggle');
+  assert.equal(vibrated.length, 0);
+});
+
+test('the stuck cue is silent on both channels when both toggles are off', () => {
+  const { player, vibrate, played, vibrated } = spies();
+  const feedback = new Feedback(() => ({ ...BASE, audio: false, haptics: false }), player, vibrate);
+  feedback.cue('stuck');
+  assert.deepEqual(played, []);
+  assert.equal(vibrated.length, 0);
+});

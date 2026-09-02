@@ -21,6 +21,12 @@ import {
   SHAKE_AMPLITUDE,
   SHAKE_MS,
   SLAM_MS,
+  STUCK_DIALOG_DELAY_MS,
+  STUCK_PULSE_MAX,
+  STUCK_PULSE_MS,
+  STUCK_PULSE_STAGGER_MS,
+  STUCK_PULSE_START_MS,
+  STUCK_WASH_MS,
   TRAY_FLY_MS,
   WIN_DIALOG_DELAY_MS,
   cascadeDurationMs,
@@ -41,6 +47,9 @@ import {
   slamSquash,
   slumpFrame,
   slumpLayout,
+  stuckGreyOut,
+  stuckPulseAlpha,
+  stuckSchedule,
 } from '../src/anim.js';
 
 test('the tray sequence stays inside a fast-play budget (issue #93)', () => {
@@ -285,5 +294,64 @@ test('a slumping tile drops and desaturates monotonically, exactly final at LOSS
     assert.ok(f.saturation <= previousSaturation + 1e-9, `saturation rose at ${t}ms`);
     previousDy = f.dy;
     previousSaturation = f.saturation;
+  }
+});
+
+// --- Deadlock (issue #122) -----------------------------------------------
+
+test('constants: the stuck dialog outlasts the grey-out wash', () => {
+  assert.ok(
+    STUCK_DIALOG_DELAY_MS > STUCK_WASH_MS,
+    'the wash should finish well before the dialog interrupts it',
+  );
+});
+
+test('the stuck dialog waits out STUCK_DIALOG_DELAY_MS, or nothing when the theatre is skipped', () => {
+  assert.deepEqual(stuckSchedule(false), { dialogAtMs: STUCK_DIALOG_DELAY_MS });
+  assert.deepEqual(stuckSchedule(true), { dialogAtMs: 0 });
+});
+
+test('the grey-out is monotonic and exactly final at STUCK_WASH_MS', () => {
+  assert.equal(stuckGreyOut(0), 0, 'full colour at rest');
+  assert.equal(stuckGreyOut(STUCK_WASH_MS), 1, 'fully desaturated at the end of the wash');
+  // Never left mid-fade past the wash's own duration.
+  assert.equal(stuckGreyOut(STUCK_WASH_MS * 3), 1);
+  let previous = -Infinity;
+  for (let t = 0; t <= STUCK_WASH_MS; t += 25) {
+    const v = stuckGreyOut(t);
+    assert.ok(v >= previous - 1e-9, `desaturation fell backwards at ${t}ms`);
+    assert.ok(v >= 0 && v <= 1, `out of range at ${t}ms (${v})`);
+    previous = v;
+  }
+});
+
+test('a pulsing pair is silent outside its own staggered window and peaks once inside it', () => {
+  // index 0 starts at STUCK_PULSE_START_MS.
+  assert.equal(stuckPulseAlpha(0, 0), 0, 'nothing before its own start');
+  assert.equal(stuckPulseAlpha(STUCK_PULSE_START_MS, 0), 0, 'exactly zero at the start edge');
+  assert.equal(
+    stuckPulseAlpha(STUCK_PULSE_START_MS + STUCK_PULSE_MS, 0),
+    0,
+    'exactly zero at the end edge',
+  );
+  assert.equal(
+    stuckPulseAlpha(STUCK_PULSE_START_MS + STUCK_PULSE_MS * 2, 0),
+    0,
+    'never left glowing past its own window',
+  );
+  let peak = 0;
+  for (let t = STUCK_PULSE_START_MS; t <= STUCK_PULSE_START_MS + STUCK_PULSE_MS; t += 10) {
+    const a = stuckPulseAlpha(t, 0);
+    assert.ok(a >= 0 && a <= 1, `alpha out of [0,1] at ${t}ms (${a})`);
+    peak = Math.max(peak, a);
+  }
+  assert.ok(peak > 0.9, 'the pulse should read as a real flash, not a flicker');
+});
+
+test('pulsing pairs are staggered — a later index starts later by STUCK_PULSE_STAGGER_MS', () => {
+  for (let index = 0; index < STUCK_PULSE_MAX; index++) {
+    const start = STUCK_PULSE_START_MS + index * STUCK_PULSE_STAGGER_MS;
+    assert.equal(stuckPulseAlpha(start, index), 0, `index ${index} should not have started yet`);
+    assert.ok(stuckPulseAlpha(start + STUCK_PULSE_MS / 2, index) > 0, `index ${index} mid-pulse`);
   }
 });

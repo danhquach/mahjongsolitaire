@@ -4,6 +4,17 @@ Playtest builds deploy from `main` on every merge; entries are grouped by
 deploy day. The in-game Settings screen shows this file with the exact
 commit and build time of the running bundle.
 
+## 2026-09-02
+
+- A deadlock now reads as a pause, not a loss: a slate wash sweeps in left to
+  right over the board while the tile pictures desaturate, up to three
+  near-pairs (tiles blocking each other) pulse an amber outline once each to
+  hint at why Shuffle or Undo helps, and only then — a beat after that — does
+  the "No moves left" dialog appear, in its usual neutral card. Reduced
+  motion skips the sweep and the pulse and shows the grey wash and dialog at
+  once; choosing Shuffle or Undo from the dialog clears the wash and restores
+  full colour immediately if either lifts the deadlock (#122).
+
 ## 2026-09-01
 
 - The holder-full loss now lands like the hard fail it is. The fourth tile

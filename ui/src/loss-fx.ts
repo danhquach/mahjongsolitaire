@@ -22,6 +22,15 @@ const WASH_OPACITY = 0.6;
  *  result itself. */
 const WASH_OPACITY_REDUCED = 0.35;
 
+/** The deadlock's own wash (issue #122): a lighter slate rather than the
+ *  loss's dark red, and gentler still — a deadlock is recoverable, so the
+ *  presentation reads as "paused" rather than "lost". Passed to `wash()`
+ *  rather than given its own layer or class, per the file's own reuse
+ *  contract. */
+export const STUCK_WASH_COLOR = '#334155';
+export const STUCK_WASH_OPACITY = 0.45;
+export const STUCK_WASH_OPACITY_REDUCED = 0.3;
+
 /** Samples a pure `(t) => value` curve into Web Animations keyframes — same
  *  trick win-fx.ts's `sample` uses for its own non-linear curves. */
 function sample(durationMs: number, valueAt: (t: number) => number, steps = 20): readonly number[] {
@@ -85,26 +94,48 @@ export class LossFx {
   }
 
   /**
-   * The dark red wash over the board (issue #121). Fades in over
-   * LOSS_WASH_MS by default; `instant` skips straight to the final opacity —
-   * used for reduced motion (which also lowers that final opacity) and for a
-   * reload of an already-lost save (full opacity, no fade: the level ended
+   * The wash over the board — the loss's dark red (issue #121) by default, or
+   * the deadlock's lighter slate (issue #122) via `color`/`opacity`/
+   * `reducedOpacity`. Fades in over `durationMs` (LOSS_WASH_MS by default);
+   * `instant` skips straight to the final opacity — used for reduced motion
+   * (which also lowers that final opacity) and for a reload of an
+   * already-ended save (full opacity, no fade: the fight already happened
    * before this page load, so there is nothing left to animate into).
+   * `sweep` adds a left-to-right clip-path reveal alongside the fade — the
+   * deadlock's grey-out sweeps that way (issue #122); the loss's own wash
+   * settles everywhere at once and leaves it off.
    */
-  wash(opts: { readonly reduced: boolean; readonly instant: boolean }): void {
+  wash(opts: {
+    readonly reduced: boolean;
+    readonly instant: boolean;
+    readonly color?: string;
+    readonly opacity?: number;
+    readonly reducedOpacity?: number;
+    readonly durationMs?: number;
+    readonly sweep?: boolean;
+  }): void {
     // One wash at a time: a second call replaces, never stacks.
     this.washNode?.remove();
     const node = document.createElement('div');
     node.className = 'fx-loss-wash';
+    if (opts.color) node.style.background = opts.color;
     this.washLayer.appendChild(node);
     this.washNode = node;
-    const target = opts.reduced ? WASH_OPACITY_REDUCED : WASH_OPACITY;
+    const target = opts.reduced
+      ? (opts.reducedOpacity ?? WASH_OPACITY_REDUCED)
+      : (opts.opacity ?? WASH_OPACITY);
     if (opts.instant) {
       node.style.opacity = String(target);
       return;
     }
-    const anim = node.animate([{ opacity: 0 }, { opacity: target }], {
-      duration: LOSS_WASH_MS,
+    const keyframes: Keyframe[] = opts.sweep
+      ? [
+          { opacity: 0, clipPath: 'inset(0 100% 0 0)' },
+          { opacity: target, clipPath: 'inset(0 0% 0 0)' },
+        ]
+      : [{ opacity: 0 }, { opacity: target }];
+    const anim = node.animate(keyframes, {
+      duration: opts.durationMs ?? LOSS_WASH_MS,
       easing: 'ease-in',
       fill: 'forwards',
     });
