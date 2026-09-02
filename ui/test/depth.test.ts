@@ -78,7 +78,12 @@ function everyShade(): { z: number; topZ: number; dimmed: boolean }[] {
 // --- contrast gate ------------------------------------------------------------
 
 test('every ink holds 4.5:1 against its own face, on every layer, dimmed or not', () => {
-  assert.ok(SUIT_INKS.length >= 7, `expected all seven suits, got ${SUIT_INKS.length}`);
+  // Six inks since issue #152: Dots blue, Bamboo pine, Characters red, Winds
+  // slate, and the Fall and Winter seasons' own — the Dragons share three of
+  // those, and their purple is gone.
+  assert.ok(SUIT_INKS.length >= 6, `expected six inks, got ${SUIT_INKS.length}`);
+  assert.ok(!SUIT_INKS.includes(0x7e22ce), 'the retired Dragon purple is still in the sweep');
+  assert.ok(SUIT_INKS.includes(faceStyle('dragon-white').color), 'the White Dragon slate is swept');
   let worst = { ratio: Infinity, where: '' };
   for (const { z, topZ, dimmed } of everyShade()) {
     const shade = tileShade(z, topZ, dimmed);

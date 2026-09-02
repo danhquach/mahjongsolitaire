@@ -1,4 +1,5 @@
-// Issue #45: pip art must stay on the tile and off the corner tag.
+// Issue #45: pip art must stay on the tile (and, until issue #152 removed it,
+// off the corner tag).
 //
 // These are regression tests for two defects found by looking at a rendered
 // face sheet, which is exactly the problem: nothing threw, nothing failed, the
@@ -15,11 +16,8 @@ import { test } from 'node:test';
 import { STANDARD_144 } from '@mahjongsolitaire/core';
 import { faceStyle } from '../src/faces.js';
 import { TILE_H, TILE_W } from '../src/geometry.js';
-import { PIP_AREA, TAG_BOX, pipBounds, pipCenter, pipMetrics } from '../src/pips.js';
+import { PIP_AREA, RING_STROKE, pipBounds, pipCenter, pipMetrics } from '../src/pips.js';
 import type { Rect } from '../src/geometry.js';
-
-const overlaps = (a: Rect, b: Rect): boolean =>
-  a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
 const contains = (outer: Rect, inner: Rect): boolean =>
   inner.x >= outer.x &&
@@ -36,22 +34,17 @@ const PIP_FACES = [...new Set(STANDARD_144)]
 
 // --- the area itself ----------------------------------------------------------
 
-test('the pip area is inside the face and clear of the corner tag', () => {
+test('the pip area is inside the face, centred, and takes the room the tag left', () => {
   assert.ok(contains(FACE, PIP_AREA), `PIP_AREA escapes the face: ${JSON.stringify(PIP_AREA)}`);
-  assert.ok(contains(FACE, TAG_BOX), `TAG_BOX escapes the face: ${JSON.stringify(TAG_BOX)}`);
-  assert.ok(
-    !overlaps(PIP_AREA, TAG_BOX),
-    `PIP_AREA overlaps TAG_BOX: ${JSON.stringify({ PIP_AREA, TAG_BOX })}`,
-  );
-  // Worth the room: art squeezed into a third of the face is not readable at
-  // tile size S. Half the face is the floor.
-  assert.ok(
-    PIP_AREA.w * PIP_AREA.h > 0.5 * TILE_W * TILE_H,
-    'the pip area gave away too much of the face',
-  );
+  // Issue #152: ~80% of the width and ~83% of the height, centred — the art
+  // grew into the space the corner tag used to reserve.
+  assert.ok(PIP_AREA.w >= 0.78 * TILE_W && PIP_AREA.w <= 0.82 * TILE_W, `area width ${PIP_AREA.w}`);
+  assert.ok(PIP_AREA.h >= 0.81 * TILE_H && PIP_AREA.h <= 0.85 * TILE_H, `area height ${PIP_AREA.h}`);
+  assert.ok(Math.abs(PIP_AREA.x + PIP_AREA.w / 2 - TILE_W / 2) < 0.01, 'not centred horizontally');
+  assert.ok(Math.abs(PIP_AREA.y + PIP_AREA.h / 2 - TILE_H / 2) < 0.01, 'not centred vertically');
 });
 
-// --- the two defects ---------------------------------------------------------
+// --- the defect --------------------------------------------------------------
 
 test('no rank draws outside the tile face', () => {
   assert.ok(PIP_FACES.length >= 18, `expected the 18 suited ranks, got ${PIP_FACES.length}`);
@@ -61,16 +54,6 @@ test('no rank draws outside the tile face', () => {
       contains(FACE, box),
       `${face} overflows the face: [${box.x.toFixed(1)}, ${box.y.toFixed(1)}] ` +
         `${box.w.toFixed(1)}x${box.h.toFixed(1)} vs ${TILE_W}x${TILE_H}`,
-    );
-  }
-});
-
-test('no rank draws under the corner tag', () => {
-  for (const { face, style } of PIP_FACES) {
-    const box = pipBounds(style.pips!, style.pipShape!);
-    assert.ok(
-      !overlaps(box, TAG_BOX),
-      `${face} collides with the tag: ${JSON.stringify(box)} vs ${JSON.stringify(TAG_BOX)}`,
     );
   }
 });
@@ -98,6 +81,38 @@ test('pips are big enough to read at every rank', () => {
       assert.ok(m.ringR >= 4, `${face} ring too small: r=${m.ringR.toFixed(2)}`);
     }
   }
+});
+
+test('issue #152: rings are bold and the dense ranks keep visible gaps', () => {
+  // Stroke ≈ 0.7 of the radius (was ≈ 0.42): the ring is mostly ink now.
+  assert.ok(RING_STROKE >= 0.65 && RING_STROKE <= 0.75, `ring stroke ${RING_STROKE}`);
+  // Dots-9 is the tightest ring rank; the gap between neighbouring rings must
+  // survive the smallest phone tile (~0.4 board px per CSS px), so ≥ 2 board px.
+  const nine = faceStyle('dots-9').pips!;
+  const m9 = pipMetrics(nine);
+  const centres = nine.map(pipCenter);
+  let minGap = Infinity;
+  for (let i = 0; i < centres.length; i++) {
+    for (let j = i + 1; j < centres.length; j++) {
+      minGap = Math.min(minGap, Math.hypot(centres[i]!.x - centres[j]!.x, centres[i]!.y - centres[j]!.y) - 2 * m9.ringR);
+    }
+  }
+  assert.ok(minGap >= 2, `dots-9 ring gap ${minGap.toFixed(2)} board px`);
+  // Bamboo-8 is four columns wide; canes in one row must keep clear water too.
+  const eight = faceStyle('bamboo-8').pips!;
+  const m8 = pipMetrics(eight);
+  const rowGap = (eight[1]!.x - eight[0]!.x) * PIP_AREA.w - m8.caneW;
+  assert.ok(rowGap >= 2, `bamboo-8 cane gap ${rowGap.toFixed(2)} board px`);
+});
+
+test('issue #152: canes are thick, and ranks 1-3 share one width', () => {
+  const w = (face: string): number => pipMetrics(faceStyle(face).pips!).caneW;
+  // ≈ 0.42 of the column pitch, capped at 21% of the pip area's width.
+  assert.ok(Math.abs(w('bamboo-1') - 0.21 * PIP_AREA.w) < 0.01, `bamboo-1 width ${w('bamboo-1')}`);
+  assert.equal(w('bamboo-1'), w('bamboo-2'));
+  assert.equal(w('bamboo-1'), w('bamboo-3'));
+  const pitch9 = PIP_AREA.w / 3;
+  assert.ok(Math.abs(w('bamboo-9') - 0.42 * pitch9) < 0.01, `bamboo-9 width ${w('bamboo-9')}`);
 });
 
 test('a sparse rank draws bigger pips than a dense one', () => {

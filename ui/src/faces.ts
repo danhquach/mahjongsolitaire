@@ -13,7 +13,14 @@
 // The red/green banding is the traditional one, and it is one rule per suit:
 // the middle band is red, the outer bands green — by row for Dots, by column
 // for Bamboo (see `bandAccent`). Colour never carries meaning here; the shape
-// and the corner tag do.
+// does.
+//
+// Issue #152 (2026-09-02) removed the corner tag from every face: the West Wind
+// and the White Dragon both tagged "W", and on a phone the tag was often the
+// only part of a covered tile still visible — so players matched by it. Every
+// face is now identifiable from its main art alone (decision 0023), and the
+// art grew into the space the tag left. The Dragons each took their own ink in
+// the same change: red 中, green 發, and a drawn white double frame.
 
 /** Pip position in unit face coordinates (0–1 within the pip area). */
 export interface Pip {
@@ -35,10 +42,11 @@ export interface ScatterGlyph {
 }
 
 export interface FaceStyle {
-  /** Large glyph drawn on the tile (used when `pips` is absent). */
+  /** Large glyph drawn on the tile (used when `pips` and `frame` are absent). */
   readonly glyph: string;
-  /** Small corner tag (rank / initial) so identical faces are matchable at a glance. */
-  readonly tag: string;
+  /** Drawn face (issue #152, the White Dragon): a white-filled double frame in
+   *  `color`, instead of a font glyph — 囗 read as a missing-glyph box. */
+  readonly frame?: true;
   /** Suit accent color (hex). */
   readonly color: number;
   /** Human-readable name — becomes the ARIA label in issue #12. */
@@ -56,7 +64,7 @@ export interface FaceStyle {
 }
 
 const WIND_GLYPHS: Record<string, string> = { east: '東', south: '南', west: '西', north: '北' };
-const DRAGON_GLYPHS: Record<string, string> = { red: '中', green: '發', white: '囗' };
+const DRAGON_GLYPHS: Record<string, string> = { red: '中', green: '發' };
 const CHAR_NUMERALS = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
 
 // Deep, saturated inks: the tile face is the light ground, so every ink is
@@ -70,29 +78,33 @@ const CHAR_NUMERALS = ['一', '二', '三', '四', '五', '六', '七', '八', '
 // beside Winds' slate, which now reads as the neutral gray. Deliberate shares
 // (Spring = Bamboo pine, Summer = Characters red, decision 0012) stay — only
 // accidental near-misses moved.
+//
+// Issue #152 retired the Dragons' shared purple: each Dragon now paints in the
+// ink its traditional colour names (decision 0023). Sharing is safe under the
+// "never colour alone" rule because the shapes never collide — a Dragon is one
+// character or a frame, a Character is a numeral, Bamboo is canes, a Wind is a
+// character with its own glyphs — and it means the ink set stays closed.
 const SUIT_COLOR = {
   dots: 0x1e40af, // royal blue (8.1:1 on the tile face)
-  bamboo: 0x1a6b52, // pine
-  char: 0xb91c1c, // red
-  wind: 0x334155, // slate
-  dragon: 0x7e22ce, // purple
+  bamboo: 0x1a6b52, // pine (also the Green Dragon)
+  char: 0xb91c1c, // red (also the Red Dragon)
+  wind: 0x334155, // slate (also the White Dragon's frame)
 } as const;
 
 /**
  * Season faces (issue #75, decision 0012): one composed design per season —
- * a large pictogram, two small scattered companions, the season name, and the
- * corner tag in the traditional 1–4 order. Every ink is reused from the proven
- * palette so the ink set stays closed (fall's orange is the ink the removed
- * Flower suit freed); identity is carried by shape, name and tag — never the
- * color alone (spec §7).
+ * a large pictogram, two small scattered companions and the season name (the
+ * 1–4 numeral tag went with every other corner tag, issue #152). Every ink is
+ * reused from the proven palette so the ink set stays closed (fall's orange is
+ * the ink the removed Flower suit freed); identity is carried by shape and
+ * name — never the color alone (spec §7).
  */
 const SEASON_STYLE: Record<
   string,
-  Pick<FaceStyle, 'glyph' | 'tag' | 'color' | 'scatter' | 'rotation'>
+  Pick<FaceStyle, 'glyph' | 'color' | 'scatter' | 'rotation'>
 > = {
   spring: {
     glyph: '❀',
-    tag: '1',
     color: 0x1a6b52, // pine (shared with Bamboo)
     scatter: [
       { glyph: '❀', x: 0.18, y: 0.12 },
@@ -101,7 +113,6 @@ const SEASON_STYLE: Record<
   },
   summer: {
     glyph: '☀',
-    tag: '2',
     color: 0xb91c1c, // red (shared with Characters)
     scatter: [
       { glyph: '✦', x: 0.16, y: 0.5 },
@@ -110,7 +121,6 @@ const SEASON_STYLE: Record<
   },
   fall: {
     glyph: '❧',
-    tag: '3',
     // Issue #83: russet, not orange — the orange (0xc2410c) was a hue
     // neighbour of Characters' red one row away; russet keeps the autumn
     // read while opening clear hue distance (6.6:1 on the tile face).
@@ -123,7 +133,6 @@ const SEASON_STYLE: Record<
   },
   winter: {
     glyph: '❄',
-    tag: '4',
     color: 0x0e7490, // teal (the old Season ink)
     scatter: [
       { glyph: '❅', x: 0.17, y: 0.13 },
@@ -143,7 +152,7 @@ function capitalize(s: string): string {
 
 /** Fallback for a face id nothing recognizes (also an unknown season). */
 function unknownFace(face: string): FaceStyle {
-  return { glyph: '?', tag: face, color: 0x000000, label: face };
+  return { glyph: '?', color: 0x000000, label: face };
 }
 
 /**
@@ -258,7 +267,6 @@ export function faceStyle(face: string): FaceStyle {
     case 'dots':
       return {
         glyph: '◎',
-        tag: value,
         color: SUIT_COLOR.dots,
         label: `Dots ${value}`,
         // Rings, banded by row: rank 9's three rows read green / red / green.
@@ -268,7 +276,6 @@ export function faceStyle(face: string): FaceStyle {
     case 'bamboo':
       return {
         glyph: '∥',
-        tag: value,
         color: SUIT_COLOR.bamboo,
         label: `Bamboo ${value}`,
         // Canes, banded by column: rank 9's three columns read green / red /
@@ -280,24 +287,30 @@ export function faceStyle(face: string): FaceStyle {
       // Rank numeral only (no 萬 suit glyph) — per-rank counting stays visible.
       return {
         glyph: CHAR_NUMERALS[rank - 1] ?? value,
-        tag: value,
         color: SUIT_COLOR.char,
         label: `Character ${value}`,
       };
     case 'wind':
       return {
         glyph: WIND_GLYPHS[value] ?? '風',
-        tag: value.charAt(0).toUpperCase(),
         color: SUIT_COLOR.wind,
         label: `${capitalize(value)} Wind`,
       };
-    case 'dragon':
-      return {
-        glyph: DRAGON_GLYPHS[value] ?? '龍',
-        tag: value.charAt(0).toUpperCase(),
-        color: SUIT_COLOR.dragon,
-        label: `${capitalize(value)} Dragon`,
-      };
+    case 'dragon': {
+      // Issue #152: one ink and one shape each. The White Dragon is drawn, not
+      // typed — its white fill on the cream face is what reads as "white".
+      const label = `${capitalize(value)} Dragon`;
+      switch (value) {
+        case 'red':
+          return { glyph: DRAGON_GLYPHS.red!, color: SUIT_COLOR.char, label };
+        case 'green':
+          return { glyph: DRAGON_GLYPHS.green!, color: SUIT_COLOR.bamboo, label };
+        case 'white':
+          return { glyph: '', frame: true, color: SUIT_COLOR.wind, label };
+        default:
+          return unknownFace(face);
+      }
+    }
     case 'season': {
       const season = SEASON_STYLE[value];
       if (!season) return unknownFace(face);

@@ -1,6 +1,6 @@
 # 0012 — Four seasons replace Flowers: distinct pictogram art per season
 
-**Date:** 2026-08-31 · **Status:** accepted · **Ticket:** issue #75
+**Date:** 2026-08-31 · **Status:** accepted; the corner tag (1–4) is superseded by [0023](0023-no-corner-tags-dragon-inks.md) · **Ticket:** issue #75
 
 ## Context
 

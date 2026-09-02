@@ -1,20 +1,28 @@
 // Issue #35: per-rank pip faces — every suited rank must be visually distinct.
 // Issue #45 redrew the pip shapes (Dots rings, Bamboo canes) and added the
 // traditional red/green banding; the banding rule is pinned at the bottom.
+// Issue #152 removed the corner tag, so every face must now be identifiable
+// from its main art alone — the uniqueness sweep is pinned below.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { STANDARD_144 } from '@mahjongsolitaire/core';
 import { faceStyle } from '../src/faces.js';
+import { TILE_H, TILE_W } from '../src/geometry.js';
 import {
+  FRAME_H,
+  FRAME_W,
+  GLYPH_FONT_SIZE,
   PIP_AREA,
   SEASON_GLYPH_POS,
   SEASON_GLYPH_SIZE,
   SEASON_NAME_POS,
   SEASON_NAME_SIZE,
   SEASON_SCATTER_SIZE,
-  TAG_BOX,
-  TAG_FONT_SIZE,
 } from '../src/pips.js';
+
+/** Every distinct face on a shipped board. */
+const DISTINCT_FACES = [...new Set(STANDARD_144)];
 
 test('dots ranks 1-9 draw exactly N ring pips', () => {
   for (let rank = 1; rank <= 9; rank++) {
@@ -62,23 +70,92 @@ test('pip positions stay inside the unit face area', () => {
 });
 
 test('honors and season tiles keep their distinct glyphs (no pips)', () => {
-  for (const face of ['wind-east', 'dragon-red', 'season-spring', 'season-winter']) {
+  for (const face of ['wind-east', 'dragon-red', 'dragon-green', 'season-spring', 'season-winter']) {
     const s = faceStyle(face);
     assert.equal(s.pips, undefined, face);
     assert.notEqual(s.glyph, '?');
+    assert.notEqual(s.glyph, '');
   }
+});
+
+// --- issue #152 / decision 0023: no corner tags, every face unique on its own ---
+
+test('no face carries a corner tag — the field is gone, not blanked', () => {
+  for (const face of DISTINCT_FACES) {
+    assert.ok(!('tag' in faceStyle(face)), `${face} still has a tag`);
+  }
+});
+
+test('every distinct face has a unique (art, colour) pair', () => {
+  // The bug: West Wind and White Dragon both tagged "W" and players matched by
+  // the tag. With the tag gone, what is left on the face has to do the whole
+  // job: the art (glyph, pip layout, or the drawn frame) together with its ink.
+  assert.equal(DISTINCT_FACES.length, 38, 'the 144-tile set has 38 distinct faces');
+  const seen = new Map<string, string>();
+  for (const face of DISTINCT_FACES) {
+    const s = faceStyle(face);
+    const key = JSON.stringify({
+      glyph: s.glyph,
+      pips: s.pips?.map((p) => [p.x, p.y]),
+      pipShape: s.pipShape,
+      frame: s.frame ?? false,
+      name: s.name,
+      color: s.color,
+    });
+    const other = seen.get(key);
+    assert.equal(other, undefined, `${face} and ${other} share their art and colour`);
+    seen.set(key, face);
+  }
+});
+
+test('no two single-glyph faces share a glyph-and-colour pair', () => {
+  // The tighter form of the same rule, for the faces where a collision would
+  // be hardest to notice: one character in one ink.
+  const seen = new Map<string, string>();
+  for (const face of DISTINCT_FACES) {
+    const s = faceStyle(face);
+    if (s.pips || s.frame || s.name) continue;
+    const key = `${s.glyph}/${s.color}`;
+    assert.equal(seen.get(key), undefined, `${face} and ${seen.get(key)} share ${key}`);
+    seen.set(key, face);
+  }
+});
+
+test('the dragons each paint in their own traditional ink, and purple is retired', () => {
+  const red = faceStyle('dragon-red');
+  const green = faceStyle('dragon-green');
+  const white = faceStyle('dragon-white');
+  assert.equal(red.glyph, '中');
+  assert.equal(red.color, faceStyle('char-1').color, 'Red Dragon shares the Characters red');
+  assert.equal(green.glyph, '發');
+  assert.equal(green.color, faceStyle('bamboo-1').color, 'Green Dragon shares the Bamboo pine');
+  assert.equal(white.frame, true, 'White Dragon is a drawn frame');
+  assert.equal(white.glyph, '', 'the 囗 glyph is gone');
+  assert.equal(white.color, faceStyle('wind-east').color, 'the frame is the Winds slate');
+  assert.equal(white.pips, undefined);
+  for (const face of DISTINCT_FACES) {
+    assert.notEqual(faceStyle(face).color, 0x7e22ce, `${face} still uses the retired purple`);
+  }
+  assert.equal(white.label, 'White Dragon', 'accessible names are unchanged');
+});
+
+test('the enlarged glyph and the White Dragon frame stay inside the pip area', () => {
+  // A bold sans CJK glyph is ~1em square; the frame's size is its own constant.
+  assert.ok(GLYPH_FONT_SIZE >= TILE_H * 0.5, 'glyph faces grew to ~52% of the tile height');
+  assert.ok(GLYPH_FONT_SIZE <= PIP_AREA.w && GLYPH_FONT_SIZE <= PIP_AREA.h, 'glyph box escapes the area');
+  assert.ok(FRAME_W <= PIP_AREA.w && FRAME_H <= PIP_AREA.h, 'frame escapes the area');
+  assert.ok(FRAME_W >= 0.45 * TILE_W && FRAME_H >= 0.55 * TILE_H, 'frame is big enough to read');
 });
 
 // --- issue #75 / decision 0012: four composed Season faces ---------------------
 
 const SEASON_FACES = ['season-spring', 'season-summer', 'season-fall', 'season-winter'];
 
-test('each season is a composed face: pictogram, two scatter glyphs, name, tag 1-4', () => {
+test('each season is a composed face: pictogram, two scatter glyphs, name', () => {
   const names = ['Spring', 'Summer', 'Fall', 'Winter'];
   SEASON_FACES.forEach((face, i) => {
     const s = faceStyle(face);
     assert.equal(s.name, names[i], face);
-    assert.equal(s.tag, String(i + 1), `${face} tag follows the traditional 1-4 order`);
     assert.equal(s.label, `Season ${names[i]}`, face);
     assert.equal(s.scatter?.length, 2, `${face} carries two scatter glyphs`);
     assert.notEqual(s.glyph, '?');
@@ -98,7 +175,7 @@ test('season identity is never color alone: pictogram+name differ even where ink
   assert.equal(seen.size, 4);
 });
 
-test('composed season art stays inside the pip area and clear of the corner tag', () => {
+test('composed season art stays inside the pip area', () => {
   // The lesson pips.ts opens with: face art sized inline can overflow the tile
   // and nothing throws. So bound the season text the way pips.test.ts bounds
   // pip art — approximate glyph boxes from the type sizes (a bold sans glyph is
@@ -113,11 +190,6 @@ test('composed season art stays inside the pip area and clear of the corner tag'
     assert.ok(b.x0 >= PIP_AREA.x - 0.5 && b.x1 <= PIP_AREA.x + PIP_AREA.w + 0.5, `${what} x`);
     assert.ok(b.y0 >= PIP_AREA.y - 0.5 && b.y1 <= PIP_AREA.y + PIP_AREA.h + 0.5, `${what} y`);
   };
-  const clearOfTag = (b: ReturnType<typeof box>, what: string) => {
-    const overlaps =
-      b.x0 < TAG_BOX.x + TAG_BOX.w && b.x1 > TAG_BOX.x && b.y0 < TAG_BOX.y + TAG_BOX.h && b.y1 > TAG_BOX.y;
-    assert.ok(!overlaps, `${what} rides under the corner tag`);
-  };
   const at = (x: number, y: number) => ({
     cx: PIP_AREA.x + x * PIP_AREA.w,
     cy: PIP_AREA.y + y * PIP_AREA.h,
@@ -127,27 +199,24 @@ test('composed season art stays inside the pip area and clear of the corner tag'
     const glyph = at(SEASON_GLYPH_POS.x, SEASON_GLYPH_POS.y);
     const glyphBox = box(glyph.cx, glyph.cy, SEASON_GLYPH_SIZE, SEASON_GLYPH_SIZE);
     inArea(glyphBox, `${face} pictogram`);
-    clearOfTag(glyphBox, `${face} pictogram`);
     for (const g of s.scatter!) {
       const c = at(g.x, g.y);
       const b = box(c.cx, c.cy, SEASON_SCATTER_SIZE, SEASON_SCATTER_SIZE);
       inArea(b, `${face} scatter`);
-      clearOfTag(b, `${face} scatter`);
     }
     const name = at(SEASON_NAME_POS.x, SEASON_NAME_POS.y);
     const nameBox = box(name.cx, name.cy, s.name!.length * 0.65 * SEASON_NAME_SIZE, SEASON_NAME_SIZE);
     inArea(nameBox, `${face} name`);
-    clearOfTag(nameBox, `${face} name`);
   }
 });
 
-test('season name text never shrinks below 70% of the corner-tag size', () => {
-  // The tag is the established smallest-legible type on a tile; the name is a
-  // whole word (more shape per point) so it may run smaller — but this is the
-  // floor QA confirmed legible at the smallest rendered tile, pinned so a
-  // future retheme cannot silently regress it (decision 0012's stated risk).
-  assert.ok(SEASON_NAME_SIZE >= 0.7 * TAG_FONT_SIZE);
-  assert.ok(SEASON_SCATTER_SIZE >= 0.6 * TAG_FONT_SIZE);
+test('season name text keeps its size — it is now the smallest ink on any face', () => {
+  // 14% of the tile height is the floor QA confirmed legible at the smallest
+  // rendered tile (it was 70% of the old corner tag, issue #152 kept it as is),
+  // pinned so a future retheme cannot silently regress it (decision 0012's
+  // stated risk).
+  assert.ok(SEASON_NAME_SIZE >= TILE_H * 0.14);
+  assert.ok(SEASON_SCATTER_SIZE >= TILE_H * 0.12);
 });
 
 test('flower faces no longer exist', () => {
