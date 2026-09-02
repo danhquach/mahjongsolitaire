@@ -6,6 +6,13 @@ commit and build time of the running bundle.
 
 ## 2026-09-02
 
+- Tile faces lost their small corner letters and numbers. The West Wind and
+  the White Dragon both carried a "W", and on a phone that corner was often
+  the only part of a covered tile you could see — so it looked like a pair
+  that wasn't one. Every face is now identifiable from its main art alone:
+  the glyphs are bigger, the Dots rings and Bamboo canes are bolder, and each
+  Dragon has its own colour — red 中, green 發, and the White Dragon is now a
+  white double frame instead of a box character (#152).
 - The tutorial now points. From step 2 on, everything except the thing the
   step is talking about goes dark: a free tile and a blocked tile side by side
   (tagged FREE and BLOCKED, with arrows), the matchable pair, the three
