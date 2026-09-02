@@ -17,28 +17,39 @@
   // turning it on globally would send every request, including plain page
   // loads, through the Worker first).
   "main": "worker/index.mjs",
-  // Issues #138 and #70 — the synced player profile and the Daily leaderboard
-  // need a D1 database bound as `DB`.
-  // It is deliberately left commented out: `wrangler deploy` fails outright on
-  // a binding whose `database_id` does not exist, so uncommenting this before
-  // the database is created would take the playtest deploy down. Until then
-  // `/api/profile*` and `/api/leaderboard/*` answer 503 `not_configured` and
-  // the game is unaffected (both are opt-in, and the client treats 503 as
-  // "unavailable, try later").
-  //
-  // One-time setup, then uncomment and paste the id it prints:
-  //   wrangler d1 create lantern-tiles
-  //   wrangler d1 execute lantern-tiles --remote --file worker/schema.sql
-  //   wrangler d1 execute lantern-tiles --remote --file worker/schema-0002-leaderboard.sql
-  //
-  // "d1_databases": [
-  //   { "binding": "DB", "database_name": "lantern-tiles", "database_id": "<id from d1 create>" }
-  // ],
   "vars": {
     // Resend's shared test sender (docs/decisions/0019): it can only deliver
     // to the Resend account's own address, so the account must be created
     // with this inbox, or a verified sending domain used instead.
     "FEEDBACK_TO": "dqtgametesting@gmail.com",
     "FEEDBACK_FROM": "Lantern Tiles <onboarding@resend.dev>"
-  }
+  },
+  // Issues #138 and #70 — the synced player profile and the Daily leaderboard.
+  // Created 2026-09-02 with `wrangler d1 create lantern-tiles`, and the schema
+  // applied to it in the same pass:
+  //   wrangler d1 execute lantern-tiles --remote --file worker/schema.sql
+  //   wrangler d1 execute lantern-tiles --remote --file worker/schema-0002-leaderboard.sql
+  //
+  // A later schema change gets its own numbered file and the same `--remote`
+  // run; every file is `IF NOT EXISTS` throughout, so re-applying them all is a
+  // safe no-op.
+  //
+  // `database_id` is an identifier, not a credential — it is useless without
+  // account authentication, which is why Cloudflare's config format expects it
+  // in a committed file.
+  //
+  // Two things `wrangler d1 create` wrote here have been changed on purpose:
+  //   * the binding is `DB`, not the generated `lantern_tiles`. The Worker
+  //     reads `env.DB` (worker/profile.mjs, worker/leaderboard.mjs); under any
+  //     other name both features answer 503 `not_configured` forever.
+  //   * `"remote": true` is dropped, so `wrangler dev` runs against a *local*
+  //     database. Left in, every local experiment would read and write the
+  //     live players and leaderboard.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lantern-tiles",
+      "database_id": "bbf822cf-134e-4d59-9575-db23832a35f0"
+    }
+  ]
 }
