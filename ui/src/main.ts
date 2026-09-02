@@ -62,7 +62,13 @@ import type {
 } from '@mahjongsolitaire/core';
 import { A11yLayer, Announcer, slotPosition } from './a11y.js';
 import type { A11yTile } from './a11y.js';
-import { BOOSTER_KINDS, BoosterCharges, FIRST_CLEAR_GRANT, MILESTONE_GRANT, milestoneDue } from './boosters.js';
+import {
+  BOOSTER_KINDS,
+  BoosterCharges,
+  MILESTONE_LEVEL_GRANT,
+  THIRD_CLEAR_GRANT,
+  thirdClearDue,
+} from './boosters.js';
 import type { BoosterKind, Counts } from './boosters.js';
 import { Elapsed } from './elapsed.js';
 import { Animator } from './effects.js';
@@ -189,7 +195,6 @@ async function start(): Promise<void> {
   const profileRowName = el<HTMLElement>('profile-row-name');
   const overlayStars = el<HTMLElement>('overlay-stars');
   const overlayGrant = el<HTMLElement>('overlay-grant');
-  const grantChoice = el<HTMLDivElement>('grant-choice');
   const dailyButton = el<HTMLButtonElement>('btn-daily');
   const dailyDateEl = el<HTMLElement>('daily-date');
   const dailyStatusEl = el<HTMLElement>('daily-status');
@@ -354,10 +359,6 @@ async function start(): Promise<void> {
   let flash: readonly number[] = [];
   let flashToken = 0;
   let overlayVisible = false;
-  /** A first-clear grant (issue #51) the player has not yet assigned a type
-   *  to. Settled by their pick, or — if they leave the dialog or the page
-   *  first — onto the booster they have fewest of, so it is never lost. */
-  let pendingChoice = false;
   /** A cross-layout level transition is in flight (issue #79): input on the
    *  outgoing board is dropped until the new deal is in. */
   let dealing = false;
@@ -539,7 +540,6 @@ async function start(): Promise<void> {
     overlayNew.textContent = daily === null ? 'New game' : 'Back to the ladder';
     overlayStars.hidden = true;
     overlayGrant.hidden = true;
-    grantChoice.hidden = true;
     if (status === 'won') {
       // The star rating (spec §6) is read off the deal before anything below
       // banks it: assists charged on this deal, and time against the band's
@@ -556,8 +556,8 @@ async function start(): Promise<void> {
         // player's record counts the same moment (issue #69), stars included.
         const cleared = progress.level;
         const atEnd = progress.advance() === cleared;
-        // Booster grants (issue #51) key off the record *before* this win is
-        // written: a first clear pays, a replay never does.
+        // Booster grants (issue #51, #117) key off the record *before* this
+        // win is written: only a first clear can pay, a replay never does.
         const firstClear = !hasCleared(record.value, cleared);
         record.recordWin(game.score, { level: cleared, stars });
         overlayTitle.textContent = `Level ${cleared} complete!`;
@@ -565,15 +565,18 @@ async function start(): Promise<void> {
         overlayNew.textContent = atEnd ? 'Play again' : 'Next level';
         const grantLines: string[] = [];
         if (firstClear) {
-          pendingChoice = true;
-          grantChoice.hidden = false;
-          grantLines.push(`First clear — pick a booster to earn ${FIRST_CLEAR_GRANT} charge.`);
-          // Every third distinct level first-cleared pays a random split.
+          // Every third distinct level first-cleared pays one at random; the
+          // dialog says which (issue #117: no pick, no per-level grant).
           const distinct = clearedLevelCount(record.value);
-          if (milestoneDue(distinct)) {
-            const got = charges.grantSplit(MILESTONE_GRANT, Math.random);
-            grantLines.push(`Milestone — ${distinct} levels cleared: ${describeGrant(got)}.`);
+          if (thirdClearDue(distinct)) {
+            const got = charges.grantSplit(THIRD_CLEAR_GRANT, Math.random);
+            grantLines.push(`${distinct} levels cleared: ${describeGrant(got)}.`);
           }
+          // The decade spike (a milestone level, issue #67) pays one of each.
+          if (bandForLevel(cleared).spike) {
+            grantLines.push(`Milestone level: ${describeGrant(charges.grantEach(MILESTONE_LEVEL_GRANT))}.`);
+          }
+          syncBoosterButtons();
         }
         if (grantLines.length > 0) {
           overlayGrant.textContent = grantLines.join(' ');
@@ -676,34 +679,6 @@ async function start(): Promise<void> {
   function describeGrant(got: Counts): string {
     const parts = BOOSTER_KINDS.filter((k) => got[k] > 0).map((k) => `+${got[k]} ${BOOSTER_LABEL[k]}`);
     return parts.length > 0 ? parts.join(', ') : 'nothing — every booster is full';
-  }
-
-  /** The player picked a type for the first-clear grant (issue #51). */
-  function chooseGrant(kind: BoosterKind): void {
-    if (!pendingChoice) return;
-    pendingChoice = false;
-    grantChoice.hidden = true;
-    const added = charges.grant(kind, FIRST_CLEAR_GRANT);
-    const said =
-      added > 0
-        ? `+${added} ${BOOSTER_LABEL[kind]} earned.`
-        : `${BOOSTER_LABEL[kind]} is already full — nothing added.`;
-    overlayGrant.textContent = `${overlayGrant.textContent} ${said}`.trim();
-    syncBoosterButtons();
-    announcer.say(`${said} ${charges.remaining(kind)} ${BOOSTER_PLURAL[kind]}.`);
-    // The pick buttons are gone; keep focus inside the dialog.
-    (overlayRestart.hidden ? overlayNew : overlayRestart).focus();
-  }
-
-  /** A first-clear grant left unclaimed goes to the scarcest booster rather
-   *  than being lost (issue #51) — on leaving the dialog, or the page. */
-  function settlePendingGrant(): void {
-    if (!pendingChoice) return;
-    pendingChoice = false;
-    grantChoice.hidden = true;
-    const kind = charges.scarcest();
-    const added = charges.grant(kind, FIRST_CLEAR_GRANT);
-    if (added > 0) announcer.say(`+${added} ${BOOSTER_LABEL[kind]} added — the booster you had fewest of.`);
   }
 
   /** Close the end-of-level dialog. Returns whether it had been open. */
@@ -1479,7 +1454,6 @@ async function start(): Promise<void> {
   /** Put a fresh deal from `seed` on the (already loaded) layout and reset
    *  everything per-deal: effects, hint, assist counts, clock, dialog. */
   function beginDeal(seed: number): void {
-    settlePendingGrant();
     game = dealCurrentLevel(seed);
     applyPalette();
     flash = [];
@@ -1571,13 +1545,8 @@ async function start(): Promise<void> {
     }
   });
   window.addEventListener('pagehide', () => {
-    // A first-clear grant still waiting on a pick must not die with the page.
-    settlePendingGrant();
     persist();
   });
-  for (const kind of BOOSTER_KINDS) {
-    el<HTMLButtonElement>(`grant-${kind}`).addEventListener('click', () => chooseGrant(kind));
-  }
 
   // Pixi sized itself to #board during init, before any placement existed, so
   // the canvas has to be re-read once there is one — this is also the call that
@@ -1641,9 +1610,9 @@ async function start(): Promise<void> {
     assists(): { hints: number; undos: number; shuffles: number } {
       return { hints: hintCount, undos: undoCount, shuffles: shuffleCount };
     },
-    /** Booster grant state on the win dialog (issue #51 QA). */
-    grantState(): { pending: boolean; text: string | null } {
-      return { pending: pendingChoice, text: overlayGrant.hidden ? null : overlayGrant.textContent };
+    /** The booster grant line on the win dialog, null while hidden (issue #51 QA). */
+    grantText(): string | null {
+      return overlayGrant.hidden ? null : overlayGrant.textContent;
     },
     /** The star row as the win dialog shows it: null while hidden. */
     starsShown(): string | null {

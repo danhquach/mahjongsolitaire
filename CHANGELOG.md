@@ -6,6 +6,15 @@ commit and build time of the running bundle.
 
 ## 2026-09-01
 
+- Booster rewards no longer ask you to choose, and are rarer. The
+  per-level first-clear grant is gone — it was too easy to stock up on.
+  Every third new level cleared pays one charge of a random booster (it used
+  to pay three) and the level-complete dialog just says which ("3 levels
+  cleared: +1 Shuffle"); the first clear of a milestone level — 10, 20,
+  30, … — pays one of every booster. Grants that land on the same clear
+  stack and are each listed. The pick buttons are gone, which also removes
+  the dialog that could come back after a pick with dead buttons (#116,
+  #117).
 - The timer is gone: the Time chip and the "Show a timer" setting are
   removed (PM request). Nothing about pace is shown on the board; the game
   still keeps time quietly for the save and the star rating's baseline.

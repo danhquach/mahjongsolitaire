@@ -4,13 +4,18 @@
 // ads-independent channels, so a player who runs dry can always earn charges
 // back without enabling ads or buying anything (PM numbers, 2026-08-31):
 //
-//   * level first-clear: +1, the player picks the type (never on a replay —
-//     levels are one tap from a restart, and a grant per completion would
-//     mint charges off one easy level);
-//   * level milestone: +3 split at random across the three types, every
-//     third *distinct* level first-cleared;
+//   * every third *distinct* level first-cleared: +1 of a random type — the
+//     dialog announces what landed, the player never picks (issue #117; the
+//     per-level first-clear grant #51 had was dropped there as too easy to
+//     stock up on). Replays never count: levels are one tap from a restart,
+//     and a grant per completion would mint charges off one easy level;
+//   * milestone level (the decade spike — 10, 20, 30, …) first-cleared:
+//     +1 of *each* type — the hard level pays the full set (issue #117);
 //   * daily first launch: +1 of each, once per calendar day — the renewable
 //     trickle that covers a player who is completely out.
+//
+// Both level channels can land on one clear (level 30 first-cleared as the
+// 15th distinct clear); the dialog lists each.
 //
 // Every channel clamps at BOOSTER_CAP (99) rather than refusing. Rewarded
 // video and an IAP bundle (spec §5) would sit on top of this later; the game
@@ -37,12 +42,13 @@ export const STARTING_GRANT = 5;
 /** Issue #51 (PM, 2026-08-31): the ceiling any channel clamps to — a
  *  two-digit display, and no unbounded integer. */
 export const BOOSTER_CAP = 99;
-/** First clear of a ladder level: one charge of the player's choosing. */
-export const FIRST_CLEAR_GRANT = 1;
-/** Every MILESTONE_EVERY distinct first-clears: MILESTONE_GRANT charges,
- *  split at random across the three types. */
-export const MILESTONE_GRANT = 3;
-export const MILESTONE_EVERY = 3;
+/** Every THIRD_CLEAR_EVERY distinct first-clears: THIRD_CLEAR_GRANT charges
+ *  of a random type (issue #117: down from 3). */
+export const THIRD_CLEAR_GRANT = 1;
+export const THIRD_CLEAR_EVERY = 3;
+/** First clear of a milestone level (the ladder's decade spike): this many
+ *  of *each* booster (issue #117). */
+export const MILESTONE_LEVEL_GRANT = 1;
 /** First launch of a calendar day: this many of *each* booster. */
 export const DAILY_LOGIN_GRANT = 1;
 
@@ -93,9 +99,9 @@ function load(storage: ChargeStorage | undefined, key: string): Stored {
   return { counts, lastLoginGrant: isDateKey(last) ? last : null };
 }
 
-/** Does the Nth distinct first-clear land on a milestone (issue #51)? */
-export function milestoneDue(distinctCleared: number): boolean {
-  return distinctCleared > 0 && distinctCleared % MILESTONE_EVERY === 0;
+/** Does the Nth distinct first-clear pay the every-third bonus (issue #51)? */
+export function thirdClearDue(distinctCleared: number): boolean {
+  return distinctCleared > 0 && distinctCleared % THIRD_CLEAR_EVERY === 0;
 }
 
 /**
@@ -170,23 +176,24 @@ export class BoosterCharges {
   grantDailyLogin(today: string): Counts | null {
     if (!isDateKey(today)) throw new RangeError(`not a date key: ${today}`);
     if (this.lastLoginGrant !== null && daysBetween(this.lastLoginGrant, today) < 1) return null;
+    // The date is set before the single write below, so a failed write drops
+    // the date and the charges together.
     this.lastLoginGrant = today;
+    return this.grantEach(DAILY_LOGIN_GRANT);
+  }
+
+  /** Add `n` charges of *every* booster, each clamped at the cap, in one
+   *  write. Returns what actually landed per type. */
+  grantEach(n: number): Counts {
+    if (!Number.isInteger(n) || n < 0) throw new RangeError(`grant must be a non-negative integer: ${n}`);
     const got: Counts = { hint: 0, undo: 0, shuffle: 0 };
     for (const kind of BOOSTER_KINDS) {
-      // Clamp by hand rather than via grant(): one write for the whole grant,
-      // date included, so a failed write drops both together.
-      const added = Math.min(DAILY_LOGIN_GRANT, BOOSTER_CAP - this.counts[kind]);
+      const added = Math.min(n, BOOSTER_CAP - this.counts[kind]);
       this.counts[kind] += added;
       got[kind] = added;
     }
     this.persist();
     return got;
-  }
-
-  /** The booster the player has fewest of (ties go in rail order) — where an
-   *  unclaimed first-clear grant lands. */
-  scarcest(): BoosterKind {
-    return BOOSTER_KINDS.reduce((best, kind) => (this.counts[kind] < this.counts[best] ? kind : best));
   }
 
   private persist(): void {
