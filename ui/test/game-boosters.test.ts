@@ -50,6 +50,21 @@ test('hint returns a playable pair', () => {
   assert.equal(canMatch(game.board, a, b).ok, true);
 });
 
+test('peekHint shows the next hint without advancing the cycle (issue #59 tutorial demo)', () => {
+  const game = newGame();
+  const peeked = game.peekHint();
+  assert.notEqual(peeked, null);
+  assert.deepEqual(game.peekHint(), peeked, 'peeking twice is idempotent');
+  assert.deepEqual(game.hint(), peeked, "the player's first Hint press still gets the same pair");
+  // The whole cycle after a peek is the cycle an un-peeked game gives.
+  const control = newGame();
+  assert.deepEqual(control.hint(), peeked);
+  const after = Array.from({ length: 4 }, () => key(game.hint()!));
+  const controlAfter = Array.from({ length: 4 }, () => key(control.hint()!));
+  assert.deepEqual(after, controlAfter, 'the peek did not advance the cycle');
+  assert.equal(new Game(STUCK).peekHint(), null, 'nothing to show on a board with no free pair');
+});
+
 test("hint's first pair keeps the board solvable", () => {
   // The point of a solver-backed hint: following it never loses the deal.
   for (const seed of [1, 2, 3, 4, 5]) {

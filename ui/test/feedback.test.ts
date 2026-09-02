@@ -14,6 +14,7 @@ const BASE: Settings = {
   haptics: true,
   ads: false,
   highlightFree: false,
+  showTutorial: false,
   tileSize: 'm',
   reducedMotion: false,
 };

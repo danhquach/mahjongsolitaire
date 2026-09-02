@@ -23,6 +23,10 @@
 //      Settings, its fields are labelled and ≥ 48dp, Send starts disabled,
 //      and Escape returns focus to the row that opened it; its attachment
 //      controls (issue #130) are named and ≥ 48dp too.
+//   8. the first-run tutorial (issue #59) is a labelled modal card with focus
+//      inside it and the background inert, every step is announced, Next and
+//      Skip are reachable and live on the demonstration step, Escape skips,
+//      and focus returns to the board when it closes.
 //
 // Real VoiceOver/TalkBack device passes remain a Phase 5 manual item; this
 // audit is the automated gate that keeps the semantics from regressing.
@@ -103,6 +107,12 @@ for (const vp of VIEWPORTS) {
   // which inerts everything the audit walks. Answer it as a guest up front.
   await ctx.addInitScript(() => {
     localStorage.setItem('mahjong.profile.v1', JSON.stringify({ choice: 'guest' }));
+    // Issue #59: a fresh install also gets the tutorial card over the board,
+    // which inerts everything too. Sections 1–7 audit the bare board; section
+    // 8 turns the tutorial back on through Settings and audits it on its own.
+    if (localStorage.getItem('mahjong.settings.v1') === null) {
+      localStorage.setItem('mahjong.settings.v1', JSON.stringify({ showTutorial: false }));
+    }
   });
   await page.goto(url);
   await page.waitForFunction(() => window.__slice !== undefined);
@@ -850,13 +860,13 @@ for (const vp of VIEWPORTS) {
       settingsControls.filter((c) => c.small),
     );
 
-    // Ten controls: the profile row (issue #69), five toggles (issue #45
-    // added Highlight free tiles, issue #44 added Reduced motion; the timer
-    // toggle was retired 2026-09-01), the tile-size slider row (issue #139
-    // replaced four radios), the Send feedback row (issue #118), the version
-    // row (issue #81), and Done. The Daily Challenge row moved to the HUD
-    // (issue #136).
-    check(settingsControls.length === 10, 'settings screen exposes all ten controls', {
+    // Eleven controls: the profile row (issue #69), six toggles (issue #45
+    // added Highlight free tiles, issue #44 added Reduced motion, issue #59
+    // added Show tutorial; the timer toggle was retired 2026-09-01), the
+    // tile-size slider row (issue #139 replaced four radios), the Send
+    // feedback row (issue #118), the version row (issue #81), and Done. The
+    // Daily Challenge row moved to the HUD (issue #136).
+    check(settingsControls.length === 11, 'settings screen exposes all eleven controls', {
       count: settingsControls.length,
     });
 
@@ -1052,6 +1062,173 @@ for (const vp of VIEWPORTS) {
     check(!closed.visible, 'Escape closes the feedback form', closed);
     check(closed.focus === 'btn-settings', 'focus returns to the settings button', closed);
     check(closed.summaryValue === 'Tiles overlap', 'Escape keeps the typed text, not just discards it', closed);
+  }
+
+  // --- 8. First-run tutorial (issue #59): a labelled modal card over the -----
+  //        board, focus inside it, the background inert, every step announced,
+  //        Next / Skip reachable and live on the demonstration step, Escape =
+  //        Skip, and focus back on the board when it closes.
+  {
+    // The init script seeded the toggle OFF so sections 1–7 audit the bare
+    // board; turn it back on through the real control, then start a level —
+    // ON arms the tutorial for the next deal, it never opens mid-level.
+    const hintBefore = await page.evaluate(() => window.__slice.boosterCharges().hint);
+    await page.click('#btn-settings');
+    await page.click('#set-show-tutorial');
+    const armed = await page.evaluate(() => ({
+      checked: document.getElementById('set-show-tutorial').checked,
+      setting: window.__slice.settings().showTutorial,
+      announced: document.getElementById('a11y-status').textContent,
+      visible: window.__slice.tutorial().visible,
+    }));
+    check(armed.checked && armed.setting, 'the Show tutorial toggle writes through at once', armed);
+    check(armed.announced === 'Show tutorial on.', 'the toggle announces its state', armed);
+    check(!armed.visible, 'turning the toggle on does not open the tutorial mid-level', armed);
+    await page.keyboard.press('Escape');
+    await page.click('#btn-new');
+    await page.waitForFunction(() => !window.__slice.dealing && window.__slice.tutorial().visible);
+    const open = await page.evaluate(() => {
+      const panel = document.getElementById('tutorial');
+      const buttons = ['tutorial-skip', 'tutorial-next'].map((id) => {
+        const r = document.getElementById(id).getBoundingClientRect();
+        return { id, w: Math.round(r.width), h: Math.round(r.height) };
+      });
+      return {
+        role: panel.getAttribute('role'),
+        modal: panel.getAttribute('aria-modal'),
+        labelled: panel.getAttribute('aria-labelledby'),
+        described: panel.getAttribute('aria-describedby'),
+        title: document.getElementById('tutorial-title').textContent,
+        text: document.getElementById('tutorial-text').textContent,
+        focusInside: panel.contains(document.activeElement),
+        boardInert: document.getElementById('a11y-layer').hasAttribute('inert'),
+        railInert: document.getElementById('booster-rail').hasAttribute('inert'),
+        headerInert: document.getElementById('app-header').hasAttribute('inert'),
+        settingsInert: document.getElementById('btn-settings').hasAttribute('inert'),
+        announced: document.getElementById('a11y-status').textContent,
+        step: window.__slice.tutorial().step,
+        nextLabel: document.getElementById('tutorial-next').textContent,
+        buttons,
+      };
+    });
+    check(
+      open.role === 'dialog' &&
+        open.modal === 'true' &&
+        open.labelled === 'tutorial-title' &&
+        open.described === 'tutorial-text' &&
+        open.title.length > 0 &&
+        open.text.length > 0,
+      'tutorial card is a labelled, described modal dialog',
+      open,
+    );
+    check(open.focusInside, 'focus moves into the step card', open);
+    check(
+      open.boardInert && open.railInert && open.headerInert && open.settingsInert,
+      'board, boosters, header and Settings are inert while the tutorial is up',
+      open,
+    );
+    check(open.step === 1 && open.nextLabel === 'Next', 'opens on step 1 with a Next button', open);
+    check(/^Tutorial, step 1 of 6\. /.test(open.announced), 'step 1 is announced', open.announced);
+    check(
+      open.buttons.every((b) => b.h >= MIN_TOUCH_TARGET && b.w >= MIN_TOUCH_TARGET),
+      'Skip and Next are ≥ 48dp targets',
+      open.buttons,
+    );
+
+    // Tab walks Skip and Next and never reaches the controls behind the card.
+    const tabbed = [];
+    for (let i = 0; i < 4; i++) {
+      await page.keyboard.press('Tab');
+      tabbed.push(await page.evaluate(() => document.activeElement?.id ?? document.activeElement?.tagName));
+    }
+    check(
+      tabbed.includes('tutorial-skip') &&
+        tabbed.includes('tutorial-next') &&
+        tabbed.every((id) => !BACKGROUND_CONTROLS.includes(id) && id !== 'btn-settings'),
+      'Tab reaches Skip and Next and never the board controls behind the card',
+      tabbed,
+    );
+
+    // Step 3 highlights a real free pair on this board, spends no Hint charge,
+    // and leaves Next / Skip live — the match is a demonstration, not a gate.
+    await page.click('#tutorial-next');
+    const step2 = await page.evaluate(() => document.getElementById('a11y-status').textContent);
+    check(/^Tutorial, step 2 of 6\. /.test(step2), 'step 2 is announced', step2);
+    await page.click('#tutorial-next');
+    const step3 = await page.evaluate(() => {
+      const g = window.__slice.game;
+      const pair = window.__slice.hintPair;
+      return {
+        step: window.__slice.tutorial().step,
+        pairLen: pair.length,
+        free: pair.every((id) => g.board.isFree(id)),
+        same: pair.length === 2 && g.board.get(pair[0]).face === g.board.get(pair[1]).face,
+        announced: document.getElementById('a11y-status').textContent,
+        hint: window.__slice.boosterCharges().hint,
+        nextDisabled: document.getElementById('tutorial-next').disabled,
+        skipDisabled: document.getElementById('tutorial-skip').disabled,
+      };
+    });
+    check(
+      step3.step === 3 && step3.pairLen === 2 && step3.free && step3.same,
+      'step 3 highlights a genuinely matchable free pair on the board in play',
+      step3,
+    );
+    check(
+      /^Tutorial, step 3 of 6\. .*Highlighted: two .* tiles, /.test(step3.announced),
+      'step 3 announces which pair is highlighted, in board words',
+      step3.announced,
+    );
+    check(!step3.nextDisabled && !step3.skipDisabled, 'Next and Skip stay live on the demonstration step', step3);
+    check(step3.hint === hintBefore, 'the demonstration spends no Hint charge', { before: hintBefore, after: step3.hint });
+
+    // Steps 4–6; the last step's button reads Done and closes the card.
+    for (let i = 0; i < 3; i++) await page.click('#tutorial-next');
+    const last = await page.evaluate(() => ({
+      step: window.__slice.tutorial().step,
+      nextLabel: document.getElementById('tutorial-next').textContent,
+      announced: document.getElementById('a11y-status').textContent,
+      pairLen: window.__slice.hintPair.length,
+    }));
+    check(last.step === 6 && last.nextLabel === 'Done', 'the last step offers Done', last);
+    check(/^Tutorial, step 6 of 6\. /.test(last.announced), 'step 6 is announced', last.announced);
+    check(last.pairLen === 0, 'the step-3 highlight leaves with the step', last);
+    await page.click('#tutorial-next');
+    const done = await page.evaluate(() => ({
+      visible: window.__slice.tutorial().visible,
+      panelVisible: document.getElementById('tutorial').classList.contains('visible'),
+      boardInert: document.getElementById('a11y-layer').hasAttribute('inert'),
+      focusIsTile: document.activeElement?.classList.contains('tile-node') === true,
+      announced: document.getElementById('a11y-status').textContent,
+      setting: window.__slice.settings().showTutorial,
+      hint: window.__slice.boosterCharges().hint,
+    }));
+    check(!done.visible && !done.panelVisible, 'Done closes the card', done);
+    check(!done.boardInert && done.focusIsTile, 'closing hands the board back, focus on a tile', done);
+    check(done.announced === 'Tutorial finished. The board is yours.', 'completion is announced', done);
+    check(done.setting === false, 'completing turns Show tutorial OFF', done);
+    check(done.hint === hintBefore, 'the whole tutorial spent no charge', { before: hintBefore, after: done.hint });
+
+    // Escape is Skip, from any step, and focus comes back to the board.
+    await page.click('#btn-settings');
+    await page.click('#set-show-tutorial');
+    await page.keyboard.press('Escape');
+    await page.click('#btn-new');
+    await page.waitForFunction(() => !window.__slice.dealing && window.__slice.tutorial().visible);
+    await page.click('#tutorial-next');
+    await page.keyboard.press('Escape');
+    const skipped = await page.evaluate(() => ({
+      visible: window.__slice.tutorial().visible,
+      boardInert: document.getElementById('a11y-layer').hasAttribute('inert'),
+      focusIsTile: document.activeElement?.classList.contains('tile-node') === true,
+      announced: document.getElementById('a11y-status').textContent,
+      setting: window.__slice.settings().showTutorial,
+      status: window.__slice.game.status(),
+    }));
+    check(!skipped.visible && !skipped.boardInert, 'Escape skips the tutorial from step 2', skipped);
+    check(skipped.focusIsTile && skipped.status === 'playing', 'a skip leaves a playable board with focus on a tile', skipped);
+    check(skipped.announced === 'Tutorial skipped. The board is yours.', 'the skip is announced', skipped);
+    check(skipped.setting === false, 'skipping turns Show tutorial OFF too', skipped);
   }
 
   await ctx.close();

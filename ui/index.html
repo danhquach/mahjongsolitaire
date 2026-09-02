@@ -745,6 +745,97 @@
         font-size: 15px;
         color: #3f6212;
       }
+      /* --- Tutorial card (issue #59) -----------------------------------------
+         Same card language as the other dialogs, but no dimmed backdrop and no
+         pointer capture outside the card: step 3 points at a real pair on the
+         board, which has to stay legible. The background is inert (not merely
+         covered) while the card is up, so nothing behind it is reachable. It
+         sits at the bottom edge, where it covers the least board. */
+      #tutorial {
+        position: absolute;
+        inset: 0;
+        display: none;
+        align-items: flex-end;
+        justify-content: center;
+        pointer-events: none;
+      }
+      #tutorial.visible {
+        display: flex;
+      }
+      #tutorial .card {
+        pointer-events: auto;
+        box-sizing: border-box;
+        width: min(420px, 92vw);
+        margin: 0 0 12px;
+        padding: 16px 20px;
+        background: #f0fdf4;
+        color: #14532d;
+        border-radius: 12px;
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+        font-size: 18px; /* spec §7: ≥ 18sp body */
+        text-align: left;
+        animation: tutorial-in 180ms ease-out;
+      }
+      #tutorial .card:focus {
+        outline: none;
+      }
+      #tutorial .card:focus-visible {
+        outline: 3px solid #166534;
+        outline-offset: 2px;
+      }
+      #tutorial .step {
+        margin: 0;
+        font-size: 14px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #3f6212;
+      }
+      #tutorial h2 {
+        margin: 2px 0 6px;
+        font-size: 22px;
+      }
+      #tutorial p {
+        margin: 0;
+      }
+      #tutorial .tutorial-actions {
+        display: flex;
+        gap: 12px;
+        margin-top: 14px;
+      }
+      #tutorial .tutorial-actions > button {
+        flex: 1;
+        box-sizing: border-box;
+        font-size: 18px;
+        min-height: 48px; /* spec §7: 48dp touch targets */
+        padding: 8px 20px;
+        border-radius: 8px;
+        border: 1px solid #14532d;
+        background: #166534;
+        color: #f0fdf4;
+      }
+      #tutorial .tutorial-actions > button.secondary {
+        background: none;
+        color: #166534;
+        border-color: #bbf7d0;
+      }
+      @keyframes tutorial-in {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+      /* Reduced motion (OS preference or the in-app toggle, issue #44): the
+         card just appears. Step changes are an instant swap either way. */
+      @media (prefers-reduced-motion: reduce) {
+        #tutorial .card {
+          animation: none;
+        }
+      }
+      #app[data-motion='reduced'] #tutorial .card {
+        animation: none;
+      }
       #settings fieldset,
       #profile fieldset {
         margin: 12px 0 0;
@@ -1642,6 +1733,28 @@
               <button id="welcome-guest" type="button">Play as guest</button>
             </div>
           </div>
+          <!-- First-run tutorial (issue #59): six steps over the dealt board,
+               Next / Skip on every one, Esc = Skip. No dark backdrop — step 3
+               highlights a real pair on the board behind it — but the
+               background is inert while the card is up, and the card itself
+               takes focus so the dialog's name and text are read first. -->
+          <div
+            id="tutorial"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="tutorial-title"
+            aria-describedby="tutorial-text"
+          >
+            <div class="card" id="tutorial-card" tabindex="-1">
+              <p class="step" id="tutorial-step"></p>
+              <h2 id="tutorial-title"></h2>
+              <p id="tutorial-text"></p>
+              <div class="tutorial-actions">
+                <button id="tutorial-skip" type="button" class="secondary">Skip</button>
+                <button id="tutorial-next" type="button">Next</button>
+              </div>
+            </div>
+          </div>
           <div id="settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
             <div class="card">
               <h2 id="settings-title">Settings</h2>
@@ -1691,6 +1804,15 @@
                 <span>
                   Highlight free tiles
                   <span class="hint">Dims the tiles that are covered or hemmed in.</span>
+                </span>
+              </label>
+              <!-- Issue #59: ON for a fresh install, OFF once the walkthrough is
+                   completed or skipped; ON again replays it on the next deal. -->
+              <label class="row" for="set-show-tutorial">
+                <input type="checkbox" id="set-show-tutorial" />
+                <span>
+                  Show tutorial
+                  <span class="hint">Walks through the basics when the next level starts.</span>
                 </span>
               </label>
               <!-- Tile size as one row (issue #139): a three-stop slider —

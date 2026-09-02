@@ -6,6 +6,14 @@ commit and build time of the running bundle.
 
 ## 2026-09-02
 
+- New players get a short tutorial. The first level opens with a six-step
+  walkthrough — the goal, what makes a tile free, a real matchable pair
+  highlighted on your own board, the three boosters, the holder, and how
+  scoring works — with Next and Skip on every step (Esc skips too). Nothing is
+  gated: you never have to make the demonstrated match to move on, and the
+  tutorial spends no booster charge. Once you finish or skip it, it stays out
+  of the way; "Show tutorial" in Settings brings it back on the next level for
+  a refresher (#59).
 - The Daily Challenge now has a leaderboard. Everyone gets the same board on
   a given date, so the scores are actually comparable — clear the Daily and a
   "Leaderboard" button on the win screen shows the top ten, your rank, and the

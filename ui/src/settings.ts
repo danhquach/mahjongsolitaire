@@ -1,4 +1,4 @@
-// Player settings (issue #14, spec §7). Six independent preferences, each
+// Player settings (issue #14, spec §7). Seven independent preferences, each
 // persisted the moment it changes so the settings screen needs no Save button:
 //
 //   audio        gentle sound effects  — default ON (§7)
@@ -9,6 +9,8 @@
 //   ads          ads master toggle     — default OFF (§8, decision 0004, #3)
 //   highlightFree dim the blocked tiles — default OFF (issue #45)
 //   reducedMotion cross-fade instead of flying tiles — default OFF (issue #44)
+//   showTutorial  first-run walkthrough      — default ON (issue #59); flipped
+//                                        OFF once completed or skipped
 //
 // Nothing reads `ads` yet: ads are suspended for v1.0 and issue #20 gates the
 // ad-SDK init on this toggle in Phase 4. It ships now so the settings screen
@@ -71,6 +73,13 @@ export interface Settings {
    * player opt in without changing an OS setting they may not control.
    */
   readonly reducedMotion: boolean;
+  /**
+   * Run the six-step walkthrough on the next deal (issue #59). ON for a fresh
+   * install so the first level teaches itself; main.ts turns it OFF the moment
+   * the tutorial is completed or skipped, and a player who wants a refresher
+   * turns it back on in Settings.
+   */
+  readonly showTutorial: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -80,7 +89,11 @@ export const DEFAULT_SETTINGS: Settings = {
   ads: false,
   highlightFree: false,
   reducedMotion: false,
+  showTutorial: true,
 };
+
+/** The boolean preferences, as the toggles and the parser see them. */
+export type BooleanSetting = 'audio' | 'haptics' | 'ads' | 'highlightFree' | 'reducedMotion' | 'showTutorial';
 
 export const SETTINGS_STORAGE_KEY = 'mahjong.settings.v1';
 
@@ -100,9 +113,8 @@ function parseTileSize(value: unknown): TileSize {
 export function parseSettings(record: unknown): Settings {
   if (typeof record !== 'object' || record === null) return DEFAULT_SETTINGS;
   const raw = record as Record<string, unknown>;
-  const bool = (
-    key: 'audio' | 'haptics' | 'ads' | 'highlightFree' | 'reducedMotion',
-  ): boolean => (typeof raw[key] === 'boolean' ? (raw[key] as boolean) : DEFAULT_SETTINGS[key]);
+  const bool = (key: BooleanSetting): boolean =>
+    typeof raw[key] === 'boolean' ? (raw[key] as boolean) : DEFAULT_SETTINGS[key];
   return {
     audio: bool('audio'),
     haptics: bool('haptics'),
@@ -110,6 +122,7 @@ export function parseSettings(record: unknown): Settings {
     ads: bool('ads'),
     highlightFree: bool('highlightFree'),
     reducedMotion: bool('reducedMotion'),
+    showTutorial: bool('showTutorial'),
   };
 }
 

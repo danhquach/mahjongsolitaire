@@ -348,11 +348,20 @@ export class Game {
    * the board has no matching free pair at all — nothing to charge for.
    */
   hint(): HintPair | null {
+    const pair = this.peekHint();
+    if (pair !== null) this.hintCursor++;
+    return pair;
+  }
+
+  /**
+   * The pair the next `hint()` would offer, without advancing the cycle. The
+   * tutorial's step-3 demonstration (issue #59) uses this so the player's own
+   * first Hint press still gets the solver's move, not the second-ranked pair.
+   */
+  peekHint(): HintPair | null {
     if (this.hintPairs === null) this.hintPairs = this.rankedPairs();
     if (this.hintPairs.length === 0) return null;
-    const pair = this.hintPairs[this.hintCursor % this.hintPairs.length]!;
-    this.hintCursor++;
-    return pair;
+    return this.hintPairs[this.hintCursor % this.hintPairs.length]!;
   }
 
   /**
