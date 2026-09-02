@@ -72,7 +72,8 @@ import type { Cue } from './feedback.js';
 import { faceStyle } from './faces.js';
 import { Game } from './game.js';
 import { HolderStrip } from './holder.js';
-import { BOARD_FELT } from './depth.js';
+import { BOARD_FELT, PALETTES, cssColor } from './depth.js';
+import type { BoardPalette } from './depth.js';
 import { SIDE_DEPTH, TILE_H, TILE_W, tileRect } from './geometry.js';
 import type { Rect } from './geometry.js';
 import { hitTest } from './hit-test.js';
@@ -267,6 +268,23 @@ async function start(): Promise<void> {
     return daily === null ? bandForLevel(progress.level).band : DAILY_BAND;
   }
 
+  /** The palette the deal on the table wears (issue #67): the Daily's, the
+   *  decade milestone's (decision 0011's spike levels), else the default. */
+  function paletteInPlay(): BoardPalette {
+    if (daily !== null) return PALETTES.daily;
+    return bandForLevel(progress.level).spike ? PALETTES.milestone : PALETTES.lantern;
+  }
+
+  /** Hand the renderer the palette in force and paint the play column's felt
+   *  to match (the canvas is only part of it — see #play-area in index.html).
+   *  Colour never carries the meaning alone (spec §7): the Level chip's label
+   *  names the level kind too (syncHudIdentity). */
+  function applyPalette(): void {
+    const palette = paletteInPlay();
+    renderer.setPalette(palette);
+    appRoot.style.setProperty('--felt', cssColor(palette.felt));
+  }
+
   /** A fresh seed for the same level (issue #94): New game must visibly
    *  re-deal, so never the seed already on the table. Randomness is fine here
    *  — determinism only matters *within* a deal, and the save carries whatever
@@ -306,6 +324,9 @@ async function start(): Promise<void> {
 
   const renderer = new BoardRenderer(app, layout.slots);
   const announcer = new Announcer(el<HTMLElement>('a11y-status'));
+  // The booted deal's palette (issue #67) — a resumed Daily or a milestone
+  // level boots into its own colours, not the default's.
+  applyPalette();
 
   const settings = new SettingsStore(storage);
   const feedback = new Feedback(() => settings.value, webAudioPlayer(), navigatorVibrate());
@@ -773,8 +794,10 @@ async function start(): Promise<void> {
    *  a named player, plain "Level" for a guest or before the welcome gate is
    *  answered — a guest chose to stay anonymous. */
   function syncHudIdentity(): void {
-    // On a Daily board the chip is "Daily" over the date (issue #19).
-    const what = daily === null ? 'Level' : 'Daily';
+    // On a Daily board the chip is "Daily" over the date (issue #19); on a
+    // decade milestone it is "Milestone" over the number (issue #67) — the
+    // words that go with the palette, so colour never carries it alone.
+    const what = daily !== null ? 'Daily' : bandForLevel(progress.level).spike ? 'Milestone' : 'Level';
     el<HTMLElement>('level-label').textContent =
       profile.value.choice === 'named' ? `${profile.value.name} · ${what}` : what;
   }
@@ -1412,9 +1435,15 @@ async function start(): Promise<void> {
           ? `Level ${progress.level} restarted. ${game.tilesLeft} tiles.`
           : `Daily Challenge restarted. ${game.tilesLeft} tiles.`
         : leavingDaily
-          ? `Back to the ladder. Level ${progress.level}. ${game.tilesLeft} tiles.`
-          : `New game dealt. Level ${progress.level}. ${game.tilesLeft} tiles.`,
+          ? `Back to the ladder. Level ${progress.level}${milestoneNote()}. ${game.tilesLeft} tiles.`
+          : `New game dealt. Level ${progress.level}${milestoneNote()}. ${game.tilesLeft} tiles.`,
     );
+  }
+
+  /** ", a milestone level" on a decade spike (issue #67) — the spoken half
+   *  of the palette swap — and nothing otherwise. */
+  function milestoneNote(): string {
+    return bandForLevel(progress.level).spike ? ', a milestone level' : '';
   }
 
   /**
@@ -1466,6 +1495,7 @@ async function start(): Promise<void> {
   function beginDeal(seed: number): void {
     settlePendingGrant();
     game = dealCurrentLevel(seed);
+    applyPalette();
     flash = [];
     flashToken++;
     animator.clear();

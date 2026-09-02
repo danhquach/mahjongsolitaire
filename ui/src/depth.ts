@@ -50,6 +50,78 @@ export const BASE_SIDE = 0xcbb891;
  * — so the outline is the only thing separating them.
  */
 export const BASE_BORDER = 0x6b5c3a;
+
+/**
+ * A board palette (issue #67): everything about a board's look that is *not*
+ * the face art. Special levels swap the palette; the face fill, suit inks,
+ * glyphs and corner tags stay exactly as they are (decision 0002 — the
+ * linework is theme-independent), so the ink-vs-face contrast proof is the
+ * same for every palette and only the border, side, back and felt need
+ * re-proving — which ui/test/depth.test.ts does per palette. A value the
+ * renderer is handed, not a per-level special case: the v1.1+ themes work
+ * (spec §2.2) adds palettes here, nothing else changes.
+ */
+export interface BoardPalette {
+  readonly id: PaletteId;
+  /** Spoken with the level heading — colour alone must never carry the
+   *  meaning (spec §7). */
+  readonly label: string;
+  /** Board felt — the muted, dark variant of the palette hue. */
+  readonly felt: number;
+  /** Tile outline; must clear 3:1 against the (shared) face on every layer. */
+  readonly border: number;
+  /** Base of the extruded side; SIDE_BAND_FACTORS ramp it. */
+  readonly side: number;
+  /** Face-down back — the strong, light variant of the felt hue (issue #82),
+   *  so a concealed tile never sinks into the table. */
+  readonly back: number;
+  /** The back's inset keyline. */
+  readonly backKeyline: number;
+}
+
+export type PaletteId = 'lantern' | 'daily' | 'milestone';
+
+/** The default warm lantern palette — the constants above, named. */
+export const LANTERN: BoardPalette = {
+  id: 'lantern',
+  label: 'Lantern',
+  felt: BOARD_FELT,
+  border: BASE_BORDER,
+  side: BASE_SIDE,
+  back: 0x62c98a,
+  backKeyline: 0x1b4d30,
+};
+
+/** Every shipped palette, by the level kind that wears it: ordinary ladder
+ *  levels → lantern; the Daily Challenge → night indigo with gold edges; the
+ *  decade milestone spikes (decision 0011) → burgundy with rose edges. */
+export const PALETTES: Record<PaletteId, BoardPalette> = {
+  lantern: LANTERN,
+  daily: {
+    id: 'daily',
+    label: 'Daily Challenge',
+    felt: 0x1e1b4b,
+    border: 0x5b4a1e,
+    side: 0xd4b96a,
+    back: 0x8b95f5,
+    backKeyline: 0x1e1b4b,
+  },
+  milestone: {
+    id: 'milestone',
+    label: 'Milestone',
+    felt: 0x4c0519,
+    border: 0x6b2a3a,
+    side: 0xd9a3ad,
+    back: 0xf28ea6,
+    backKeyline: 0x4c0519,
+  },
+};
+
+/** `#rrggbb` for CSS, from a packed RGB colour. */
+export function cssColor(color: number): string {
+  return `#${color.toString(16).padStart(6, '0')}`;
+}
+
 export const BORDER_WIDTH = 2;
 /** Outline width for the selected / hinted / mismatch-flash highlight. */
 export const BORDER_WIDTH_ACTIVE = 4;
@@ -160,15 +232,17 @@ export function depthSteps(z: number, topZ: number, dimmed = false): number {
   return Math.max(0, topZ - z) + (dimmed ? DIMMED_STEPS : 0);
 }
 
-/** Palette for a tile at layer `z` of a layout whose top layer is `topZ`. */
-export function tileShade(z: number, topZ: number, dimmed = false): TileShade {
+/** Shade for a tile at layer `z` of a layout whose top layer is `topZ`, in
+ *  `palette` (issue #67; lantern by default). The face and ink ladders are
+ *  palette-independent — only border and side take the palette's colours. */
+export function tileShade(z: number, topZ: number, dimmed = false, palette: BoardPalette = LANTERN): TileShade {
   const steps = depthSteps(z, topZ, dimmed);
   const faceFactor = 1 - LAYER_FACE_STEP * steps;
   const inkFactor = 1 - LAYER_INK_STEP * steps;
   return {
     face: scaleColor(BASE_FACE, faceFactor),
-    border: scaleColor(BASE_BORDER, faceFactor),
-    sideBands: SIDE_BAND_FACTORS.map((f) => scaleColor(BASE_SIDE, f * faceFactor)),
+    border: scaleColor(palette.border, faceFactor),
+    sideBands: SIDE_BAND_FACTORS.map((f) => scaleColor(palette.side, f * faceFactor)),
     ink: (suitColor: number) => scaleColor(suitColor, inkFactor),
   };
 }

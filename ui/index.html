@@ -309,12 +309,17 @@
          the renderer's own palette when filled (see src/holder.ts) — an empty
          slot is a dashed outline, so four of them read as "this is a place
          tiles can go" before the player has used one. */
+      /* The felt (issue #67): main.ts sets --felt from the board palette in
+         force, so the holder strip and the board share one surface and a
+         special level's colour covers the whole play column, not just the
+         canvas. The default is the lantern felt, the body's own green. */
       #play-area {
         flex: 1;
         display: flex;
         flex-direction: column;
         min-width: 0;
         min-height: 0;
+        background: var(--felt, #14532d);
       }
       /* The strip follows the HUD's own axis (issue #37): a row above the board
          when the HUD took the top edge, a column beside it when the HUD took a

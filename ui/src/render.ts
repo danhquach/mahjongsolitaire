@@ -19,6 +19,7 @@ import type { Tile, TileId } from '@mahjongsolitaire/core';
 import {
   BORDER_WIDTH,
   BORDER_WIDTH_ACTIVE,
+  LANTERN,
   LAYER_FACE_STEP,
   SHADOW_DX,
   SHADOW_DY,
@@ -29,6 +30,7 @@ import {
   scaleColor,
   tileShade,
 } from './depth.js';
+import type { BoardPalette } from './depth.js';
 import { faceStyle } from './faces.js';
 import {
   PIP_AREA,
@@ -73,8 +75,8 @@ const TILE_IMAGE_RESOLUTION = 4;
 // on every undimmed layer (4.4:1 on top, 3.2:1 four layers down), enforced by
 // ui/test/depth.test.ts. The keyline flipped dark for the same reason: the
 // old pale line washed out on a light back (4.8:1 now, ≥ 4:1 at depth).
-export const BACK_FACE = 0x62c98a;
-export const BACK_KEYLINE = 0x1b4d30;
+// Since issue #67 the back and keyline colours are the palette's (depth.ts):
+// each palette pairs its own soft felt with its own strong back.
 /** Inset of the keyline from the face edge, board px. */
 const BACK_INSET = 7;
 const BACK_KEYLINE_WIDTH = 2;
@@ -200,6 +202,8 @@ export class BoardRenderer {
   private viewScale = 1;
   /** Tile Size setting (issue #14): a fraction of the fit-to-viewport scale. */
   private sizeFactor = 1;
+  /** The board palette in force (issue #67): border, side, back, felt. */
+  private palette: BoardPalette = LANTERN;
 
   constructor(
     private readonly app: Application,
@@ -220,6 +224,20 @@ export class BoardRenderer {
     this.topZ = Math.max(...layoutSlots.map((s) => s.z));
     this.tileImages.clear();
     this.layoutToViewport();
+  }
+
+  /** Swap the board palette (issue #67): felt, outline, side shading and the
+   *  face-down back all follow. The holder's tile-picture cache is dropped —
+   *  those bakes carry the old border and side. The caller redraws. */
+  setPalette(palette: BoardPalette): void {
+    if (palette.id === this.palette.id) return;
+    this.palette = palette;
+    this.tileImages.clear();
+    this.app.renderer.background.color = palette.felt;
+  }
+
+  get paletteId(): BoardPalette['id'] {
+    return this.palette.id;
   }
 
   get scale(): number {
@@ -359,7 +377,7 @@ export class BoardRenderer {
     const { flashed, hinted, dimmed, hidden = false } = opts;
     const node = new Container();
     const r = tileRect(tile.slot);
-    const shade = tileShade(tile.slot.z, this.topZ, dimmed);
+    const shade = tileShade(tile.slot.z, this.topZ, dimmed, this.palette);
 
     const shadow = new Sprite(this.shadowTexture);
     shadow.position.set(r.x - SHADOW_PAD, r.y - SHADOW_PAD);
@@ -380,7 +398,7 @@ export class BoardRenderer {
     // cue; recolouring the face would make the back read as a fourth suit).
     const backFactor = 1 - LAYER_FACE_STEP * depthSteps(tile.slot.z, this.topZ, dimmed);
     g.roundRect(r.x, r.y, r.w, r.h, TILE_RADIUS)
-      .fill(hidden ? scaleColor(BACK_FACE, backFactor) : hinted ? FACE_HINT : shade.face)
+      .fill(hidden ? scaleColor(this.palette.back, backFactor) : hinted ? FACE_HINT : shade.face)
       .stroke({
         width: flashed || hinted ? BORDER_WIDTH_ACTIVE : BORDER_WIDTH,
         color: flashed ? COLOR_FLASH : hinted ? COLOR_HINT : shade.border,
@@ -396,7 +414,7 @@ export class BoardRenderer {
         r.w - 2 * BACK_INSET,
         r.h - 2 * BACK_INSET,
         Math.max(2, TILE_RADIUS - 2),
-      ).stroke({ width: BACK_KEYLINE_WIDTH, color: scaleColor(BACK_KEYLINE, backFactor) });
+      ).stroke({ width: BACK_KEYLINE_WIDTH, color: scaleColor(this.palette.backKeyline, backFactor) });
       return node; // no glyph, no pips, no tag — that is the point
     }
 
