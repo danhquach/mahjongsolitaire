@@ -1908,6 +1908,63 @@ for (const vp of VIEWPORTS) {
     );
   }
 
+  // Issue #118: Send feedback — disabled until both fields are filled, the
+  // failure state (mocked 503) keeps the typed text and offers a mailto
+  // fallback whose href carries the subject, and the success state (mocked
+  // 202) shows the thanks message. Network-mocked, so viewport-independent —
+  // runs once rather than once per viewport.
+  if (vp === VIEWPORTS[0]) {
+    const before = failures;
+    await page.click('#btn-settings');
+    await page.click('#btn-feedback');
+    const initialDisabled = await page.evaluate(() => document.getElementById('feedback-send').disabled);
+    check(initialDisabled, 'Send starts disabled', { initialDisabled });
+
+    await page.fill('#feedback-summary', 'Tiles overlap');
+    await page.fill('#feedback-body', 'The bamboo tile clips the dot tile.');
+    const filledDisabled = await page.evaluate(() => document.getElementById('feedback-send').disabled);
+    check(!filledDisabled, 'Send enables once both fields are filled', { filledDisabled });
+
+    // Failure path: the Worker endpoint mocked as unavailable (503).
+    await page.route('**/api/feedback', (route) => route.fulfill({ status: 503, body: '{}' }));
+    await page.click('#feedback-send');
+    await page.waitForFunction(
+      () => document.getElementById('feedback-status').textContent.includes("Couldn't send"),
+    );
+    const failed = await page.evaluate(() => ({
+      status: document.getElementById('feedback-status').textContent,
+      summary: document.getElementById('feedback-summary').value,
+      body: document.getElementById('feedback-body').value,
+      mailtoHidden: document.getElementById('feedback-mailto').hidden,
+      mailtoHref: document.getElementById('feedback-mailto').getAttribute('href'),
+    }));
+    check(/Couldn't send/.test(failed.status), 'failure shows the try-again message', failed);
+    check(
+      failed.summary === 'Tiles overlap' && failed.body === 'The bamboo tile clips the dot tile.',
+      'a failed send keeps the typed text',
+      failed,
+    );
+    check(!failed.mailtoHidden, 'a failed send offers the mailto fallback', failed);
+    check(
+      failed.mailtoHref !== null && failed.mailtoHref.includes(encodeURIComponent('Tiles overlap')),
+      'the mailto link carries the subject',
+      failed,
+    );
+    await page.unroute('**/api/feedback');
+
+    // Success path: the Worker endpoint mocked as accepting the submission.
+    await page.route('**/api/feedback', (route) => route.fulfill({ status: 202, body: '{}' }));
+    await page.click('#feedback-send');
+    await page.waitForFunction(() =>
+      document.getElementById('feedback-status').textContent.includes('Thanks'),
+    );
+    const sent = await page.evaluate(() => document.getElementById('feedback-status').textContent);
+    check(/Thanks, your feedback was sent/.test(sent), 'success shows the thanks message', sent);
+    await page.unroute('**/api/feedback');
+
+    console.log(`${failures === before ? 'ok' : 'FAIL'} — feedback form: send disabled/failure/success`);
+  }
+
   await ctx.close();
 }
 

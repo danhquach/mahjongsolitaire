@@ -619,6 +619,7 @@
       #settings,
       #changelog,
       #profile,
+      #feedback,
       #welcome {
         position: absolute;
         inset: 0;
@@ -630,12 +631,14 @@
       #settings.visible,
       #changelog.visible,
       #profile.visible,
+      #feedback.visible,
       #welcome.visible {
         display: flex;
       }
       #settings .card,
       #changelog .card,
       #profile .card,
+      #feedback .card,
       #welcome .card {
         background: #f0fdf4;
         color: #14532d;
@@ -650,6 +653,7 @@
       #settings h2,
       #changelog h2,
       #profile h2,
+      #feedback h2,
       #welcome h2 {
         margin: 0 0 12px;
         font-size: 24px;
@@ -712,8 +716,12 @@
       #settings .card > button,
       #changelog .card > button,
       #profile .card > button,
+      #feedback .card > button,
+      #feedback .card > a,
       #welcome .card > button {
         margin-top: 16px;
+        display: block;
+        box-sizing: border-box;
         width: 100%;
         font-size: 18px;
         min-height: 48px;
@@ -722,11 +730,14 @@
         border: 1px solid #14532d;
         background: #166534;
         color: #f0fdf4;
+        text-align: center;
+        text-decoration: none;
       }
       /* The version row reads as a settings row, not a primary action
          (issue #81); only the Done button keeps the filled style. The profile
          row (issue #69) is the same idiom: a row that opens another screen. */
       #settings .card > button.version-row,
+      #settings .card > button.feedback-row,
       #settings .card > button.profile-row,
       #settings .card > button.daily-row {
         margin-top: 12px;
@@ -810,6 +821,54 @@
         margin: 6px 0 0;
         font-size: 15px;
         color: #3f6212;
+      }
+
+      /* --- Feedback form (issue #118) ---------------------------------------
+         Same field language as the profile name input; a textarea for the
+         longer body, and a status line the send/failure states share. */
+      #feedback label {
+        display: block;
+        margin: 12px 0 4px;
+        font-weight: bold;
+      }
+      #feedback input[type='text'],
+      #feedback textarea {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        min-height: 48px; /* spec §7: 48dp touch targets */
+        font-size: 18px; /* spec §7: ≥ 18sp body */
+        font-family: inherit;
+        padding: 8px 10px;
+        border: 1px solid #bbf7d0;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #14532d;
+      }
+      #feedback textarea {
+        resize: vertical;
+      }
+      #feedback-status {
+        display: block;
+        margin-top: 12px;
+        min-height: 24px;
+        font-size: 15px;
+      }
+      #feedback-status.error {
+        color: #991b1b;
+        font-weight: bold;
+      }
+      #feedback-status.success {
+        color: #166534;
+        font-weight: bold;
+      }
+      #feedback .card > button:disabled {
+        opacity: 0.5;
+      }
+      #feedback .card > .secondary {
+        background: none;
+        color: #166534;
+        border-color: #bbf7d0;
       }
 
       /* --- Accessibility layer (issue #12) ---------------------------------
@@ -1066,6 +1125,30 @@
               <button id="profile-close" type="button">Done</button>
             </div>
           </div>
+          <!-- Feedback (issue #118): Summary + Body, delivered by email via
+               the Worker endpoint, with a mailto: fallback if it's down. -->
+          <div id="feedback" role="dialog" aria-modal="true" aria-labelledby="feedback-title">
+            <div class="card">
+              <h2 id="feedback-title">Send feedback</h2>
+              <label for="feedback-summary">Summary</label>
+              <input
+                type="text"
+                id="feedback-summary"
+                maxlength="100"
+                autocomplete="off"
+                enterkeyhint="next"
+              />
+              <label for="feedback-body">Details</label>
+              <textarea id="feedback-body" maxlength="2000" rows="6"></textarea>
+              <span id="feedback-status" aria-live="polite"></span>
+              <!-- The mailto fallback (issue #118): a real link with a real
+                   href, so both a click and inspecting the href work — shown
+                   only after a failed send, text kept in the fields either way. -->
+              <a id="feedback-mailto" class="secondary" href="#" hidden>Email it instead</a>
+              <button id="feedback-send" type="button" disabled>Send</button>
+              <button id="feedback-cancel" type="button" class="secondary">Cancel</button>
+            </div>
+          </div>
           <div id="changelog" role="dialog" aria-modal="true" aria-labelledby="changelog-title">
             <div class="card">
               <h2 id="changelog-title">What’s new</h2>
@@ -1164,6 +1247,14 @@
                   <span>Extra large</span>
                 </label>
               </fieldset>
+              <!-- Send feedback (issue #118): a short in-game form, delivered
+                   by email via the Worker endpoint (worker/index.mjs). -->
+              <button id="btn-feedback" type="button" class="row feedback-row">
+                <span>
+                  Send feedback
+                  <span class="hint">Tell us what's wrong or what you'd like to see.</span>
+                </span>
+              </button>
               <!-- Issue #81: which build is this? The commit stamp is the
                    load-bearing part; tapping the row opens the changelog. -->
               <button id="btn-version" type="button" class="row version-row">
