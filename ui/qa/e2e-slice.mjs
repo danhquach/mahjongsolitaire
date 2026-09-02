@@ -866,7 +866,7 @@ for (const vp of VIEWPORTS) {
     console.log(`${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: New game re-rolls, Restart replays`);
   }
 
-  // 2b. Daily Challenge (issue #19): Settings → Daily deals the board every
+  // 2b. Daily Challenge (issue #19): the HUD's Daily chip deals the board every
   //     player gets today — layout and seed are core's own hashes of the local
   //     date — the chip says so, it survives a force-quit as a Daily, Restart
   //     replays it, and New game returns to the ladder's own deal.
@@ -888,14 +888,31 @@ for (const vp of VIEWPORTS) {
     const key = dailyDateKey();
     const want = { seed: dailySeed(key), layoutId: dailyLayoutId(key) };
 
-    await page.click('#btn-settings');
-    const row = await page.evaluate(() => ({
-      date: document.getElementById('daily-date').textContent,
-      status: document.getElementById('daily-status').textContent,
-    }));
-    check(row.date.length > 2 && row.status.length > 0, 'the Settings row names today and a status', row);
+    // The Daily chip lives in the HUD (issue #136): one tap from the board,
+    // named for today and the player's standing, pulsing until today's board
+    // is cleared and reading as active once it is on the table.
+    const chip = () =>
+      page.evaluate(() => {
+        const b = document.getElementById('btn-daily');
+        const cs = getComputedStyle(b);
+        return {
+          inHeader: b.closest('header') !== null,
+          inSettings: document.querySelector('#settings #btn-daily') !== null,
+          name: b.getAttribute('aria-label'),
+          state: b.dataset.state,
+          animated: cs.animationName !== 'none',
+          height: b.getBoundingClientRect().height,
+        };
+      });
+    const idle = await chip();
+    check(idle.inHeader && !idle.inSettings, 'the Daily chip is in the HUD, not Settings', idle);
+    check(/^Daily Challenge, .+: /.test(idle.name), 'the chip names today and a status', idle);
+    check(idle.state === 'pending' && idle.animated, 'the chip pulses while today is uncleared', idle);
+    check(idle.height >= 48, 'the chip is a 48dp touch target', idle);
     await page.click('#btn-daily');
     await page.waitForFunction(() => !window.__slice.dealing);
+    const active = await chip();
+    check(active.state === 'active' && !active.animated, 'on the table, the chip reads active and stops pulsing', active);
     const dealt = await state();
     check(dealt.daily === key, 'the Daily is on the table for today\'s date key', { want: key, got: dealt.daily });
     check(dealt.layoutId === want.layoutId, 'on the layout core hashes for the date', { want: want.layoutId, got: dealt.layoutId });
