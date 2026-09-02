@@ -14,12 +14,14 @@ import {
   buildFeedbackPayload,
   canSend,
   checkAttachment,
+  copyText,
   encodeAttachments,
   feedbackSubject,
   feedbackText,
   mailtoUrl,
   reencodedName,
   refusalMessage,
+  reportText,
   sendFeedback,
 } from '../src/feedback-form.js';
 
@@ -77,6 +79,35 @@ test('mailtoUrl truncates a very long body to stay under the length cap', () => 
   const longBody = 'x'.repeat(5000);
   const url = mailtoUrl(FEEDBACK_INBOX, 'Subject', longBody);
   assert.ok(url.length <= 2000);
+});
+
+// Issue #135: the clipboard path for players whose mail handler is a no-op.
+test('reportText is the subject line, a blank line, then the full email text', () => {
+  const payload = buildFeedbackPayload(INPUT);
+  const text = reportText(feedbackSubject(payload.summary), feedbackText(payload));
+  assert.ok(text.startsWith('[Lantern Tiles feedback] Tiles overlap\n\n'));
+  assert.ok(text.endsWith(feedbackText(payload)));
+});
+
+test('reportText is never truncated, unlike the mailto body', () => {
+  const longBody = 'x'.repeat(5000);
+  assert.ok(reportText('Subject', longBody).includes(longBody));
+});
+
+test('copyText writes through the clipboard and reports success', async () => {
+  const written: string[] = [];
+  const ok = await copyText('report', { writeText: async (t) => void written.push(t) });
+  assert.equal(ok, true);
+  assert.deepEqual(written, ['report']);
+});
+
+test('copyText reports failure when the clipboard rejects', async () => {
+  const ok = await copyText('report', { writeText: async () => { throw new Error('denied'); } });
+  assert.equal(ok, false);
+});
+
+test('copyText reports failure when there is no clipboard at all', async () => {
+  assert.equal(await copyText('report', undefined), false);
 });
 
 test('sendFeedback: 202 -> sent', async () => {

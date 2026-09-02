@@ -14,6 +14,12 @@
       * {
         box-sizing: border-box;
       }
+      /* The `hidden` attribute must win over any author `display` rule — the
+         feedback card's block-level buttons and links otherwise stayed visible
+         while hidden (issue #135). */
+      [hidden] {
+        display: none !important;
+      }
       html,
       body {
         margin: 0;
@@ -943,6 +949,28 @@
         margin-top: 8px;
         font-size: 15px;
       }
+      /* Issue #135: plain-text inbox address and the Copy report status. The
+         address is user-select: all so one tap selects the whole thing. */
+      #feedback-inbox {
+        margin: 12px 0 0;
+        font-size: 15px;
+      }
+      #feedback-inbox strong {
+        user-select: all;
+        -webkit-user-select: all;
+        word-break: break-all;
+      }
+      #feedback-copy-status {
+        display: block;
+        min-height: 20px;
+        margin-top: 4px;
+        font-size: 15px;
+        color: #166534;
+        font-weight: bold;
+      }
+      #feedback-report {
+        min-height: 120px;
+      }
 
       /* --- Accessibility layer (issue #12) ---------------------------------
          Canvas tiles have no semantics tree, so each tile is mirrored by a
@@ -1228,6 +1256,16 @@
                    href, so both a click and inspecting the href work — shown
                    only after a failed send, text kept in the fields either way. -->
               <a id="feedback-mailto" class="secondary" href="#" hidden>Email it instead</a>
+              <!-- Issue #135: the mailto handoff is a silent no-op on a device
+                   with no working mail handler, so the failure state also
+                   shows the inbox address as plain text (filled from the one
+                   constant in feedback-form.ts) and offers Copy report. The
+                   read-only field appears only when the clipboard refuses. -->
+              <p id="feedback-inbox" hidden>Or send it yourself to <strong id="feedback-inbox-address"></strong></p>
+              <button id="feedback-copy" type="button" class="secondary" hidden>Copy report</button>
+              <span id="feedback-copy-status" aria-live="polite"></span>
+              <label for="feedback-report" id="feedback-report-label" hidden>Report text</label>
+              <textarea id="feedback-report" rows="6" readonly hidden></textarea>
               <span id="feedback-mailto-note" hidden
                 >Attachments couldn't be included — please reply to the email with them</span
               >

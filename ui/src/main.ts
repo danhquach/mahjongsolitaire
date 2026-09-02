@@ -113,12 +113,14 @@ import {
   buildFeedbackPayload,
   canSend as canSendFeedback,
   checkAttachment,
+  copyText,
   encodeAttachments,
   feedbackSubject,
   feedbackText,
   reencodedName,
   refusalMessage,
   mailtoUrl,
+  reportText,
   sendFeedback,
 } from './feedback-form.js';
 import { ProgressStore } from './progress.js';
@@ -238,6 +240,12 @@ async function start(): Promise<void> {
   const feedbackCancel = el<HTMLButtonElement>('feedback-cancel');
   const feedbackMailto = el<HTMLAnchorElement>('feedback-mailto');
   const feedbackMailtoNote = el<HTMLElement>('feedback-mailto-note');
+  const feedbackInbox = el<HTMLParagraphElement>('feedback-inbox');
+  const feedbackInboxAddress = el<HTMLElement>('feedback-inbox-address');
+  const feedbackCopy = el<HTMLButtonElement>('feedback-copy');
+  const feedbackCopyStatus = el<HTMLElement>('feedback-copy-status');
+  const feedbackReportLabel = el<HTMLLabelElement>('feedback-report-label');
+  const feedbackReport = el<HTMLTextAreaElement>('feedback-report');
   const feedbackAttachButton = el<HTMLButtonElement>('feedback-attach');
   const feedbackFileInput = el<HTMLInputElement>('feedback-file');
   const feedbackAttachmentList = el<HTMLUListElement>('feedback-attachments');
@@ -435,6 +443,10 @@ async function start(): Promise<void> {
   /** True while a submit is in flight — Send stays disabled regardless of
    *  field content so a slow request cannot be fired twice (issue #118). */
   let feedbackSending = false;
+  /** The report "Copy report" puts on the clipboard (issue #135): set by the
+   *  failure path from the payload that was actually sent, cleared with the
+   *  rest of the failure state. */
+  let feedbackReportText: string | null = null;
   /** Files picked for the current report (issue #130), in pick order. Images
    *  are already re-encoded (metadata stripped); `previewUrl` is an object
    *  URL revoked when the entry goes away. */
@@ -1261,7 +1273,39 @@ async function start(): Promise<void> {
     feedbackStatus.className = '';
     feedbackMailto.hidden = true;
     feedbackMailtoNote.hidden = true;
+    feedbackInbox.hidden = true;
+    feedbackCopy.hidden = true;
+    feedbackCopyStatus.textContent = '';
+    feedbackReportLabel.hidden = true;
+    feedbackReport.hidden = true;
+    feedbackReport.value = '';
+    feedbackReportText = null;
     feedbackAttachStatus.textContent = '';
+  }
+
+  /** Copy report (issue #135): the subject line plus the full email text, for
+   *  a player whose mail handler silently does nothing. When the clipboard is
+   *  missing or refuses, the same text is shown selected in a read-only field
+   *  so it can still be copied by hand — never a "Copied" that didn't happen. */
+  async function copyFeedbackReport(): Promise<void> {
+    if (feedbackReportText === null) return;
+    const text = feedbackReportText;
+    const copied = await copyText(text, navigator.clipboard);
+    if (copied) {
+      feedbackCopyStatus.textContent = 'Copied';
+      announcer.say('Copied.');
+      return;
+    }
+    feedbackCopyStatus.textContent = "Couldn't copy — select the text below";
+    feedbackReport.value = text;
+    feedbackReportLabel.hidden = false;
+    feedbackReport.hidden = false;
+    feedbackReport.focus();
+    // select() alone is unreliable on iOS WebKit; the explicit range is the
+    // belt-and-braces version of the same thing.
+    feedbackReport.select();
+    feedbackReport.setSelectionRange(0, text.length);
+    announcer.say("Couldn't copy. The report text is selected below.");
   }
 
   // --- attachments (issue #130) ------------------------------------------------
@@ -1490,6 +1534,11 @@ async function start(): Promise<void> {
         feedbackText(payload),
       );
       feedbackMailto.hidden = false;
+      // Issue #135: the mailto handoff can be a silent no-op, so the address
+      // is also shown as text and the report can be copied instead.
+      feedbackInbox.hidden = false;
+      feedbackCopy.hidden = false;
+      feedbackReportText = reportText(feedbackSubject(payload.summary), feedbackText(payload));
       // A mailto: link cannot carry files (issue #130): the attachments stay
       // in the form, and the player is told to add them to the email.
       feedbackMailtoNote.hidden = feedbackAttachments.length === 0;
@@ -1501,6 +1550,10 @@ async function start(): Promise<void> {
     feedbackButton.addEventListener('click', () => openFeedback());
     feedbackCancel.addEventListener('click', () => closeFeedback());
     feedbackSend.addEventListener('click', () => void submitFeedback());
+    // Issue #135: the inbox address is filled from the one constant so the
+    // markup never carries a second copy of it.
+    feedbackInboxAddress.textContent = FEEDBACK_INBOX;
+    feedbackCopy.addEventListener('click', () => void copyFeedbackReport());
     // Attachments (issue #130): the visible button opens the (hidden) native
     // picker; the input is reset after each pick so choosing the same file
     // again still fires `change`.

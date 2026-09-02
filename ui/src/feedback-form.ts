@@ -217,6 +217,32 @@ export function mailtoUrl(to: string, subject: string, text: string): string {
   return base + encodeURIComponent(body);
 }
 
+/** What "Copy report" puts on the clipboard (issue #135): the subject line,
+ *  then the same text the email would carry — never truncated, unlike the
+ *  mailto body, because a clipboard has no URL length cap. */
+export function reportText(subject: string, text: string): string {
+  return `${subject}\n\n${text}`;
+}
+
+/** The subset of `navigator.clipboard` the copy path needs; `undefined` where
+ *  the API is missing (insecure context, older in-app browsers). */
+export interface ClipboardWriter {
+  writeText(text: string): Promise<void>;
+}
+
+/** Copy `text`; false when there is no clipboard or the write is refused
+ *  (permission denied, no user activation), so the caller can fall back to a
+ *  selectable read-only field instead of claiming "Copied". */
+export async function copyText(text: string, clipboard: ClipboardWriter | undefined): Promise<boolean> {
+  if (clipboard === undefined) return false;
+  try {
+    await clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Send is enabled once both fields have real (non-whitespace) content. */
 export function canSend(summary: string, body: string): boolean {
   return summary.trim().length > 0 && body.trim().length > 0;
