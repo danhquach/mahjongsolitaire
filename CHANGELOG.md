@@ -6,6 +6,14 @@ commit and build time of the running bundle.
 
 ## 2026-09-02
 
+- Your profile can now follow you off the device. "Cloud sync" in the profile
+  screen is off by default and entirely optional — the game plays exactly the
+  same without it. Turning it on gives you a player tag and a recovery code;
+  entering that code after a reinstall or on another device brings back your
+  name, avatar, record and Daily streak. Nothing is lost when the two sides
+  disagree: scores and trophies keep the higher number, cleared levels keep
+  both, and a long streak survives a fresh install that plays today. Names
+  are checked before they can be shown to other players (#138).
 - Tile size in Settings is now a one-row slider with three stops — Medium,
   Large, Extra large — instead of a four-option list, so the popup is shorter
   on a phone. Small is gone (too small to read on a phone); anyone who had it

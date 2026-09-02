@@ -928,6 +928,47 @@
         color: #3f6212;
       }
 
+      /* --- Cloud sync (issue #138) -------------------------------------------
+         Buttons wrap rather than shrink: on a narrow phone two 48dp targets
+         side by side would each fall under the spec §7 minimum. */
+      #profile .sync-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      #profile .sync-actions button {
+        flex: 1 1 auto;
+        margin: 0;
+        min-height: 48px; /* spec §7: 48dp touch targets */
+        font-size: 17px;
+      }
+      /* The recovery code is transcribed by hand, so it is monospaced and
+         allowed to wrap at its own group separators. */
+      #profile .sync-code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 15px;
+        letter-spacing: 0.5px;
+        text-align: right;
+        word-break: break-all;
+        user-select: all;
+      }
+      #profile #sync-status:not(:empty) {
+        display: block;
+        margin-top: 10px;
+        font-size: 15px;
+        color: #3f6212;
+      }
+      #profile #sync-code-input {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        min-height: 48px; /* spec §7 */
+        font-size: 18px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        margin-top: 4px;
+      }
+
       /* --- Feedback form (issue #118) ---------------------------------------
          Same field language as the profile name input; a textarea for the
          longer body, and a status line the send/failure states share. */
@@ -1352,6 +1393,56 @@
                   Clear the Daily Challenge on consecutive days to build a streak. Each clear
                   earns a trophy — two from a 7-day streak, three from 30.
                 </p>
+              </fieldset>
+              <!-- Cloud sync (issue #138): opt-in, off by default. The game
+                   is unchanged without it; this only gives the profile a
+                   server-side home so a reinstall or a second device can
+                   pick it up — and, later, so a leaderboard entry has an
+                   owner (#70). -->
+              <fieldset id="sync-section">
+                <legend>Cloud sync</legend>
+                <div id="sync-off">
+                  <p class="record-hint">
+                    Keep your name, record and streak if you reinstall or play on another
+                    device. Optional — the game plays exactly the same without it.
+                  </p>
+                  <div class="sync-actions">
+                    <button id="sync-enable" type="button">Turn on sync</button>
+                    <button id="sync-restore" type="button" class="secondary">I have a code</button>
+                  </div>
+                </div>
+                <div id="sync-restore-form" hidden>
+                  <label for="sync-code-input">Recovery code</label>
+                  <input
+                    type="text"
+                    id="sync-code-input"
+                    autocomplete="off"
+                    autocapitalize="characters"
+                    spellcheck="false"
+                    enterkeyhint="done"
+                  />
+                  <div class="sync-actions">
+                    <button id="sync-restore-confirm" type="button">Restore profile</button>
+                    <button id="sync-restore-cancel" type="button" class="secondary">Cancel</button>
+                  </div>
+                </div>
+                <div id="sync-on" hidden>
+                  <div class="record-row"><span>Player</span><strong id="sync-tag"></strong></div>
+                  <!-- Hidden until asked for: it is the whole credential, and
+                       the same build can attach a screenshot to a feedback
+                       report (#118). Copy works without revealing it. -->
+                  <div class="record-row"><span>Recovery code</span><strong id="sync-code" class="sync-code"></strong></div>
+                  <p class="record-hint">
+                    This code is the only way back to your profile — write it down and keep
+                    it private. Anyone who has it can use your profile.
+                  </p>
+                  <div class="sync-actions">
+                    <button id="sync-reveal" type="button" class="secondary">Show code</button>
+                    <button id="sync-copy" type="button" class="secondary">Copy code</button>
+                    <button id="sync-disable" type="button" class="secondary">Turn off here</button>
+                  </div>
+                </div>
+                <span id="sync-status" aria-live="polite"></span>
               </fieldset>
               <button id="profile-close" type="button">Done</button>
             </div>

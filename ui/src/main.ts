@@ -134,6 +134,20 @@ import {
   liveStreak,
 } from './profile.js';
 import { SaveStore, captureSave, reopen } from './save.js';
+import {
+  fetchProfile,
+  forgetCredentials,
+  formatCode,
+  formatPlayerTag,
+  normalizeCode,
+  mergeRecords,
+  pushName,
+  pushRecord,
+  readCredentials,
+  registerProfile,
+  writeCredentials,
+} from './sync.js';
+import type { RemoteProfile, SyncCredentials, SyncFailure } from './sync.js';
 import { DEFAULT_SETTINGS, SettingsStore, TILE_SIZE_FACTOR, TILE_SIZE_LABEL, TILE_SIZES } from './settings.js';
 import type { TileSize } from './settings.js';
 import { localKeyValueStorage } from './storage.js';
@@ -227,6 +241,20 @@ async function start(): Promise<void> {
   const avatarGrid = el<HTMLDivElement>('avatar-grid');
   const profileRowGlyph = el<HTMLElement>('profile-row-glyph');
   const profileRowName = el<HTMLElement>('profile-row-name');
+  const syncOffBlock = el<HTMLDivElement>('sync-off');
+  const syncOnBlock = el<HTMLDivElement>('sync-on');
+  const syncRestoreForm = el<HTMLDivElement>('sync-restore-form');
+  const syncCodeInput = el<HTMLInputElement>('sync-code-input');
+  const syncEnableButton = el<HTMLButtonElement>('sync-enable');
+  const syncRestoreButton = el<HTMLButtonElement>('sync-restore');
+  const syncRestoreConfirm = el<HTMLButtonElement>('sync-restore-confirm');
+  const syncRestoreCancel = el<HTMLButtonElement>('sync-restore-cancel');
+  const syncRevealButton = el<HTMLButtonElement>('sync-reveal');
+  const syncCopyButton = el<HTMLButtonElement>('sync-copy');
+  const syncDisableButton = el<HTMLButtonElement>('sync-disable');
+  const syncTag = el<HTMLElement>('sync-tag');
+  const syncCodeValue = el<HTMLElement>('sync-code');
+  const syncStatus = el<HTMLElement>('sync-status');
   const overlayGrant = el<HTMLElement>('overlay-grant');
   const lossWashLayer = el<HTMLDivElement>('loss-wash-layer');
   const dailyButton = el<HTMLButtonElement>('btn-daily');
@@ -709,6 +737,9 @@ async function start(): Promise<void> {
         overlayNew.textContent = 'Back to the ladder';
         announcer.say(`Daily Challenge complete. Final score ${game.score}. ${payout}`);
       }
+      // The record just moved; push it up if sync is on (issue #138). Nothing
+      // here waits on it.
+      syncAfterWin();
     } else if (status === 'lost') {
       overlayTitle.textContent = 'Holder full';
       overlayText.textContent =
@@ -1226,6 +1257,9 @@ async function start(): Promise<void> {
         if (!input.checked) return;
         profile.setAvatar(avatar.id);
         syncProfileRow();
+        // The avatar is part of the synced profile (issue #138): publish it
+        // now rather than letting it wait for the next win.
+        syncAvatar();
         announcer.say(`Avatar ${avatar.label}.`);
       });
       label.append(glyph, input);
@@ -1247,6 +1281,7 @@ async function start(): Promise<void> {
     // day has already ended it (issue #19).
     el<HTMLElement>('record-streak').textContent = String(liveStreak(record.value, dailyDateKey()));
     el<HTMLElement>('record-trophies').textContent = String(record.value.trophies);
+    renderSyncSection();
   }
 
   /** Where focus goes back to when the profile closes: the control that
@@ -1257,6 +1292,8 @@ async function start(): Promise<void> {
   function openProfile(opener: HTMLElement = settingsButton): void {
     if (profileVisible) return;
     profileOpener = opener;
+    // Every open starts with the recovery code masked again (issue #138).
+    syncCodeShown = false;
     // Opened from inside Settings: that panel steps aside rather than stacking.
     closeSettings();
     syncProfileControls();
@@ -1271,12 +1308,241 @@ async function start(): Promise<void> {
     if (!profileVisible) return;
     // A name still sitting in the field commits on the way out: change events
     // fire on blur, but Escape closes the screen without one.
-    profileNameInput.value = profile.setName(profileNameInput.value);
+    const name = profile.setName(profileNameInput.value);
+    profileNameInput.value = name;
+    // Republished on every close, not only on a change: an earlier publish may
+    // have failed offline, and this is the cheap place to catch up.
+    void publishName(name);
     profileVisible = false;
     profilePanel.classList.remove('visible');
     setBackgroundInert(false);
     profileOpener.focus();
   }
+
+  // --- cloud sync (issue #138) -------------------------------------------------
+
+  /** Null until the player turns sync on (or restores a profile with a code).
+   *  Everything below is inert while it is null — that is the default, and the
+   *  game never waits on any of it. */
+  let syncCredentials: SyncCredentials | null = readCredentials(storage);
+  /** One request at a time from the panel: the controls disable while a call
+   *  is in flight, so a double tap cannot register twice. */
+  let syncBusy = false;
+  /** The recovery code is masked until the player asks for it, and masked
+   *  again every time the panel is reopened — it is the whole credential, and
+   *  a profile screen is the kind of screen people screenshot. */
+  let syncCodeShown = false;
+
+  /** What each failure means to the player. Every one of them ends the same
+   *  way — the local profile is untouched and the game plays on — so the
+   *  wording never suggests progress was lost. */
+  const SYNC_FAILURE_TEXT: Readonly<Record<SyncFailure, string>> = {
+    offline: 'No connection. Your progress is safe on this device — try again later.',
+    unavailable: 'Sync is unavailable right now. Your progress is safe on this device.',
+    unauthorized: "That code doesn't match a profile. Check it and try again.",
+    name_rejected: "That name can't be shown to other players — pick another one.",
+    rate_limited: 'Too many attempts. Try again in a few minutes.',
+  };
+
+  function setSyncStatus(text: string): void {
+    syncStatus.textContent = text;
+  }
+
+  /** Show the on/off half of the section and reflect the busy state. */
+  function renderSyncSection(): void {
+    const on = syncCredentials !== null;
+    syncOffBlock.hidden = on;
+    syncOnBlock.hidden = !on;
+    if (on) {
+      syncRestoreForm.hidden = true;
+      syncTag.textContent = formatPlayerTag(syncCredentials!.playerId);
+      syncCodeValue.textContent = syncCodeShown
+        ? syncCredentials!.code
+        : '•'.repeat(syncCredentials!.code.length);
+      syncRevealButton.textContent = syncCodeShown ? 'Hide code' : 'Show code';
+      syncRevealButton.setAttribute('aria-pressed', String(syncCodeShown));
+    }
+    for (const control of [
+      syncEnableButton,
+      syncRestoreButton,
+      syncRestoreConfirm,
+      syncRevealButton,
+      syncCopyButton,
+      syncDisableButton,
+    ]) {
+      control.disabled = syncBusy;
+    }
+  }
+
+  /** Run one sync call with the panel's controls disabled around it. */
+  async function withSyncBusy<T>(work: () => Promise<T>): Promise<T> {
+    syncBusy = true;
+    renderSyncSection();
+    try {
+      return await work();
+    } finally {
+      syncBusy = false;
+      renderSyncSection();
+    }
+  }
+
+  /** Take the server's record without ever losing what this device holds —
+   *  the same never-regress merge the server just applied. The name and
+   *  avatar are *not* adopted here: a background sync must never overwrite a
+   *  rename made on this device (only a restore does, below). */
+  function adoptRemoteRecord(remote: RemoteProfile): void {
+    record.adopt(mergeRecords(record.value, remote.record));
+    if (profileVisible) syncProfileControls();
+  }
+
+  /** Push the record up after a win, if sync is on. Fire-and-forget by
+   *  design: nothing in the win flow waits on the network, and a failure is
+   *  simply the next sync's problem. */
+  function syncAfterWin(): void {
+    if (syncCredentials === null) return;
+    void pushRecord(syncCredentials, {
+      avatar: profile.value.avatar,
+      record: record.value,
+    }).then((result) => {
+      if (result.ok) adoptRemoteRecord(result.value);
+    });
+  }
+
+  /** Publish the avatar the player just picked. Same fire-and-forget shape as
+   *  the post-win push — it rides the sync route, which carries the avatar. */
+  function syncAvatar(): void {
+    if (syncCredentials === null) return;
+    void pushRecord(syncCredentials, {
+      avatar: profile.value.avatar,
+      record: record.value,
+    }).then((result) => {
+      if (result.ok) adoptRemoteRecord(result.value);
+    });
+  }
+
+  /** Publish a name the player just committed. Only ever called from the
+   *  profile panel, so a screening refusal has somewhere to be shown. */
+  async function publishName(name: string): Promise<void> {
+    if (syncCredentials === null) return;
+    const result = await pushName(syncCredentials, name);
+    if (!result.ok) {
+      setSyncStatus(SYNC_FAILURE_TEXT[result.reason]);
+      return;
+    }
+    setSyncStatus('');
+  }
+
+  syncEnableButton.addEventListener('click', () => {
+    void withSyncBusy(async () => {
+      setSyncStatus('Turning on sync…');
+      const result = await registerProfile({
+        name: profile.value.name,
+        avatar: profile.value.avatar,
+        record: record.value,
+      });
+      if (!result.ok) {
+        setSyncStatus(SYNC_FAILURE_TEXT[result.reason]);
+        return;
+      }
+      syncCredentials = result.value.credentials;
+      writeCredentials(storage, syncCredentials);
+      // Shown straight away this once: the player has to be able to write it
+      // down, and this is the moment they are being told to.
+      syncCodeShown = true;
+      renderSyncSection();
+      setSyncStatus('Sync is on. Write your recovery code down — it is the only way back.');
+      announcer.say('Sync is on. Your recovery code is shown in your profile.');
+    });
+  });
+
+  syncRestoreButton.addEventListener('click', () => {
+    syncRestoreForm.hidden = false;
+    setSyncStatus('');
+    syncCodeInput.value = '';
+    syncCodeInput.focus();
+  });
+
+  syncRestoreCancel.addEventListener('click', () => {
+    syncRestoreForm.hidden = true;
+    setSyncStatus('');
+    syncRestoreButton.focus();
+  });
+
+  syncRestoreConfirm.addEventListener('click', () => {
+    void withSyncBusy(async () => {
+      setSyncStatus('Looking up your profile…');
+      // Canonicalize before anything else: the server would normalize a typed
+      // code anyway, but this is the form the panel stores and shows from now
+      // on, and a code that is not a code is worth saying so without a round
+      // trip.
+      const normalized = normalizeCode(syncCodeInput.value);
+      if (normalized === null) {
+        setSyncStatus("That doesn't look like a recovery code — check it and try again.");
+        return;
+      }
+      const code = formatCode(normalized);
+      const found = await fetchProfile(code);
+      if (!found.ok) {
+        setSyncStatus(SYNC_FAILURE_TEXT[found.reason]);
+        return;
+      }
+      // A restore *is* the case where the server's identity wins: this device
+      // is being told who it is. The record still merges rather than
+      // overwrites, so progress made here before restoring is not thrown away.
+      const remote = found.value;
+      syncCredentials = { playerId: remote.playerId, code };
+      writeCredentials(storage, syncCredentials);
+      profileNameInput.value = profile.setName(remote.name);
+      // A no-op if the server holds an avatar this build does not ship (the
+      // server stores the id opaquely, so a newer build's pick can come back
+      // here). Keeping the local one is the right fallback — there is nothing
+      // to draw for an id we do not know.
+      profile.setAvatar(remote.avatar);
+      record.adopt(mergeRecords(record.value, remote.record));
+      syncProfileControls();
+      syncProfileRow();
+      setSyncStatus(`Profile restored — welcome back, ${remote.name}.`);
+      announcer.say(`Profile restored. Welcome back, ${remote.name}.`);
+      // Send this device's side up so the server holds the merge too.
+      const pushed = await pushRecord(syncCredentials, {
+        avatar: profile.value.avatar,
+        record: record.value,
+      });
+      if (pushed.ok) adoptRemoteRecord(pushed.value);
+    });
+  });
+
+  syncRevealButton.addEventListener('click', () => {
+    syncCodeShown = !syncCodeShown;
+    renderSyncSection();
+    announcer.say(syncCodeShown ? 'Recovery code shown.' : 'Recovery code hidden.');
+  });
+
+  syncCopyButton.addEventListener('click', () => {
+    if (syncCredentials === null) return;
+    const code = syncCredentials.code;
+    // The code is also selectable in place (`user-select: all`), which is the
+    // fallback when the clipboard is unavailable — so say that rather than
+    // leaving the player with nothing.
+    const clipboard = navigator.clipboard;
+    if (clipboard === undefined) {
+      setSyncStatus('Copying is unavailable here — select the code above to copy it.');
+      return;
+    }
+    void clipboard
+      .writeText(code)
+      .then(() => setSyncStatus('Recovery code copied.'))
+      .catch(() => setSyncStatus('Copying failed — select the code above to copy it.'));
+  });
+
+  syncDisableButton.addEventListener('click', () => {
+    forgetCredentials(storage);
+    syncCredentials = null;
+    renderSyncSection();
+    setSyncStatus('Sync is off here. Your profile is still saved — enter your code to reconnect.');
+    announcer.say('Sync turned off on this device.');
+    syncEnableButton.focus();
+  });
 
   // --- feedback form (issue #118) ----------------------------------------------
 
