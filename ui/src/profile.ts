@@ -11,9 +11,10 @@
 //
 // The Daily Challenge fields (issue #19, decision 0016) live here rather than
 // on a second record; a record written before #19 parses with them empty.
-// The display name will eventually be shown to other players (issue #70) —
-// length is clamped here, but profanity screening is deliberately deferred
-// until the name actually leaves the device.
+// The display name is clamped here but not screened: screening happens where
+// the name leaves the device (issue #138 — worker/profile.mjs owns the
+// blocklist, so shipping a better one is a Worker deploy, not an app update).
+// sync.ts is the opt-in bridge between these two stores and that server.
 
 import { LADDER_LENGTH, dailyTrophies, daysBetween, isDateKey } from '@mahjongsolitaire/core';
 import { readRecord, writeRecord } from './storage.js';
@@ -285,6 +286,15 @@ export class RecordStore {
       totalScore: this.current.totalScore + banked,
       cleared,
     };
+    writeRecord(this.storage, this.key, this.current);
+    return this.current;
+  }
+
+  /** Adopt a record wholesale — the merge of this device's record with the
+   *  synced one (issue #138, sync.ts owns the merge rule). Nothing else may
+   *  replace the record: every other path here only ever moves it forward. */
+  adopt(record: PlayerRecord): PlayerRecord {
+    this.current = record;
     writeRecord(this.storage, this.key, this.current);
     return this.current;
   }

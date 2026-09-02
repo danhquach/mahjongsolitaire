@@ -9,7 +9,11 @@
 // were on, every request — including the ones that just want `index.html` —
 // would pay for a Worker invocation first.
 //
-// One route: `POST /api/feedback`. It forwards to Resend
+// This file is the Worker's entry point and its router. `POST /api/feedback`
+// is handled below; `/api/profile*` (issue #138) lives in profile.mjs, and the
+// shared JSON/cross-site/rate-limit helpers in http.mjs.
+//
+// The feedback route forwards to Resend
 // (https://resend.com) so the shipped bundle never carries an email API key —
 // only this server-side script holds `env.RESEND_API_KEY`, set with
 // `wrangler secret put` (see docs/decisions/0019-feedback-worker-endpoint.md).
@@ -21,6 +25,9 @@
 // native V8 work with no per-byte JavaScript loop (decision 0020 has the
 // CPU-time reasoning). The caps below are the server-side backstop for the
 // ones the client enforces in ui/src/feedback-form.ts — keep them in step.
+
+import { callerKey, createRateLimitStore, isCrossSite, json, rateLimited } from './http.mjs';
+import { handleProfile } from './profile.mjs';
 
 /** Text-only body cap (issue #118); a body carrying attachments is allowed
  *  up to MAX_BODY_BYTES_WITH_ATTACHMENTS instead. */
@@ -46,9 +53,7 @@ const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const CONTEXT_FIELD_MAX = 300;
 
-/** Per-isolate best-effort rate limiter — not shared across isolates or
- *  deploys, which is fine for "slow down obvious abuse", not a hard cap. */
-const defaultRateLimitStore = new Map();
+const defaultRateLimitStore = createRateLimitStore();
 
 function isNonEmptyString(value, maxLen) {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= maxLen;
@@ -146,47 +151,6 @@ function feedbackText({ summary, body, context, attachments }) {
   return lines.join('\n');
 }
 
-/** Same-origin check (issue #118 design): reject a request that names itself
- *  cross-site, allow everything else — a direct API client sends neither
- *  header, and this endpoint has no cookie/session to protect from CSRF, so
- *  the check only needs to stop a *browser* on another origin. */
-function isCrossSite(request) {
-  const secFetchSite = request.headers.get('Sec-Fetch-Site');
-  if (secFetchSite !== null) return secFetchSite === 'cross-site';
-  const origin = request.headers.get('Origin');
-  if (origin === null) return false;
-  try {
-    return new URL(origin).origin !== new URL(request.url).origin;
-  } catch {
-    return true;
-  }
-}
-
-function json(status, data) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
-/** Best-effort fixed-window limiter keyed by `CF-Connecting-IP`. `store` and
- *  `now` are injectable so tests get a fresh, deterministic clock/map. */
-function rateLimited(ip, store, now) {
-  // Opportunistic eviction: a long-lived isolate must not keep one entry per
-  // address it ever saw. Expired windows go on every call — the map only ever
-  // holds addresses seen within the current window.
-  for (const [key, e] of store) {
-    if (now - e.windowStart >= RATE_LIMIT_WINDOW_MS) store.delete(key);
-  }
-  const entry = store.get(ip);
-  if (entry === undefined || now - entry.windowStart >= RATE_LIMIT_WINDOW_MS) {
-    store.set(ip, { windowStart: now, count: 1 });
-    return false;
-  }
-  entry.count += 1;
-  return entry.count > RATE_LIMIT_MAX;
-}
-
 /**
  * Pure-ish request handler: everything reachable from the outside world
  * (fetch, the clock, the rate-limit store) comes in through `deps` so tests
@@ -231,8 +195,14 @@ export async function handleFeedback(request, env, deps = {}) {
     return json(413, { error: 'payload_too_large' });
   }
 
-  const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
-  if (rateLimited(ip, rateLimitStore, now())) return json(429, { error: 'rate_limited' });
+  if (
+    rateLimited(callerKey(request, 'feedback'), rateLimitStore, now(), {
+      max: RATE_LIMIT_MAX,
+      windowMs: RATE_LIMIT_WINDOW_MS,
+    })
+  ) {
+    return json(429, { error: 'rate_limited' });
+  }
 
   const apiKey = env.RESEND_API_KEY;
   if (!apiKey) return json(503, { error: 'not_configured' });
@@ -268,6 +238,17 @@ export async function handleFeedback(request, env, deps = {}) {
   return json(202, { status: 'sent' });
 }
 
+/** Route by path. Only requests with no matching static asset get here (see
+ *  the note at the top), so anything that is not an API path is a 404. */
+export async function handleRequest(request, env) {
+  const { pathname } = new URL(request.url);
+  if (pathname === '/api/feedback') return handleFeedback(request, env);
+  if (pathname === '/api/profile' || pathname.startsWith('/api/profile/')) {
+    return handleProfile(request, env);
+  }
+  return json(404, { error: 'not_found' });
+}
+
 export default {
-  fetch: (request, env) => handleFeedback(request, env),
+  fetch: (request, env) => handleRequest(request, env),
 };

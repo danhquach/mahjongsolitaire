@@ -17,6 +17,20 @@
   // turning it on globally would send every request, including plain page
   // loads, through the Worker first).
   "main": "worker/index.mjs",
+  // Issue #138 — the synced player profile needs a D1 database bound as `DB`.
+  // It is deliberately left commented out: `wrangler deploy` fails outright on
+  // a binding whose `database_id` does not exist, so uncommenting this before
+  // the database is created would take the playtest deploy down. Until then
+  // `/api/profile*` answers 503 `not_configured` and the game is unaffected
+  // (sync is opt-in and the client treats 503 as "unavailable, try later").
+  //
+  // One-time setup, then uncomment and paste the id it prints:
+  //   wrangler d1 create lantern-tiles
+  //   wrangler d1 execute lantern-tiles --remote --file worker/schema.sql
+  //
+  // "d1_databases": [
+  //   { "binding": "DB", "database_name": "lantern-tiles", "database_id": "<id from d1 create>" }
+  // ],
   "vars": {
     // Resend's shared test sender (docs/decisions/0019): it can only deliver
     // to the Resend account's own address, so the account must be created
