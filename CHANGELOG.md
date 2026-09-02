@@ -6,6 +6,10 @@ commit and build time of the running bundle.
 
 ## 2026-09-01
 
+- The star rating is gone: a clear is a clear. The win dialog no longer
+  shows stars, and the profile screen's Stars row is removed — levels
+  cleared, total score, streak and trophies stay. Existing records keep
+  every level they had rated (#119).
 - Booster rewards no longer ask you to choose, and are rarer. The
   per-level first-clear grant is gone — it was too easy to stock up on.
   Every third new level cleared pays one charge of a random booster (it used
@@ -17,7 +21,7 @@ commit and build time of the running bundle.
   #117).
 - The timer is gone: the Time chip and the "Show a timer" setting are
   removed (PM request). Nothing about pace is shown on the board; the game
-  still keeps time quietly for the save and the star rating's baseline.
+  still keeps time quietly for the save.
 - Special boards look special: the Daily Challenge plays on night indigo
   felt with gold tile edges, and every tenth ladder level — the decade
   milestone — on burgundy with rose edges; ordinary levels keep the warm
@@ -35,10 +39,8 @@ commit and build time of the running bundle.
 - Daily Challenge: Settings has a new row that deals the day's board — the
   same layout and arrangement for every player on that calendar date. Clear
   it for a trophy; clear it on consecutive days to build a streak, and the
-  streak pays more (two trophies a clear from 7 days, three from 30). Every
-  cleared level is now rated 1–3 stars — one for finishing without a Hint,
-  Undo or Shuffle, one for finishing inside the level's time baseline — and
-  the profile screen shows your stars, total score, live streak and
+  streak pays more (two trophies a clear from 7 days, three from 30). The
+  profile screen shows levels cleared, total score, live streak and
   trophies. In-flight saves restart the level once, progress kept (#19).
 - A cleaner HUD: Level and Score are stat chips — a small label over a
   big number, the score in gold with a little pop on every gain — and

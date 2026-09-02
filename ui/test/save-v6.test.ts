@@ -1,6 +1,7 @@
-// Save format v6 (issue #19): the assist counts the star rating needs and the
-// Daily Challenge date ride with the deal, are validated like every other
-// field, and a v5 record reads as absent.
+// Save format v6 (issue #19): the assist counts (hints/undos, unused since
+// the star rating they fed was removed by issue #119) and the Daily
+// Challenge date ride with the deal, are validated like every other field,
+// and a v5 record reads as absent.
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';

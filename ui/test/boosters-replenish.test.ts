@@ -109,7 +109,7 @@ test('the grants applied per main.ts: a plain first clear pays nothing; every th
   // random charge; a decade level pays one of each; nothing else pays.
   const winLevel = (level: number, roll: number): Record<BoosterKind, number> => {
     const firstClear = !hasCleared(record.value, level);
-    record.recordWin(100, { level, stars: 3 });
+    record.recordWin(100, { level });
     const got: Record<BoosterKind, number> = { hint: 0, undo: 0, shuffle: 0 };
     if (!firstClear) return got;
     const add = (part: Record<BoosterKind, number>): void => {
@@ -137,16 +137,16 @@ test('the grants applied per main.ts: a plain first clear pays nothing; every th
 test('replaying a level is never a first clear, and the milestone counter does not move', () => {
   const record = new RecordStore(fakeStorage());
   assert.equal(hasCleared(record.value, 5), false);
-  record.recordWin(100, { level: 5, stars: 2 });
+  record.recordWin(100, { level: 5 });
   assert.equal(hasCleared(record.value, 5), true);
   assert.equal(clearedLevelCount(record.value), 1);
   // Three more clears of the same level: still one distinct level, no third-clear bonus.
-  for (let i = 0; i < 3; i++) record.recordWin(100, { level: 5, stars: 3 });
+  for (let i = 0; i < 3; i++) record.recordWin(100, { level: 5 });
   assert.equal(clearedLevelCount(record.value), 1);
   assert.equal(thirdClearDue(clearedLevelCount(record.value)), false);
   // Two *different* levels bring the distinct count to three.
-  record.recordWin(100, { level: 6, stars: 1 });
-  record.recordWin(100, { level: 7, stars: 1 });
+  record.recordWin(100, { level: 6 });
+  record.recordWin(100, { level: 7 });
   assert.equal(clearedLevelCount(record.value), 3);
   assert.equal(thirdClearDue(clearedLevelCount(record.value)), true);
   // A Daily clear (no level) is not a ladder clear.
@@ -159,7 +159,7 @@ test('the every-third grant applied per main.ts: a replay leaves the balance alo
   const charges = new BoosterCharges();
   const winLevel = (level: number): void => {
     const firstClear = !hasCleared(record.value, level);
-    record.recordWin(100, { level, stars: 3 });
+    record.recordWin(100, { level });
     if (firstClear && thirdClearDue(clearedLevelCount(record.value))) charges.grantSplit(THIRD_CLEAR_GRANT, () => 0.5); // → undo
   };
   winLevel(1);

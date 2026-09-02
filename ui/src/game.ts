@@ -222,8 +222,8 @@ export class Game {
   }
 
   /** Holds taken on this level. Nothing deducts for them in v1; the count is
-   *  kept because Vita Mahjong reports a per-level holder average and a later
-   *  star rating may want it (issue #43, PM decision 2026-08-31). */
+   *  kept because Vita Mahjong reports a per-level holder average (issue #43,
+   *  PM decision 2026-08-31). */
   get holdsUsed(): number {
     return this.stack.holdsUsed;
   }

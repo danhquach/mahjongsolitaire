@@ -219,7 +219,7 @@ test('reset resumes from a saved total — what a resume needs', () => {
   assert.equal(elapsed.ms, 0);
 });
 
-test('formatElapsed reads as a stopwatch, never a countdown (kept for the save/star clock)', () => {
+test('formatElapsed reads as a stopwatch, never a countdown (kept for the save clock)', () => {
   assert.equal(formatElapsed(0), '0:00');
   assert.equal(formatElapsed(9_000), '0:09');
   assert.equal(formatElapsed(91_400), '1:31');
