@@ -6,6 +6,11 @@ commit and build time of the running bundle.
 
 ## 2026-09-02
 
+- Tapping the Level chip in the HUD opens your profile — name, avatar, and
+  record — so progression is one tap from where it is shown. It is a real
+  button for screen readers, named for what it shows and where it goes, and
+  closing the profile puts focus back on the chip with the board untouched
+  (#137).
 - The Daily Challenge is one tap from the board: a "Daily" chip in the HUD,
   right after Score, in the Daily's indigo-and-gold palette. It pulses until
   today's board is cleared (a steady glow under reduced motion), reads as

@@ -48,7 +48,7 @@ const MAX_TAPS_TO_ACTION = 2;
 const TILE_LABEL =
   /^.+, (available|blocked), row \d+, column \d+(, activate to (peek at it|send it to the holder|send it to the last holder slot, which ends the level|clear it with its match in the holder))?$/;
 /** Controls behind the modal dialog: the header and the booster rail. */
-const BACKGROUND_CONTROLS = ['btn-daily', 'btn-new', 'btn-restart', 'btn-hint', 'btn-undo', 'btn-shuffle'];
+const BACKGROUND_CONTROLS = ['btn-level', 'btn-daily', 'btn-new', 'btn-restart', 'btn-hint', 'btn-undo', 'btn-shuffle'];
 
 const server = createServer(async (req, res) => {
   const path = req.url === '/' ? '/index.html' : req.url.split('?')[0];
@@ -297,7 +297,7 @@ for (const vp of VIEWPORTS) {
     );
     check(
       controls.map((c) => c.name).join('|') ===
-        'Daily Challenge|New game|Restart|Hint|Undo|Shuffle|Settings',
+        'Profile|Daily Challenge|New game|Restart|Hint|Undo|Shuffle|Settings',
       'board screen exposes the complete slice action set',
       controls,
     );

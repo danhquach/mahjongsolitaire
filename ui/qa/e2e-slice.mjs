@@ -953,6 +953,40 @@ for (const vp of VIEWPORTS) {
     console.log(`${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: Daily Challenge deals, resumes, returns`);
   }
 
+  // 2c. The Level chip opens the profile (issue #137): a real button, 48dp,
+  //     named for what it shows and where it goes; closing returns focus to
+  //     the chip and leaves the game exactly as it was.
+  {
+    const before = failures;
+    const snap = () =>
+      page.evaluate(() => ({
+        hash: window.__slice.stateHash(),
+        score: window.__slice.game.score,
+        profileOpen: document.getElementById('profile').classList.contains('visible'),
+        focus: document.activeElement?.id,
+      }));
+    const chip = await page.evaluate(() => {
+      const b = document.getElementById('btn-level');
+      return {
+        isButton: b.tagName === 'BUTTON',
+        name: b.getAttribute('aria-label'),
+        height: b.getBoundingClientRect().height,
+      };
+    });
+    check(chip.isButton, 'the Level chip is a button', chip);
+    check(/^Level \d+, opens your profile$/.test(chip.name), 'the chip is named for its text and destination', chip);
+    check(chip.height >= 48, 'the Level chip is a 48dp touch target', chip);
+    const idle = await snap();
+    await page.click('#btn-level');
+    const opened = await snap();
+    check(opened.profileOpen && opened.focus === 'profile-close', 'tapping the Level chip opens the profile', opened);
+    await page.keyboard.press('Escape');
+    const closed = await snap();
+    check(!closed.profileOpen && closed.focus === 'btn-level', 'closing returns focus to the chip', closed);
+    check(closed.hash === idle.hash && closed.score === idle.score, 'the game state is untouched', { idle, closed });
+    console.log(`${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: Level chip opens the profile`);
+  }
+
   // 2b. The holder (issues #43, #93), driven the way a player drives it: park a
   //     free tile with one tap on the canvas, check the strip shows it and the
   //     tile it was covering is now free, clear it against its partner in a
