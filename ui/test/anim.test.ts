@@ -6,17 +6,31 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  CASCADE_COLUMN_STAGGER_MS,
+  CASCADE_TILE_MS,
+  CONFETTI_MS,
   FLIP_MS,
-  flipScaleX,
+  LANTERN_MS,
   PAIR_CLEAR_MS,
   PAIR_SHOW_MS,
   PARTICLE_COUNT,
   PARTICLE_MS,
+  SCORE_COUNT_MS,
   SHAKE_AMPLITUDE,
   SHAKE_MS,
   TRAY_FLY_MS,
+  WIN_DIALOG_DELAY_MS,
+  cascadeDurationMs,
+  cascadeFrame,
+  confettiFrame,
+  confettiLayout,
+  flipScaleX,
+  lanternFrame,
+  lanternLayout,
   particleBurst,
   particleFrame,
+  scheduleDialogDelay,
+  scoreCountUp,
   shakeOffset,
 } from '../src/anim.js';
 
@@ -83,4 +97,98 @@ test('the reveal flip unfolds from the centreline and never overshoots (issue #6
   }
   // Ease-out: the first half covers more than half the distance.
   assert.ok(flipScaleX(FLIP_MS / 2) > 0.5);
+});
+
+// --- Win celebration (issue #120) --------------------------------------
+
+test('the win dialog delay is skipped under reduced motion', () => {
+  assert.equal(scheduleDialogDelay(false), WIN_DIALOG_DELAY_MS);
+  assert.equal(scheduleDialogDelay(true), 0);
+});
+
+test('the score count-up starts at 0, lands exactly on the final value, and eases out', () => {
+  const final = 1234;
+  assert.equal(scoreCountUp(0, final), 0);
+  assert.equal(scoreCountUp(SCORE_COUNT_MS, final), final);
+  assert.equal(scoreCountUp(SCORE_COUNT_MS * 5, final), final, 'never left mid-count');
+  let previous = -1;
+  for (let t = 0; t <= SCORE_COUNT_MS; t += 15) {
+    const v = scoreCountUp(t, final);
+    assert.ok(v >= previous, `not monotonic at ${t}ms (${v} < ${previous})`);
+    previous = v;
+  }
+  // Ease-out: the first half covers more than half the distance.
+  assert.ok(scoreCountUp(SCORE_COUNT_MS / 2, final) > final / 2);
+});
+
+test('a zero score counts up to zero without going negative or throwing', () => {
+  assert.equal(scoreCountUp(0, 0), 0);
+  assert.equal(scoreCountUp(SCORE_COUNT_MS / 2, 0), 0);
+  assert.equal(scoreCountUp(SCORE_COUNT_MS, 0), 0);
+});
+
+test('the cascade staggers by column and finishes every tile off and transparent', () => {
+  // Column 0 starts at once; column 3 waits three stagger steps.
+  const start0 = cascadeFrame(1, 0);
+  assert.ok(start0.dx >= 0 && start0.dx < 5, `column 0 already swept far at t=1ms (${start0.dx})`);
+  assert.ok(start0.alpha > 0 && start0.alpha <= 1);
+  const start3 = cascadeFrame(1, 3);
+  assert.deepEqual(start3, { dx: 0, dy: 0, alpha: 1 }, 'column 3 has not started at t=1ms');
+
+  const columns = 4;
+  const total = cascadeDurationMs(columns);
+  assert.equal(total, (columns - 1) * CASCADE_COLUMN_STAGGER_MS + CASCADE_TILE_MS);
+  for (let column = 0; column < columns; column++) {
+    const end = cascadeFrame(total, column);
+    assert.equal(end.alpha, 0, `column ${column} not transparent by the cascade's own end`);
+    assert.ok(end.dx > 0, `column ${column} not swept off by the cascade's own end`);
+  }
+  assert.equal(cascadeDurationMs(0), 0, 'no tiles, no duration');
+});
+
+test('lanterns rise (y strictly decreasing) and fade out over their duration', () => {
+  const [spec] = lanternLayout(11, 1);
+  let previousY = Infinity;
+  let previousAlpha = Infinity;
+  for (let t = 0; t <= LANTERN_MS; t += 100) {
+    const f = lanternFrame(spec!, t);
+    assert.ok(f.y <= previousY, `y rose at ${t}ms`);
+    assert.ok(f.alpha <= previousAlpha + 1e-9, `alpha rose at ${t}ms`);
+    previousY = f.y;
+    previousAlpha = f.alpha;
+  }
+  assert.ok(lanternFrame(spec!, 0).alpha > 0.9);
+  assert.ok(lanternFrame(spec!, LANTERN_MS).alpha < 1e-9);
+});
+
+test('lantern layout is deterministic given a seed, and lands 4-6 lanterns', () => {
+  const a = lanternLayout(3);
+  const b = lanternLayout(3);
+  assert.deepEqual(a, b);
+  assert.notDeepEqual(a, lanternLayout(4));
+  assert.ok(a.length >= 4 && a.length <= 6);
+});
+
+test('confetti falls (y increasing) and fades out, invisible before its own delay', () => {
+  const spec = { x0: 0.5, driftPx: 0, rotationSpeedDeg: 0, delayMs: 200, colorIndex: 0 };
+  assert.equal(confettiFrame(spec, 0).alpha, 0, 'not visible before its delay');
+  assert.equal(confettiFrame(spec, spec.delayMs - 1).alpha, 0);
+  assert.equal(confettiFrame(spec, spec.delayMs).alpha, 1, 'fully visible the instant it starts');
+  let previousY = -Infinity;
+  let previousAlpha = Infinity;
+  for (let t = spec.delayMs; t <= spec.delayMs + CONFETTI_MS; t += 100) {
+    const f = confettiFrame(spec, t);
+    assert.ok(f.y >= previousY - 1e-9, `y fell backwards at ${t}ms`);
+    assert.ok(f.alpha <= previousAlpha + 1e-9, `alpha rose at ${t}ms`);
+    previousY = f.y;
+    previousAlpha = f.alpha;
+  }
+  assert.equal(confettiFrame(spec, spec.delayMs + CONFETTI_MS).alpha, 0);
+});
+
+test('confetti layout is deterministic given a seed', () => {
+  const a = confettiLayout(9);
+  const b = confettiLayout(9);
+  assert.deepEqual(a, b);
+  assert.notDeepEqual(a, confettiLayout(10));
 });

@@ -6,6 +6,14 @@ commit and build time of the running bundle.
 
 ## 2026-09-01
 
+- Clearing a level now feels like a reward: the remaining tile pictures sweep
+  off the board column by column, paper lanterns tinted to the board's own
+  colours drift up from the felt, a light gold/cream/green confetti fall plays
+  behind the dialog, and the final score counts up rather than just appearing.
+  The dialog and its buttons are live within a second either way — the
+  celebration plays around them, never in front of them. Reduced motion (OS
+  preference or the in-app toggle) skips all four and just fades the dialog in
+  with the final score shown at once (#120).
 - The star rating is gone: a clear is a clear. The win dialog no longer
   shows stars, and the profile screen's Stars row is removed — levels
   cleared, total score, streak and trophies stay. Existing records keep
