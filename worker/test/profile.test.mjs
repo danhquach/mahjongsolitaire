@@ -1,18 +1,13 @@
 // Tests for the synced player profile (issue #138).
 //
-// The database is a real SQLite one (`node:sqlite`) behind a small D1-shaped
-// adapter, running worker/schema.sql itself. A hand-written fake that returns
-// canned rows would pass while the actual SQL was wrong — column typos, a
-// missing NOT NULL, a bind arity mismatch — which is most of what can break
-// here, so the tests pay for a real engine.
+// The database is a real SQLite one behind a D1-shaped adapter running the
+// real schema files — see ./d1.mjs for why.
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import { createRateLimitStore } from '../http.mjs';
+import { createDb } from './d1.mjs';
 import {
   EMPTY_RECORD,
   dedupRuns,
@@ -25,34 +20,6 @@ import {
   sanitizeName,
   validateRecord,
 } from '../profile.mjs';
-
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
-
-/** The slice of the D1 binding profile.mjs uses: `prepare().bind().first()`
- *  and `.run()`, both promise-returning. */
-function createDb() {
-  const db = new DatabaseSync(':memory:');
-  db.exec(SCHEMA);
-  return {
-    prepare(sql) {
-      const stmt = db.prepare(sql);
-      return {
-        bind(...args) {
-          return {
-            async first() {
-              return stmt.get(...args) ?? null;
-            },
-            async run() {
-              stmt.run(...args);
-              return { success: true };
-            },
-          };
-        },
-      };
-    },
-    raw: db,
-  };
-}
 
 /** Deterministic "randomness": a counter stepped by an odd multiplier, so
  *  every byte in a run differs (period 256) and every test run produces the

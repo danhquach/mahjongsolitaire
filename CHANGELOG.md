@@ -6,6 +6,14 @@ commit and build time of the running bundle.
 
 ## 2026-09-02
 
+- The Daily Challenge now has a leaderboard. Everyone gets the same board on
+  a given date, so the scores are actually comparable — clear the Daily and a
+  "Leaderboard" button on the win screen shows the top ten, your rank, and the
+  players either side of you. It is opt-in and separate from Cloud sync:
+  nothing appears until you tick "Show me on the leaderboard" in your profile,
+  and unticking it removes every score you have posted, not just today's.
+  Reading the board needs no profile at all. Replaying a Daily can improve
+  your place but never costs you the one you have (#70).
 - Your profile can now follow you off the device. "Cloud sync" in the profile
   screen is off by default and entirely optional — the game plays exactly the
   same without it. Turning it on gives you a player tag and a recovery code;
