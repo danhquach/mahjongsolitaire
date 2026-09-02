@@ -773,6 +773,60 @@
         font-size: 15px;
         color: #3f6212;
       }
+      /* The tile-size slider (issue #139): the label keeps the row's left
+         column, the range takes the rest. The input is 48px tall so the whole
+         track is a finger-sized target, and the thumb itself is drawn at 32px
+         on a slim track. No transition on the thumb: platform travel only,
+         so reduced motion has nothing to switch off. */
+      #settings .size-row > span:first-child {
+        flex: none;
+        min-width: 7.5em;
+      }
+      #settings input[type='range'] {
+        flex: 1;
+        min-width: 0;
+        height: 48px;
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        appearance: none;
+        -webkit-appearance: none;
+        accent-color: #166534;
+        cursor: pointer;
+      }
+      #settings input[type='range']::-webkit-slider-runnable-track {
+        height: 6px;
+        border-radius: 3px;
+        background: #a7f3d0;
+      }
+      #settings input[type='range']::-moz-range-track {
+        height: 6px;
+        border-radius: 3px;
+        background: #a7f3d0;
+      }
+      #settings input[type='range']::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 32px;
+        height: 32px;
+        margin-top: -13px; /* centre a 32px thumb on the 6px track */
+        border-radius: 50%;
+        border: 2px solid #f0fdf4;
+        background: #166534;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+      }
+      #settings input[type='range']::-moz-range-thumb {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: 2px solid #f0fdf4;
+        background: #166534;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+      }
+      #settings input[type='range']:focus-visible {
+        outline: 3px solid #166534;
+        outline-offset: 2px;
+        border-radius: 8px;
+      }
       #settings .card > button,
       #changelog .card > button,
       #profile .card > button,
@@ -1419,25 +1473,27 @@
                   <span class="hint">Dims the tiles that are covered or hemmed in.</span>
                 </span>
               </label>
-              <fieldset>
-                <legend>Tile size</legend>
-                <label class="row" for="set-size-s">
-                  <input type="radio" name="tile-size" id="set-size-s" value="s" />
-                  <span>Small</span>
-                </label>
-                <label class="row" for="set-size-m">
-                  <input type="radio" name="tile-size" id="set-size-m" value="m" />
-                  <span>Medium</span>
-                </label>
-                <label class="row" for="set-size-l">
-                  <input type="radio" name="tile-size" id="set-size-l" value="l" />
-                  <span>Large</span>
-                </label>
-                <label class="row" for="set-size-xl">
-                  <input type="radio" name="tile-size" id="set-size-xl" value="xl" />
-                  <span>Extra large</span>
-                </label>
-              </fieldset>
+              <!-- Tile size as one row (issue #139): a three-stop slider —
+                   Medium / Large / Extra large, the stops in settings.ts —
+                   instead of the radio grid, which took most of the popup. The
+                   slider carries its own name; main.ts keeps aria-valuetext and
+                   the visible stop name in step, and applies each move at once. -->
+              <div class="row size-row">
+                <span>
+                  Tile size
+                  <span class="hint" id="set-size-value" aria-hidden="true">Extra large</span>
+                </span>
+                <input
+                  type="range"
+                  id="set-size"
+                  min="0"
+                  max="2"
+                  step="1"
+                  value="2"
+                  aria-label="Tile size"
+                  aria-valuetext="Extra large"
+                />
+              </div>
               <!-- Send feedback (issue #118): a short in-game form, delivered
                    by email via the Worker endpoint (worker/index.mjs). -->
               <button id="btn-feedback" type="button" class="row feedback-row">

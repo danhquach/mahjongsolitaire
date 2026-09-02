@@ -48,10 +48,20 @@ test('tile size steps up monotonically and never exceeds the viewport fit', () =
   assert.deepEqual(
     factors,
     [...factors].sort((a, b) => a - b),
-    'S < M < L < XL',
+    'M < L < XL',
   );
   assert.equal(Math.max(...factors), 1, 'XL is the fit itself — nothing is clipped');
   assert.ok(Math.min(...factors) > 0);
+  assert.deepEqual(TILE_SIZES, ['m', 'l', 'xl'], 'issue #139: three slider stops, Small retired');
+});
+
+test('a saved Small tile size reads as Medium, not as a removed value (issue #139)', () => {
+  assert.equal(parseSettings({ tileSize: 's' }).tileSize, 'm');
+  assert.equal(parseSettings({ tileSize: 'toString' }).tileSize, 'xl', 'a prototype key is not a retired size');
+  const storage = fakeStorage({ [SETTINGS_STORAGE_KEY]: JSON.stringify({ tileSize: 's', audio: false }) });
+  const store = new SettingsStore(storage);
+  assert.equal(store.value.tileSize, 'm', 'migrated on launch');
+  assert.equal(store.value.audio, false, 'the rest of the record survives');
 });
 
 // --- persistence --------------------------------------------------------------
@@ -61,13 +71,13 @@ test('each change persists on its own, with no Save button in between', () => {
   const store = new SettingsStore(storage);
   assert.equal(store.set('audio', false), true);
   assert.equal(stored(storage)['audio'], false);
-  store.set('tileSize', 's');
-  assert.equal(stored(storage)['tileSize'], 's');
+  store.set('tileSize', 'l');
+  assert.equal(stored(storage)['tileSize'], 'l');
   // Reopening the app sees exactly what was last written.
   assert.deepEqual(new SettingsStore(storage).value, {
     ...DEFAULT_SETTINGS,
     audio: false,
-    tileSize: 's',
+    tileSize: 'l',
   });
 });
 

@@ -1857,7 +1857,21 @@ for (const vp of VIEWPORTS) {
     // Change two settings through the real controls before quitting.
     await page.click('#btn-settings');
     await page.click('#set-highlight-free');
-    await page.click('#set-size-m');
+    // Tile size is a slider (issue #139): two ArrowLefts from Extra large land
+    // on Medium, and each stop applies as it is reached.
+    await page.focus('#set-size');
+    await page.keyboard.press('ArrowLeft');
+    const oneStop = await page.evaluate(() => ({
+      size: window.__slice.settings().tileSize,
+      valuetext: document.getElementById('set-size').getAttribute('aria-valuetext'),
+      shown: document.getElementById('set-size-value').textContent,
+    }));
+    check(
+      oneStop.size === 'l' && oneStop.valuetext === 'Large' && oneStop.shown === 'Large',
+      'one arrow step applies Large and names it for eyes and screen readers',
+      oneStop,
+    );
+    await page.keyboard.press('ArrowLeft');
     await page.click('#settings-close');
 
     await page.reload();

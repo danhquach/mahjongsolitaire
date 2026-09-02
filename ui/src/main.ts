@@ -134,7 +134,7 @@ import {
   liveStreak,
 } from './profile.js';
 import { SaveStore, captureSave, reopen } from './save.js';
-import { SettingsStore, TILE_SIZE_FACTOR, TILE_SIZE_LABEL, TILE_SIZES } from './settings.js';
+import { DEFAULT_SETTINGS, SettingsStore, TILE_SIZE_FACTOR, TILE_SIZE_LABEL, TILE_SIZES } from './settings.js';
 import type { TileSize } from './settings.js';
 import { localKeyValueStorage } from './storage.js';
 import type { Hit } from './hit-test.js';
@@ -998,14 +998,25 @@ async function start(): Promise<void> {
       name: 'Reduced motion',
     },
   ];
-  const sizeInputs: ReadonlyArray<{ readonly input: HTMLInputElement; readonly size: TileSize }> =
-    TILE_SIZES.map((size) => ({ input: el<HTMLInputElement>(`set-size-${size}`), size }));
+  // Tile size is a slider over TILE_SIZES (issue #139): value = stop index.
+  const sizeSlider = el<HTMLInputElement>('set-size');
+  const sizeValueEl = el<HTMLElement>('set-size-value');
+
+  /** Point the slider at the stored stop and name it, for eyes and for
+   *  screen readers (aria-valuetext: "Tile size, Large", not "2"). */
+  function syncSizeSlider(): void {
+    const size = settings.value.tileSize;
+    sizeSlider.max = String(TILE_SIZES.length - 1);
+    sizeSlider.value = String(TILE_SIZES.indexOf(size));
+    sizeSlider.setAttribute('aria-valuetext', TILE_SIZE_LABEL[size]);
+    sizeValueEl.textContent = TILE_SIZE_LABEL[size];
+  }
 
   /** Push the stored settings into the controls (open, and on boot). */
   function syncSettingsControls(): void {
     const current = settings.value;
     for (const { input, key } of settingsToggles) input.checked = current[key];
-    for (const { input, size } of sizeInputs) input.checked = current.tileSize === size;
+    syncSizeSlider();
     syncProfileRow();
   }
 
@@ -1658,14 +1669,15 @@ async function start(): Promise<void> {
         announcer.say(`${name} ${input.checked ? 'on' : 'off'}.`);
       });
     }
-    for (const { input, size } of sizeInputs) {
-      input.addEventListener('change', () => {
-        if (!input.checked) return;
-        settings.set('tileSize', size);
-        applyTileSize();
-        announcer.say(`Tile size ${TILE_SIZE_LABEL[size]}.`);
-      });
-    }
+    // Every stop the thumb lands on applies at once (issue #139) — by drag,
+    // tap on the track, or arrow key. The slider announces its own
+    // aria-valuetext, so no live-region line on top of it.
+    sizeSlider.addEventListener('input', () => {
+      const size: TileSize = TILE_SIZES[Number(sizeSlider.value)] ?? DEFAULT_SETTINGS.tileSize;
+      if (!settings.set('tileSize', size)) return;
+      syncSizeSlider();
+      applyTileSize();
+    });
     el<HTMLButtonElement>('settings-close').addEventListener('click', () => closeSettings());
     // Tapping the dimmed backdrop dismisses the panel (issue #107). Settings
     // persist per change, so dismissal loses nothing; the target check keeps
