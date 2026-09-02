@@ -229,8 +229,6 @@ async function start(): Promise<void> {
   const overlayGrant = el<HTMLElement>('overlay-grant');
   const lossWashLayer = el<HTMLDivElement>('loss-wash-layer');
   const dailyButton = el<HTMLButtonElement>('btn-daily');
-  const dailyDateEl = el<HTMLElement>('daily-date');
-  const dailyStatusEl = el<HTMLElement>('daily-status');
   const feedbackPanel = el<HTMLDivElement>('feedback');
   const feedbackButton = el<HTMLButtonElement>('btn-feedback');
   const feedbackSummaryInput = el<HTMLInputElement>('feedback-summary');
@@ -542,6 +540,7 @@ async function start(): Promise<void> {
     // The Level chip shows the date on a Daily board (issue #19).
     levelEl.textContent = daily === null ? String(progress.level) : formatDateKey(daily, 'short');
     syncHudIdentity();
+    syncDailyChip();
     drawScore();
     syncBoosterButtons();
     holder.sync({
@@ -1007,25 +1006,35 @@ async function start(): Promise<void> {
     for (const { input, key } of settingsToggles) input.checked = current[key];
     for (const { input, size } of sizeInputs) input.checked = current.tileSize === size;
     syncProfileRow();
-    syncDailyRow();
   }
 
-  /** The Settings row into the Daily Challenge (issue #19): today's date, and
-   *  where the player stands — cleared today, a streak to keep alive, or the
-   *  standing invitation. */
-  function syncDailyRow(): void {
+  /** The HUD's Daily chip (issue #136, was a Settings row under #19): its
+   *  state — `active` while the Daily is on the table, `done` once today's
+   *  board is credited, `pending` (pulsing) otherwise — and the name that
+   *  says where the player stands: today's date and the streak. */
+  function syncDailyChip(): void {
     const today = dailyDateKey();
     const streak = liveStreak(record.value, today);
-    dailyDateEl.textContent = `· ${formatDateKey(today, 'short')}`;
+    const date = formatDateKey(today, 'long');
+    let state: 'active' | 'done' | 'pending';
+    let status: string;
     if (daily === today) {
-      dailyStatusEl.textContent = 'On the table now.';
+      state = 'active';
+      status = 'on the table now';
     } else if (record.value.lastDaily === today) {
-      dailyStatusEl.textContent = `Cleared today ✓ ${streak}-day streak. Tap to play it again.`;
+      state = 'done';
+      status = `cleared today, ${streak}-day streak, tap to play it again`;
     } else if (streak > 0) {
-      dailyStatusEl.textContent = `${streak}-day streak — clear today’s board to keep it going.`;
+      state = 'pending';
+      status = `${streak}-day streak, clear today’s board to keep it going`;
     } else {
-      dailyStatusEl.textContent = 'One board a day, the same for everyone.';
+      state = 'pending';
+      status = 'one board a day, the same for everyone';
     }
+    dailyButton.dataset['state'] = state;
+    const name = `Daily Challenge, ${date}: ${status}`;
+    dailyButton.setAttribute('aria-label', name);
+    dailyButton.title = name;
   }
 
   /** The Settings row that opens the profile shows who the player is. */
@@ -1647,11 +1656,6 @@ async function start(): Promise<void> {
         announcer.say(`Tile size ${TILE_SIZE_LABEL[size]}.`);
       });
     }
-    // Daily Challenge (issue #19): Settings steps aside and the board deals.
-    dailyButton.addEventListener('click', () => {
-      closeSettings();
-      void startDaily();
-    });
     el<HTMLButtonElement>('settings-close').addEventListener('click', () => closeSettings());
     // Tapping the dimmed backdrop dismisses the panel (issue #107). Settings
     // persist per change, so dismissal loses nothing; the target check keeps
@@ -1660,6 +1664,8 @@ async function start(): Promise<void> {
       if (ev.target === settingsPanel) closeSettings();
     });
     settingsButton.addEventListener('click', () => openSettings());
+    // The HUD's Daily chip (issue #136) deals today's board in one tap.
+    dailyButton.addEventListener('click', () => void startDaily());
     // Escape is the expected way out of a modal, and the only one for a
     // keyboard player who tabbed past the Done button. Listened for on the
     // document, not the panel: clicking the card's own text blurs focus to

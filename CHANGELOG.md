@@ -6,6 +6,11 @@ commit and build time of the running bundle.
 
 ## 2026-09-02
 
+- The Daily Challenge is one tap from the board: a "Daily" chip in the HUD,
+  right after Score, in the Daily's indigo-and-gold palette. It pulses until
+  today's board is cleared (a steady glow under reduced motion), reads as
+  active while the Daily is on the table, and its tooltip names the date and
+  your streak. The Daily row is gone from Settings (#136).
 - The feedback form can now carry evidence: an "Add image or video" control
   attaches up to three screenshots or a short screen recording (images up to
   10 MB, video up to 25 MB, 25 MB in all), shown as thumbnails with a remove
