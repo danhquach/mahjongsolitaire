@@ -6,6 +6,11 @@ commit and build time of the running bundle.
 
 ## 2026-09-02
 
+- The settings gear moved into the booster rail, as its last control, instead
+  of floating top-right inside the board — on narrow phones it could sit on
+  top of the board's own top-right tiles. The rail's band is reserved space
+  the board's fit already prices in, so nothing there can overlap a tile
+  (#125).
 - Peeking a face-down tile and tapping its match now clears the pair right
   there on the board — no trip through the holder, whether the tapped tile
   was already face-up or was itself face-down. Tapping a non-matching tile

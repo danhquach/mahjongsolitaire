@@ -293,7 +293,7 @@ for (const vp of VIEWPORTS) {
     );
     check(
       controls.map((c) => c.name).join('|') ===
-        'New game|Restart|Settings|Hint|Undo|Shuffle',
+        'New game|Restart|Hint|Undo|Shuffle|Settings',
       'board screen exposes the complete slice action set',
       controls,
     );
