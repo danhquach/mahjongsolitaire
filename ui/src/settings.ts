@@ -1,10 +1,9 @@
-// Player settings (issue #14, spec §7). Seven independent preferences, each
+// Player settings (issue #14, spec §7). Six independent preferences, each
 // persisted the moment it changes so the settings screen needs no Save button:
 //
 //   audio        gentle sound effects  — default ON (§7)
 //   haptics      gentle vibration      — default ON, independent of audio (§7)
 //   tileSize     S / M / L / XL        — default XL (§1.2/§7: oversized tiles)
-//   timedMode    opt-in elapsed clock  — default OFF (§6: no timer pressure)
 //   ads          ads master toggle     — default OFF (§8, decision 0004, #3)
 //   highlightFree dim the blocked tiles — default OFF (issue #45)
 //   reducedMotion cross-fade instead of flying tiles — default OFF (issue #44)
@@ -50,7 +49,6 @@ export interface Settings {
   readonly audio: boolean;
   readonly haptics: boolean;
   readonly tileSize: TileSize;
-  readonly timedMode: boolean;
   readonly ads: boolean;
   /**
    * Shade blocked tiles one depth step further back so the free ones are the
@@ -74,7 +72,6 @@ export const DEFAULT_SETTINGS: Settings = {
   audio: true,
   haptics: true,
   tileSize: 'xl',
-  timedMode: false,
   ads: false,
   highlightFree: false,
   reducedMotion: false,
@@ -91,13 +88,12 @@ export function parseSettings(record: unknown): Settings {
   if (typeof record !== 'object' || record === null) return DEFAULT_SETTINGS;
   const raw = record as Record<string, unknown>;
   const bool = (
-    key: 'audio' | 'haptics' | 'timedMode' | 'ads' | 'highlightFree' | 'reducedMotion',
+    key: 'audio' | 'haptics' | 'ads' | 'highlightFree' | 'reducedMotion',
   ): boolean => (typeof raw[key] === 'boolean' ? (raw[key] as boolean) : DEFAULT_SETTINGS[key]);
   return {
     audio: bool('audio'),
     haptics: bool('haptics'),
     tileSize: isTileSize(raw['tileSize']) ? raw['tileSize'] : DEFAULT_SETTINGS.tileSize,
-    timedMode: bool('timedMode'),
     ads: bool('ads'),
     highlightFree: bool('highlightFree'),
     reducedMotion: bool('reducedMotion'),

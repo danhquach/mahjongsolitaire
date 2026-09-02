@@ -816,12 +816,6 @@
           <span class="stat-label">Score</span>
           <strong class="stat-value" id="score">0</strong>
         </span>
-        <!-- Timed mode is opt-in (spec §6), so the readout is hidden until the
-             player asks for it in settings. It counts up; nothing runs out. -->
-        <span class="stat" id="time-stat" hidden>
-          <span class="stat-label">Time</span>
-          <strong class="stat-value" id="elapsed">0:00</strong>
-        </span>
         <span class="hud-actions">
           <!-- Icon-only, like the booster rail: the accessible name is the
                aria-label, `title` gives sighted players the tooltip. -->
@@ -1056,13 +1050,6 @@
               <label class="row" for="set-haptics">
                 <input type="checkbox" id="set-haptics" />
                 <span>Vibration</span>
-              </label>
-              <label class="row" for="set-timed">
-                <input type="checkbox" id="set-timed" />
-                <span>
-                  Show a timer
-                  <span class="hint">Counts up. There is never a time limit.</span>
-                </span>
               </label>
               <label class="row" for="set-ads">
                 <input type="checkbox" id="set-ads" />

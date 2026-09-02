@@ -6,6 +6,9 @@ commit and build time of the running bundle.
 
 ## 2026-09-01
 
+- The timer is gone: the Time chip and the "Show a timer" setting are
+  removed (PM request). Nothing about pace is shown on the board; the game
+  still keeps time quietly for the save and the star rating's baseline.
 - Special boards look special: the Daily Challenge plays on night indigo
   felt with gold tile edges, and every tenth ladder level — the decade
   milestone — on burgundy with rose edges; ordinary levels keep the warm

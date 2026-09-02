@@ -824,11 +824,11 @@ for (const vp of VIEWPORTS) {
       settingsControls.filter((c) => c.small),
     );
 
-    // Fourteen controls: the profile row (issue #69), the Daily Challenge row
-    // (issue #19), six toggles (issue #45 added Highlight free tiles, issue
-    // #44 added Reduced motion), four tile sizes, the version row (issue #81),
-    // and Done.
-    check(settingsControls.length === 14, 'settings screen exposes all fourteen controls', {
+    // Thirteen controls: the profile row (issue #69), the Daily Challenge row
+    // (issue #19), five toggles (issue #45 added Highlight free tiles, issue
+    // #44 added Reduced motion; the timer toggle was retired 2026-09-01), four
+    // tile sizes, the version row (issue #81), and Done.
+    check(settingsControls.length === 13, 'settings screen exposes all thirteen controls', {
       count: settingsControls.length,
     });
 

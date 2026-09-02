@@ -34,11 +34,11 @@ const stored = (storage: { data: Map<string, string> }): Record<string, unknown>
 
 // --- defaults -----------------------------------------------------------------
 
-test('spec §7 defaults: audio and haptics ON, timed mode OFF, ads OFF', () => {
+test('spec §7 defaults: audio and haptics ON, ads OFF, no timer setting at all', () => {
   const settings = new SettingsStore().value;
   assert.equal(settings.audio, true);
   assert.equal(settings.haptics, true);
-  assert.equal(settings.timedMode, false, 'spec §6: no timer pressure by default');
+  assert.equal('timedMode' in settings, false, 'spec §6: no timer — the toggle was retired 2026-09-01');
   assert.equal(settings.ads, false, 'decision 0004 / issue #3: ads default OFF');
   assert.equal(settings.tileSize, 'xl', 'spec §1.2/§7: oversized tiles by default');
 });
@@ -99,8 +99,8 @@ test('write-blocked storage keeps the choice for the session', () => {
     removeItem: () => undefined,
   };
   const store = new SettingsStore(hostile);
-  assert.doesNotThrow(() => store.set('timedMode', true));
-  assert.equal(store.value.timedMode, true);
+  assert.doesNotThrow(() => store.set('highlightFree', true));
+  assert.equal(store.value.highlightFree, true);
 });
 
 // --- tolerating a record we did not write -------------------------------------
@@ -110,13 +110,15 @@ test('a bad field falls back on its own; the rest of the record survives', () =>
     audio: 'yes', // wrong type
     haptics: false,
     tileSize: 'gigantic', // not a tile size
-    timedMode: true,
+    highlightFree: true,
+    timedMode: true, // a field this build no longer has (removed 2026-09-01): ignored
     ads: false,
   });
   assert.equal(settings.audio, DEFAULT_SETTINGS.audio, 'bad boolean → its default');
   assert.equal(settings.tileSize, DEFAULT_SETTINGS.tileSize, 'unknown size → its default');
   assert.equal(settings.haptics, false, 'valid fields are kept');
-  assert.equal(settings.timedMode, true);
+  assert.equal(settings.highlightFree, true);
+  assert.equal('timedMode' in settings, false, 'a retired field is not carried');
 });
 
 test('an absent, malformed, or non-object record starts from the defaults', () => {
@@ -217,7 +219,7 @@ test('reset resumes from a saved total — what a resume needs', () => {
   assert.equal(elapsed.ms, 0);
 });
 
-test('timed mode reads as a stopwatch, never a countdown', () => {
+test('formatElapsed reads as a stopwatch, never a countdown (kept for the save/star clock)', () => {
   assert.equal(formatElapsed(0), '0:00');
   assert.equal(formatElapsed(9_000), '0:09');
   assert.equal(formatElapsed(91_400), '1:31');

@@ -1611,13 +1611,18 @@ for (const vp of VIEWPORTS) {
   {
     const before = failures;
     // The login date rides along (issue #51), or the reload would pay the
-    // daily bonus and hand Shuffle a charge back.
+    // daily bonus and hand Shuffle a charge back — and every ladder level is
+    // marked cleared, because the naive hunt below sometimes *wins* a deal,
+    // and a first clear (or a milestone) would pay charges the same way.
     await page.evaluate(
-      (today) =>
+      (today) => {
         localStorage.setItem(
           'mahjong.boosters.v1',
           JSON.stringify({ hint: 0, undo: 5, shuffle: 0, lastLoginGrant: today }),
-        ),
+        );
+        const stars = Object.fromEntries(Array.from({ length: 150 }, (_, i) => [i + 1, 1]));
+        localStorage.setItem('mahjong.record.v1', JSON.stringify({ stars }));
+      },
       dailyDateKey(),
     );
     await page.reload();
@@ -1743,7 +1748,7 @@ for (const vp of VIEWPORTS) {
 
     // Change two settings through the real controls before quitting.
     await page.click('#btn-settings');
-    await page.click('#set-timed');
+    await page.click('#set-highlight-free');
     await page.click('#set-size-m');
     await page.click('#settings-close');
 
@@ -1759,7 +1764,6 @@ for (const vp of VIEWPORTS) {
         seed: s.game.level.seed,
         undoDepth: s.game.undoDepth,
         settings: s.settings(),
-        timerShown: !document.getElementById('time-stat').hidden,
         said: document.getElementById('a11y-status').textContent,
       };
     });
@@ -1775,11 +1779,10 @@ for (const vp of VIEWPORTS) {
     );
     check(/Game resumed\./.test(resumed.said), 'the resume is announced', resumed.said);
     check(
-      resumed.settings.timedMode === true && resumed.settings.tileSize === 'm',
+      resumed.settings.highlightFree === true && resumed.settings.tileSize === 'm',
       'settings survive the force-quit',
       resumed.settings,
     );
-    check(resumed.timerShown, 'opting into the timer shows the readout', resumed);
 
     // The resumed board is a live game, not a museum piece. This is the check
     // that caught the resume clock: performance.now() restarts at 0 on the new
