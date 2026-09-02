@@ -11,7 +11,14 @@
 
 import type { Container, Ticker } from 'pixi.js';
 import type { TileId } from '@mahjongsolitaire/core';
-import { FLIP_MS, SHAKE_MS, flipScaleX, shakeOffset } from './anim.js';
+import {
+  FLIP_MS,
+  SHAKE_MS,
+  cascadeDurationMs,
+  cascadeFrame,
+  flipScaleX,
+  shakeOffset,
+} from './anim.js';
 import type { Point } from './anim.js';
 
 interface Effect {
@@ -88,6 +95,49 @@ class FlipEffect implements Effect {
 }
 
 /**
+ * The remaining tile pictures lifting and sweeping off the board, column by
+ * column (issue #120's cascade). Decision 0013 means the board is usually
+ * already empty at the moment of a win — every pair clears in the holder —
+ * so this is generic over whatever `tileNode`s the renderer still has,
+ * including none: an empty tile list finishes on its first frame and disposes
+ * cleanly. Like ShakeEffect/FlipEffect, nodes are re-resolved every frame and
+ * a tile that has left the board simply drops out of the effect.
+ */
+class CascadeEffect implements Effect {
+  private t = 0;
+  private readonly total: number;
+
+  constructor(
+    private readonly tiles: ReadonlyArray<{ readonly id: TileId; readonly column: number }>,
+    private readonly tileNode: (id: TileId) => Container | undefined,
+  ) {
+    this.total =
+      tiles.length === 0 ? 0 : cascadeDurationMs(Math.max(...tiles.map((t) => t.column)) + 1);
+  }
+
+  advance(dtMs: number): boolean {
+    this.t += dtMs;
+    for (const { id, column } of this.tiles) {
+      const node = this.tileNode(id);
+      if (!node) continue;
+      const frame = cascadeFrame(this.t, column);
+      node.position.set(frame.dx, frame.dy);
+      node.alpha = frame.alpha;
+    }
+    return this.t < this.total;
+  }
+
+  dispose(): void {
+    for (const { id } of this.tiles) {
+      const node = this.tileNode(id);
+      if (!node) continue;
+      node.position.set(0, 0);
+      node.alpha = 1;
+    }
+  }
+}
+
+/**
  * Every live effect, advanced from one ticker callback.
  *
  * Concurrent effects are simply separate entries — nothing queues and nothing
@@ -120,6 +170,14 @@ export class Animator {
   shake(ids: readonly TileId[]): void {
     if (this.opts.reduced()) return;
     for (const id of ids) this.effects.push(new ShakeEffect(id, this.opts.tileNode));
+  }
+
+  /** The win cascade (issue #120): whatever tile pictures are still on the
+   *  board lift and sweep off, column by column. Reduced motion skips it —
+   *  the board is already the final, empty-of-fanfare state. */
+  cascade(tiles: ReadonlyArray<{ readonly id: TileId; readonly column: number }>): void {
+    if (this.opts.reduced()) return;
+    this.effects.push(new CascadeEffect(tiles, this.opts.tileNode));
   }
 
   /** Drop every live effect — the board underneath them has been replaced. */

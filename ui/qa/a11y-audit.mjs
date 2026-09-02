@@ -709,6 +709,11 @@ for (const vp of VIEWPORTS) {
         act(b);
       }
     });
+    // Issue #120: the win dialog waits out the celebration's
+    // WIN_DIALOG_DELAY_MS (~600ms) before it opens and takes focus —
+    // `animating()` folds that pending delay in, so the harness's usual
+    // settle-wait covers it here too.
+    await page.waitForFunction(() => !window.__slice.animating(), { timeout: 2000 });
     const end = await page.evaluate(() => ({
       tilesLeft: window.__slice.game.tilesLeft,
       status: window.__slice.game.status(),

@@ -448,6 +448,33 @@
         transform: translate(-50%, -50%);
         will-change: transform, opacity;
       }
+      /* Win celebration overlay (issue #120): lanterns rising from the felt
+         and a light confetti fall, both behind the dialog (#overlay is
+         z-index 40; this sits under it like #fx-layer). Fixed and
+         pointer-transparent — decoration only, win-fx.ts. */
+      #win-fx-layer {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 32;
+        overflow: hidden;
+      }
+      #win-fx-layer .fx-lantern {
+        position: absolute;
+        bottom: 8%;
+        width: 34px;
+        height: 44px;
+        border-radius: 40% 40% 30% 30%;
+        opacity: 0;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.25) inset;
+      }
+      #win-fx-layer .fx-confetti {
+        position: absolute;
+        top: -20px;
+        width: 8px;
+        height: 14px;
+        opacity: 0;
+      }
       #board {
         flex: 1;
         position: relative;
@@ -463,13 +490,34 @@
         display: none;
         align-items: center;
         justify-content: center;
-        /* Above #fx-layer (z-index 30): the modal must cover a pair clear
-           still playing out — a win always ends with one (issue #93). */
+        /* Above #fx-layer (z-index 30) and #win-fx-layer (32): the modal must
+           cover a pair clear still playing out — a win always ends with one
+           (issue #93) — and sits in front of its own lanterns/confetti. */
         z-index: 40;
         background: rgba(0, 0, 0, 0.55);
       }
       #overlay.visible {
         display: flex;
+        /* Issue #120's dialog fade-in. An animation, not a transition: a
+           transition needs a before-state in the render tree, which
+           display:none never gives it, while an animation starts the moment
+           the box begins rendering — so this plays every time `.visible` is
+           added, straight from closed. Kept even under reduced motion (it
+           is not gated by the media query below, nor by
+           [data-motion='reduced']): a plain opacity fade, not the
+           cascade/lantern/confetti motion that toggle turns off. Still
+           display:none, not visibility, while closed — the QA a11y audit
+           (qa/a11y-audit.mjs) relies on offsetParent being null to exclude a
+           closed dialog's buttons from the reachable HUD controls. */
+        animation: overlay-fade-in 200ms ease;
+      }
+      @keyframes overlay-fade-in {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
       }
       #overlay .card {
         background: #f0fdf4;
@@ -831,6 +879,7 @@
       <div id="play-area">
         <div id="holder"></div>
         <div id="fx-layer"></div>
+        <div id="win-fx-layer"></div>
         <div id="board">
           <div id="a11y-layer"></div>
           <!-- The way into settings lives here rather than in the header: at

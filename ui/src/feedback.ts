@@ -19,8 +19,10 @@
 
 import type { Settings } from './settings.js';
 
-/** The moments the board gives feedback for. */
-export type Cue = 'select' | 'match' | 'mismatch';
+/** The moments the board gives feedback for. Issue #120 adds 'win': one soft
+ *  cue on clearing a level, alongside the cascade/lanterns/confetti — still
+ *  just the two existing channels, each honouring its own toggle. */
+export type Cue = 'select' | 'match' | 'mismatch' | 'win';
 
 export interface CuePlayer {
   play(cue: Cue): void;
@@ -36,6 +38,7 @@ const TONES: Record<Cue, { readonly from: number; readonly to: number; readonly 
   select: { from: 660, to: 660, ms: 70 },
   match: { from: 587, to: 880, ms: 180 },
   mismatch: { from: 320, to: 240, ms: 130 },
+  win: { from: 523, to: 784, ms: 200 },
 };
 
 const PEAK_GAIN = 0.06;
@@ -45,6 +48,7 @@ const HAPTICS: Record<Cue, number | readonly number[]> = {
   select: 8,
   match: 14,
   mismatch: [10, 40, 10],
+  win: 20,
 };
 
 /**

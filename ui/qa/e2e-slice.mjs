@@ -1261,6 +1261,12 @@ for (const vp of VIEWPORTS) {
     await tapTile(a);
     await tapTile(b);
   }
+  // Issue #120: the win dialog no longer appears the instant the board is
+  // won — it waits out the celebration's WIN_DIALOG_DELAY_MS (~600ms) so the
+  // cascade/lanterns/confetti/cue can play first. `animating()` now folds in
+  // that pending delay (main.ts's `animating()` OR's in `pendingWinTimer`),
+  // so the same settle-wait the rest of the harness already uses covers it.
+  await page.waitForFunction(() => !window.__slice.animating(), { timeout: 2000 });
   const result = await page.evaluate(() => ({
     tilesLeft: window.__slice.game.tilesLeft,
     status: window.__slice.game.status(),

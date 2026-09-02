@@ -71,6 +71,8 @@ import { Elapsed } from './elapsed.js';
 import { Animator } from './effects.js';
 import { TrayFx } from './tray-fx.js';
 import type { Box } from './tray-fx.js';
+import { WinFx } from './win-fx.js';
+import { scheduleDialogDelay, scoreCountUp } from './anim.js';
 import { Feedback, navigatorVibrate, webAudioPlayer } from './feedback.js';
 import type { Cue } from './feedback.js';
 import { faceStyle } from './faces.js';
@@ -354,6 +356,17 @@ async function start(): Promise<void> {
   let flash: readonly number[] = [];
   let flashToken = 0;
   let overlayVisible = false;
+  /** A win dialog waiting out WIN_DIALOG_DELAY_MS while the celebration plays
+   *  (issue #120) — cancelled if a new level starts first. */
+  let pendingWinTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The score dialog's count-up (issue #120), driven independently of the
+   *  win timer above so it can be cancelled on its own once the dialog is
+   *  already showing. */
+  let scoreCountRaf: number | null = null;
+  /** Whatever `showStatus` appends after "Final score: N" on a win (the Daily
+   *  payout line) — captured so the count-up can rebuild the same text at
+   *  every value without re-deriving it. */
+  let winScoreSuffix = '';
   /** A cross-layout level transition is in flight (issue #79): input on the
    *  outgoing board is dropped until the new deal is in. */
   let dealing = false;
@@ -407,6 +420,11 @@ async function start(): Promise<void> {
   const holder = new HolderStrip(holderRoot, HOLDER_SLOTS);
   // The tray effects layer (issue #93): fixed overlay, page coordinates.
   const trayFx = new TrayFx(el<HTMLDivElement>('fx-layer'), () =>
+    settings.value.reducedMotion || prefersReducedMotion(),
+  );
+  // The win celebration's DOM half (issue #120): lanterns + confetti, on
+  // their own layer so clearing the tray mid-flight never touches them.
+  const winFx = new WinFx(el<HTMLDivElement>('win-fx-layer'), () =>
     settings.value.reducedMotion || prefersReducedMotion(),
   );
 
@@ -547,6 +565,7 @@ async function start(): Promise<void> {
         record.recordWin(game.score, { level: cleared });
         overlayTitle.textContent = `Level ${cleared} complete!`;
         overlayText.textContent = `Final score: ${game.score}`;
+        winScoreSuffix = '';
         overlayNew.textContent = atEnd ? 'Play again' : 'Next level';
         const grantLines: string[] = [];
         if (firstClear) {
@@ -581,7 +600,8 @@ async function start(): Promise<void> {
             }.`
           : 'Already cleared — no extra trophy for a replay.';
         overlayTitle.textContent = 'Daily Challenge complete!';
-        overlayText.textContent = `Final score: ${game.score}. ${payout}`;
+        winScoreSuffix = `. ${payout}`;
+        overlayText.textContent = `Final score: ${game.score}${winScoreSuffix}`;
         overlayNew.textContent = 'Back to the ladder';
         announcer.say(`Daily Challenge complete. Final score ${game.score}. ${payout}`);
       }
@@ -608,12 +628,15 @@ async function start(): Promise<void> {
         `No moves left. ${ways.length > 0 ? `${ways.join('; ')}; ` : ''}restart the level, or start a new game.`,
       );
     }
+    // The once-per-level guard (a) and the background inert-ing both happen
+    // synchronously and unconditionally, whatever comes next — a win's
+    // celebration only ever delays the dialog's own classList/focus, never
+    // this: the booster rail must already be inert before a fast player could
+    // reach it in the gap (issue #120).
     overlayVisible = true;
-    overlay.classList.add('visible');
     setBackgroundInert(true);
     // Focus the way out, not the way back: Shuffle if it can help, else Undo,
     // and only then the restart the player loses progress to.
-    //
     const wayOut = canShuffle
       ? overlayShuffle
       : canUndo
@@ -621,18 +644,97 @@ async function start(): Promise<void> {
         : overlayRestart.hidden
           ? overlayNew
           : overlayRestart;
+    if (status === 'won') {
+      presentWinCelebration(wayOut);
+    } else {
+      overlay.classList.add('visible');
+      focusWayOut(wayOut);
+    }
+  }
+
+  /** Focus the dialog's way out, and again on the next task — issue #63's
+   *  fix for a dialog opened from a tap: the canvas `pointerdown` handler is
+   *  followed by the browser's own `mousedown` default action, which moves
+   *  focus to <body> right after the focus above lands. Only repaired if it
+   *  was actually lost, and only while the dialog is still open: an Undo that
+   *  lifts a deadlock closes it and hands focus back to the board, which this
+   *  must not steal. */
+  function focusWayOut(wayOut: HTMLButtonElement): void {
     wayOut.focus();
-    // …and again on the next task, which issue #63 is what surfaced. A dialog
-    // opened from a tap on the board is opened inside the canvas `pointerdown`
-    // handler, and the browser's own `mousedown` follows it and moves focus to
-    // <body> as its default action — so the focus above is taken straight back
-    // off for exactly the player who tapped their way into the dialog. Only
-    // repaired if it was actually lost, and only while the dialog is still open:
-    // an Undo that lifts a deadlock closes it and hands focus back to the board,
-    // which this must not steal.
     setTimeout(() => {
       if (overlayVisible && !overlay.contains(document.activeElement)) wayOut.focus();
     }, 0);
+  }
+
+  /**
+   * The win celebration (issue #120): a cascade of whatever tile pictures are
+   * still on the board, lanterns and confetti behind the dialog, and the
+   * win cue — all fired at once, none of it awaited. The dialog itself
+   * (classList, focus, and the score count-up) follows after
+   * `scheduleDialogDelay`, or immediately under reduced motion, which also
+   * cancels the three visual effects and shows the final score at once.
+   * `overlayVisible`/`setBackgroundInert` are already set by the caller, so a
+   * tap or a booster press during the delay is already blocked.
+   */
+  function presentWinCelebration(wayOut: HTMLButtonElement): void {
+    const reduced = settings.value.reducedMotion || prefersReducedMotion();
+    const finalScore = game.score;
+    const suffix = winScoreSuffix;
+    feedback.cue('win');
+    if (!reduced) {
+      animator.cascade(cascadeTiles());
+      winFx.celebrate(cssColor(paletteInPlay().back));
+    }
+    const reveal = (): void => {
+      pendingWinTimer = null;
+      overlay.classList.add('visible');
+      if (reduced) {
+        overlayText.textContent = `Final score: ${finalScore}${suffix}`;
+      } else {
+        animateScoreCountUp(finalScore, suffix);
+      }
+      focusWayOut(wayOut);
+    };
+    const delay = scheduleDialogDelay(reduced);
+    if (delay <= 0) reveal();
+    else pendingWinTimer = setTimeout(reveal, delay);
+  }
+
+  /** The tile pictures the cascade sweeps off — whatever is left on the board
+   *  at the moment of a win. Decision 0013 means this is usually empty (every
+   *  pair clears in the holder), so the effect is generic over zero tiles as
+   *  much as any number. `column` is the tile's own slot.x: any ordering
+   *  works, and it keeps tiles that share a column moving together. */
+  function cascadeTiles(): ReadonlyArray<{ readonly id: TileId; readonly column: number }> {
+    return game.board.presentTiles().map((t) => ({ id: t.id, column: t.slot.x }));
+  }
+
+  /** Count the dialog's score line from 0 to `final` (issue #120), rebuilding
+   *  "Final score: N<suffix>" every frame so the Daily payout line rides
+   *  along unchanged. Cancelled by `cancelWinCelebration` on a new deal. */
+  function animateScoreCountUp(final: number, suffix: string): void {
+    const start = performance.now();
+    const step = (now: number): void => {
+      const value = scoreCountUp(now - start, final);
+      overlayText.textContent = `Final score: ${value}${suffix}`;
+      scoreCountRaf = value < final ? requestAnimationFrame(step) : null;
+    };
+    scoreCountRaf = requestAnimationFrame(step);
+  }
+
+  /** Cancel a win celebration in flight — a new deal or a page-hide before the
+   *  delayed dialog opened (issue #120). Safe to call unconditionally: every
+   *  piece is a no-op when nothing is pending. */
+  function cancelWinCelebration(): void {
+    if (pendingWinTimer !== null) {
+      clearTimeout(pendingWinTimer);
+      pendingWinTimer = null;
+    }
+    if (scoreCountRaf !== null) {
+      cancelAnimationFrame(scoreCountRaf);
+      scoreCountRaf = null;
+    }
+    winFx.clear();
   }
 
   /**
@@ -1149,6 +1251,7 @@ async function start(): Promise<void> {
     if (result.ok && (kind === 'undo' || kind === 'shuffle')) {
       animator.clear();
       trayFx.clear();
+      cancelWinCelebration();
     }
     redraw();
     if (result.ok) persist();
@@ -1429,6 +1532,7 @@ async function start(): Promise<void> {
     flashToken++;
     animator.clear();
     trayFx.clear();
+    cancelWinCelebration();
     hintPair = [];
     shuffleCount = 0;
     elapsed.reset();
@@ -1506,6 +1610,12 @@ async function start(): Promise<void> {
       // already correct without them, so drop them (issue #44 / #93).
       animator.clear();
       trayFx.clear();
+      // Not cancelWinCelebration(): a pending win dialog must still open when
+      // the player comes back (a hidden setTimeout keeps running, just
+      // possibly throttled), so only the decorative lanterns/confetti — which
+      // would otherwise sit frozen mid-flight, like the tray flights above —
+      // are dropped here (issue #120).
+      winFx.clear();
       persist();
     } else {
       elapsed.resume();
@@ -1632,7 +1742,7 @@ async function start(): Promise<void> {
     },
     /** Whether any board or tray effect is live (issue #44 / #93 QA). */
     animating(): boolean {
-      return animator.busy || trayFx.busy;
+      return animator.busy || trayFx.busy || winFx.busy || pendingWinTimer !== null;
     },
     /** The effective reduced-motion decision, OS preference included. */
     reducedMotion(): boolean {
