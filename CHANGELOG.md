@@ -6,6 +6,13 @@ commit and build time of the running bundle.
 
 ## 2026-09-01
 
+- Boosters replenish: clearing a level for the first time earns one charge
+  of a booster you pick on the level-complete dialog (an unclaimed pick goes
+  to whichever you have fewest of); every third new level cleared pays three
+  more at random; and the first launch of each day adds one of each. Replays
+  earn nothing, balances cap at 99, and the grants are spoken to screen
+  readers. A player at zero of everything can always earn their way back
+  without ads or purchases (#51).
 - Daily Challenge: Settings has a new row that deals the day's board — the
   same layout and arrangement for every player on that calendar date. Clear
   it for a trophy; clear it on consecutive days to build a streak, and the
