@@ -20,10 +20,13 @@ import {
   BOARD_FELT,
   BORDER_WIDTH,
   contrastRatio,
+  cssColor,
   depthSteps,
   DIMMED_STEPS,
+  LANTERN,
   LAYER_FACE_STEP,
   LAYER_INK_STEP,
+  PALETTES,
   relativeLuminance,
   scaleColor,
   SHADOW_DX,
@@ -34,9 +37,13 @@ import {
   SIDE_BAND_FACTORS,
   tileShade,
 } from '../src/depth.js';
+import type { BoardPalette } from '../src/depth.js';
 import { faceStyle } from '../src/faces.js';
-import { BACK_FACE, BACK_KEYLINE } from '../src/render.js';
 import { SIDE_DEPTH, TILE_H, TILE_W } from '../src/geometry.js';
+
+/** Every shipped palette (issue #67): each proof below that touches the
+ *  border, side, back or felt runs once per palette. */
+const EVERY_PALETTE: readonly BoardPalette[] = Object.values(PALETTES);
 
 /** Spec §7 / issue #12: text and pips against their own tile face. */
 const MIN_TEXT_CONTRAST = 4.5;
@@ -93,26 +100,33 @@ test('issue #82: the face-down back never sinks into the felt, on any undimmed l
   // back the saturated one, and the pair must hold WCAG 1.4.11's non-text 3:1
   // on every layer a shipped layout reaches. Dimmed shades are exempt — the
   // "Highlight free tiles" aid dims blocked tiles on purpose.
-  let worst = { ratio: Infinity, where: '' };
-  for (const { z, topZ, dimmed } of everyShade()) {
-    if (dimmed) continue;
-    const factor = 1 - LAYER_FACE_STEP * depthSteps(z, topZ);
-    const ratio = contrastRatio(scaleColor(BACK_FACE, factor), BOARD_FELT);
-    if (ratio < worst.ratio) worst = { ratio, where: `z=${z} topZ=${topZ}` };
+  for (const palette of EVERY_PALETTE) {
+    let worst = { ratio: Infinity, where: '' };
+    for (const { z, topZ, dimmed } of everyShade()) {
+      if (dimmed) continue;
+      const factor = 1 - LAYER_FACE_STEP * depthSteps(z, topZ);
+      const ratio = contrastRatio(scaleColor(palette.back, factor), palette.felt);
+      if (ratio < worst.ratio) worst = { ratio, where: `z=${z} topZ=${topZ}` };
+    }
+    assert.ok(
+      worst.ratio >= MIN_NON_TEXT_CONTRAST,
+      `${palette.id}: worst back-vs-felt contrast ${worst.ratio.toFixed(2)}:1 at ${worst.where}`,
+    );
   }
-  assert.ok(
-    worst.ratio >= MIN_NON_TEXT_CONTRAST,
-    `worst back-vs-felt contrast ${worst.ratio.toFixed(2)}:1 at ${worst.where}`,
-  );
 });
 
 test('issue #82: the back keyline holds 3:1 on the back, on every layer, dimmed or not', () => {
-  let worst = Infinity;
-  for (const { z, topZ, dimmed } of everyShade()) {
-    const factor = 1 - LAYER_FACE_STEP * depthSteps(z, topZ, dimmed);
-    worst = Math.min(worst, contrastRatio(scaleColor(BACK_FACE, factor), scaleColor(BACK_KEYLINE, factor)));
+  for (const palette of EVERY_PALETTE) {
+    let worst = Infinity;
+    for (const { z, topZ, dimmed } of everyShade()) {
+      const factor = 1 - LAYER_FACE_STEP * depthSteps(z, topZ, dimmed);
+      worst = Math.min(
+        worst,
+        contrastRatio(scaleColor(palette.back, factor), scaleColor(palette.backKeyline, factor)),
+      );
+    }
+    assert.ok(worst >= MIN_NON_TEXT_CONTRAST, `${palette.id}: worst keyline contrast ${worst.toFixed(2)}:1`);
   }
-  assert.ok(worst >= MIN_NON_TEXT_CONTRAST, `worst keyline contrast ${worst.toFixed(2)}:1`);
 });
 
 test('receding never tightens the contrast budget: the worst case only improves', () => {
@@ -145,10 +159,15 @@ test('the outline clears the 3:1 non-text bar against its own face on every laye
     contrastRatio(BASE_FACE, BASE_BORDER) > contrastRatio(BASE_FACE, 0x8a7a55),
     'the new outline must be darker than the hairline it replaces',
   );
-  for (const { z, topZ, dimmed } of everyShade()) {
-    const shade = tileShade(z, topZ, dimmed);
-    const ratio = contrastRatio(shade.face, shade.border);
-    assert.ok(ratio >= MIN_NON_TEXT_CONTRAST, `outline ${ratio.toFixed(2)}:1 at z=${z}/${topZ}`);
+  for (const palette of EVERY_PALETTE) {
+    for (const { z, topZ, dimmed } of everyShade()) {
+      const shade = tileShade(z, topZ, dimmed, palette);
+      const ratio = contrastRatio(shade.face, shade.border);
+      assert.ok(
+        ratio >= MIN_NON_TEXT_CONTRAST,
+        `${palette.id}: outline ${ratio.toFixed(2)}:1 at z=${z}/${topZ}`,
+      );
+    }
   }
 });
 
@@ -173,21 +192,26 @@ test('issue #86: the face ladder is a whisper — monotone, but faces stay brigh
 });
 
 test('the side face ramps from light at the top face to near-dark at its base', () => {
-  const { sideBands } = tileShade(MAX_TOP_Z, MAX_TOP_Z);
-  assert.equal(sideBands.length, SIDE_BAND_FACTORS.length);
-  const lums = sideBands.map(relativeLuminance);
-  for (let i = 1; i < lums.length; i++) {
-    assert.ok(lums[i]! > lums[i - 1]!, `band ${i} must be lighter than band ${i - 1} (base first)`);
+  for (const palette of EVERY_PALETTE) {
+    const { sideBands } = tileShade(MAX_TOP_Z, MAX_TOP_Z, false, palette);
+    assert.equal(sideBands.length, SIDE_BAND_FACTORS.length);
+    const lums = sideBands.map(relativeLuminance);
+    for (let i = 1; i < lums.length; i++) {
+      assert.ok(
+        lums[i]! > lums[i - 1]!,
+        `${palette.id}: band ${i} must be lighter than band ${i - 1} (base first)`,
+      );
+    }
+    // The ramp has to be a ramp, not a tint: a wide luminance span across the
+    // bands, every band darker than the face above them, and a base dark enough
+    // to read as a contact edge on its own. The old flat side sat at 2.1:1
+    // everywhere, which is part of why a stack looked like one slab.
+    const face = tileShade(MAX_TOP_Z, MAX_TOP_Z, false, palette).face;
+    const span = lums[lums.length - 1]! - lums[0]!;
+    assert.ok(span >= 0.4, `${palette.id}: band luminance span ${span.toFixed(2)} is too flat to read`);
+    assert.ok(lums.every((l) => l < relativeLuminance(face)), palette.id);
+    assert.ok(contrastRatio(face, sideBands[0]!) >= 4, `${palette.id}: base band vs face`);
   }
-  // The ramp has to be a ramp, not a tint: a wide luminance span across the
-  // bands, every band darker than the face above them, and a base dark enough
-  // to read as a contact edge on its own. The old flat side sat at 2.1:1
-  // everywhere, which is part of why a stack looked like one slab.
-  const face = tileShade(MAX_TOP_Z, MAX_TOP_Z).face;
-  const span = lums[lums.length - 1]! - lums[0]!;
-  assert.ok(span >= 0.4, `band luminance span ${span.toFixed(2)} is too flat to read`);
-  assert.ok(lums.every((l) => l < relativeLuminance(face)));
-  assert.ok(contrastRatio(face, sideBands[0]!) >= 4, 'base band vs face');
 });
 
 test('the drop shadow is achromatic, so it cannot be a colour-only cue', () => {
@@ -283,4 +307,59 @@ test('contrastRatio is symmetric and bounded by the WCAG range', () => {
   assert.equal(contrastRatio(0xffffff, 0x000000).toFixed(0), '21');
   assert.equal(contrastRatio(0x123456, 0x123456), 1);
   assert.equal(contrastRatio(BASE_FACE, BASE_BORDER), contrastRatio(BASE_BORDER, BASE_FACE));
+});
+
+// --- board palettes (issue #67) -------------------------------------------------
+
+test('the default palette is the lantern constants, and tileShade defaults to it', () => {
+  assert.equal(PALETTES.lantern, LANTERN);
+  assert.equal(LANTERN.felt, BOARD_FELT);
+  assert.equal(LANTERN.border, BASE_BORDER);
+  for (const { z, topZ, dimmed } of everyShade()) {
+    assert.deepEqual(
+      { ...tileShade(z, topZ, dimmed), ink: undefined },
+      { ...tileShade(z, topZ, dimmed, LANTERN), ink: undefined },
+    );
+  }
+});
+
+test('every palette keeps its id and has a label to pair with the colour', () => {
+  for (const [id, palette] of Object.entries(PALETTES)) {
+    assert.equal(palette.id, id);
+    assert.ok(palette.label.length > 0, id);
+  }
+  assert.deepEqual(Object.keys(PALETTES).sort(), ['daily', 'lantern', 'milestone']);
+});
+
+test('a special palette changes felt and border only — face art and ink are untouched', () => {
+  for (const palette of EVERY_PALETTE) {
+    if (palette === LANTERN) continue;
+    assert.notEqual(palette.felt, LANTERN.felt, `${palette.id}: felt`);
+    assert.notEqual(palette.border, LANTERN.border, `${palette.id}: border`);
+    for (const { z, topZ, dimmed } of everyShade()) {
+      const plain = tileShade(z, topZ, dimmed);
+      const themed = tileShade(z, topZ, dimmed, palette);
+      assert.equal(themed.face, plain.face, `${palette.id}: face at z=${z}/${topZ}`);
+      for (const suit of SUIT_INKS) assert.equal(themed.ink(suit), plain.ink(suit), `${palette.id}: ink`);
+    }
+  }
+});
+
+test('every palette keeps the soft-felt / strong-back rule (issue #82)', () => {
+  for (const palette of EVERY_PALETTE) {
+    assert.ok(
+      relativeLuminance(palette.back) > relativeLuminance(palette.felt) * 4,
+      `${palette.id}: the back must be the light variant`,
+    );
+    // Dark felt: the cream face must stand off it as strongly as text would.
+    assert.ok(
+      contrastRatio(BASE_FACE, palette.felt) >= MIN_TEXT_CONTRAST,
+      `${palette.id}: face vs felt ${contrastRatio(BASE_FACE, palette.felt).toFixed(2)}:1`,
+    );
+  }
+});
+
+test('cssColor pads to six hex digits', () => {
+  assert.equal(cssColor(0x14532d), '#14532d');
+  assert.equal(cssColor(0x000a0b), '#000a0b');
 });

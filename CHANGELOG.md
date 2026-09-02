@@ -6,6 +6,13 @@ commit and build time of the running bundle.
 
 ## 2026-09-01
 
+- Special boards look special: the Daily Challenge plays on night indigo
+  felt with gold tile edges, and every tenth ladder level — the decade
+  milestone — on burgundy with rose edges; ordinary levels keep the warm
+  lantern look. Only the felt, tile outline, side shading and face-down back
+  change; the face art is untouched, every palette holds the same contrast
+  and greyscale floors, and the Level chip names the level kind ("Daily",
+  "Milestone") so colour never carries the meaning alone (#67).
 - Boosters replenish: clearing a level for the first time earns one charge
   of a booster you pick on the level-complete dialog (an unclaimed pick goes
   to whichever you have fewest of); every third new level cleared pays three
