@@ -977,6 +977,44 @@ for (const vp of VIEWPORTS) {
     check(removed.count === 0 && removed.listHidden, 'Remove takes the thumbnail away', removed);
     check(removed.focus === 'feedback-attach', 'focus lands on Add after a Remove', removed);
 
+    // Issue #135: after a failed send, Copy report is a named ≥ 48dp button,
+    // the inbox address is readable text, and "Copied" lands in a status
+    // region so screen readers hear it.
+    await page.route('**/api/feedback', (route) => route.fulfill({ status: 503, body: '{}' }));
+    await page.click('#feedback-send');
+    await page.waitForFunction(() => !document.getElementById('feedback-copy').hidden);
+    const copyOffered = await page.evaluate(() => {
+      const copy = document.getElementById('feedback-copy');
+      const status = document.getElementById('feedback-copy-status');
+      const inbox = document.getElementById('feedback-inbox');
+      return {
+        copyName: copy.textContent.trim(),
+        copyH: Math.round(copy.getBoundingClientRect().height),
+        copyW: Math.round(copy.getBoundingClientRect().width),
+        statusLive: status.getAttribute('aria-live'),
+        inboxVisible: !inbox.hidden && getComputedStyle(inbox).display !== 'none',
+        inboxText: inbox.textContent,
+      };
+    });
+    check(copyOffered.copyName === 'Copy report', 'the copy control is named', copyOffered);
+    check(
+      copyOffered.copyH >= MIN_TOUCH_TARGET && copyOffered.copyW >= MIN_TOUCH_TARGET,
+      `Copy report is ≥ ${MIN_TOUCH_TARGET}dp`,
+      copyOffered,
+    );
+    check(copyOffered.statusLive === 'polite', 'the Copied confirmation is a polite live region', copyOffered);
+    check(
+      copyOffered.inboxVisible && /@/.test(copyOffered.inboxText),
+      'the inbox address is shown as plain text',
+      copyOffered,
+    );
+    await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: url });
+    await page.click('#feedback-copy');
+    await page.waitForFunction(() => document.getElementById('feedback-copy-status').textContent !== '');
+    const copiedStatus = await page.evaluate(() => document.getElementById('feedback-copy-status').textContent);
+    check(copiedStatus === 'Copied', 'Copy report confirms with "Copied"', { copiedStatus });
+    await page.unroute('**/api/feedback');
+
     // Escape is the keyboard way out, and focus must land back on the
     // Settings button that Send feedback led away from — not <body>.
     await page.keyboard.press('Escape');

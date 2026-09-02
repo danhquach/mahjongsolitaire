@@ -1918,6 +1918,13 @@ for (const vp of VIEWPORTS) {
     await page.click('#btn-settings');
     await page.click('#btn-feedback');
     const initialDisabled = await page.evaluate(() => document.getElementById('feedback-send').disabled);
+    // `hidden` must actually hide (issue #135): the card's block-level CSS
+    // used to beat the attribute, leaving the fallback link and note visible.
+    const leaked = await page.evaluate(() =>
+      ['feedback-mailto', 'feedback-mailto-note', 'feedback-inbox', 'feedback-copy', 'feedback-report']
+        .filter((id) => getComputedStyle(document.getElementById(id)).display !== 'none'),
+    );
+    check(leaked.length === 0, 'no fallback control renders before a send has failed', leaked);
     check(initialDisabled, 'Send starts disabled', { initialDisabled });
 
     await page.fill('#feedback-summary', 'Tiles overlap');
@@ -2035,6 +2042,79 @@ for (const vp of VIEWPORTS) {
       'the mailto link carries the subject',
       failed,
     );
+
+    // Issue #135: the mailto handoff can be a silent no-op, so the failure
+    // state also shows the inbox address as text and offers Copy report —
+    // the subject line plus the full email text on the clipboard.
+    const shown = await page.evaluate(() => {
+      const vis = (id) => {
+        const e = document.getElementById(id);
+        return !e.hidden && getComputedStyle(e).display !== 'none';
+      };
+      return {
+        inbox: vis('feedback-inbox'),
+        inboxText: document.getElementById('feedback-inbox').textContent,
+        copy: vis('feedback-copy'),
+        report: vis('feedback-report'),
+        copyStatus: document.getElementById('feedback-copy-status').textContent,
+      };
+    });
+    check(
+      shown.inbox && /dqtgametesting@gmail\.com/.test(shown.inboxText),
+      'a failed send shows the inbox address as plain text',
+      shown,
+    );
+    check(shown.copy && !shown.report && shown.copyStatus === '', 'Copy report is offered, the read-only field is not yet', shown);
+    await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: url });
+    await page.click('#feedback-copy');
+    await page.waitForFunction(() => document.getElementById('feedback-copy-status').textContent !== '');
+    const copied = await page.evaluate(async () => ({
+      status: document.getElementById('feedback-copy-status').textContent,
+      clipboard: await navigator.clipboard.readText(),
+      reportHidden: document.getElementById('feedback-report').hidden,
+    }));
+    check(copied.status === 'Copied', 'Copy report confirms with "Copied"', copied);
+    check(
+      copied.clipboard.startsWith('[Lantern Tiles feedback] Tiles overlap\n\nThe bamboo tile clips the dot tile.') &&
+        /\n---\nSummary: Tiles overlap\nVersion: .+\nLevel: .+\nPlatform: .+\nDate: .+$/.test(copied.clipboard),
+      'the clipboard holds the subject line, the details and the context block',
+      { clipboard: copied.clipboard },
+    );
+    check(copied.reportHidden, 'a successful copy leaves the read-only field hidden', copied);
+    // A second tap copies the same report again — nothing is consumed.
+    await page.evaluate(() => navigator.clipboard.writeText(''));
+    await page.click('#feedback-copy');
+    await page.waitForFunction(async () => (await navigator.clipboard.readText()) !== '');
+    const again = await page.evaluate(async () => ({
+      status: document.getElementById('feedback-copy-status').textContent,
+      first: (await navigator.clipboard.readText()).split('\n')[0],
+    }));
+    check(again.status === 'Copied' && again.first === '[Lantern Tiles feedback] Tiles overlap', 'Copy report works a second time', again);
+    // Clipboard refused (permission denied, no API): the same text is shown
+    // selected in a read-only field instead of a false "Copied".
+    await page.evaluate(() => {
+      document.getElementById('feedback-copy-status').textContent = '';
+      navigator.clipboard.writeText = () => Promise.reject(new Error('denied'));
+    });
+    await page.click('#feedback-copy');
+    await page.waitForFunction(() => document.getElementById('feedback-copy-status').textContent !== '');
+    const refused = await page.evaluate(() => {
+      const r = document.getElementById('feedback-report');
+      return {
+        status: document.getElementById('feedback-copy-status').textContent,
+        visible: !r.hidden && getComputedStyle(r).display !== 'none',
+        readOnly: r.readOnly,
+        focused: document.activeElement === r,
+        selectedAll: r.value.length > 0 && r.selectionStart === 0 && r.selectionEnd === r.value.length,
+        firstLine: r.value.split('\n')[0],
+      };
+    });
+    check(
+      refused.status !== 'Copied' && refused.visible && refused.readOnly && refused.focused && refused.selectedAll,
+      'when the clipboard refuses, the report is shown selected in a read-only field',
+      refused,
+    );
+    check(refused.firstLine === '[Lantern Tiles feedback] Tiles overlap', 'the read-only field holds the same report', refused);
     await page.unroute('**/api/feedback');
 
     // Success path: the Worker endpoint mocked as accepting the submission;
@@ -2052,9 +2132,18 @@ for (const vp of VIEWPORTS) {
       status: document.getElementById('feedback-status').textContent,
       attachmentCount: document.querySelectorAll('#feedback-attachments li').length,
       noteHidden: document.getElementById('feedback-mailto-note').hidden,
+      copyHidden: document.getElementById('feedback-copy').hidden,
+      reportHidden: document.getElementById('feedback-report').hidden,
+      inboxHidden: document.getElementById('feedback-inbox').hidden,
+      copyStatus: document.getElementById('feedback-copy-status').textContent,
     }));
     check(/Thanks, your feedback was sent/.test(sent.status), 'success shows the thanks message', sent);
     check(sent.attachmentCount === 0 && sent.noteHidden, 'a successful send clears the attachments', sent);
+    check(
+      sent.copyHidden && sent.reportHidden && sent.inboxHidden && sent.copyStatus === '',
+      'a fresh send attempt clears the Copy report state (issue #135)',
+      sent,
+    );
     const postedShape = posted && {
       count: posted.attachments?.length,
       names: posted.attachments?.map((a) => a.name),
