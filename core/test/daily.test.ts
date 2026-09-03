@@ -1,35 +1,18 @@
-// Daily Challenge determinism (issue #19, spec §6, §11.2): the board for a
-// calendar date is a pure function of the date key, and the key itself is
-// derived the way the player's own calendar would across devices, time zones
-// and DST boundaries. Also the streak arithmetic and trophy schedule.
+// The Daily's calendar (issue #19, spec §6, §11.2; the board it used to deal
+// retired by #183): the date key is derived the way the player's own calendar
+// would across devices, time zones and DST boundaries, and the streak
+// arithmetic and trophy schedule are built on those keys.
 
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { Board } from '../src/board.js';
 import {
-  DAILY_LAYOUTS,
   STREAK_TIERS,
   dailyDateKey,
-  dailyLayoutId,
-  dailySeed,
   dailyTrophies,
   daysBetween,
   isDateKey,
 } from '../src/daily.js';
-import { facesMatch } from '../src/faces.js';
-import { generateValidatedLevel } from '../src/generator.js';
-import { LADDER_POOLS } from '../src/ladder.js';
-import { parseLayout } from '../src/layouts.js';
-import type { LayoutFile } from '../src/layouts.js';
-
-const LAYOUT_DIR = new URL('../../../data/layouts/', import.meta.url);
-
-/** Pinned on 2026-09-01 (FNV-1a of "daily:2026-09-01" / "daily-layout:…"):
- *  a refactor that changes either silently re-deals every past date. */
-const PINNED_SEED_2026_09_01 = 476086030;
-const PINNED_LAYOUT_2026_09_01 = 'pyramid';
 
 // --- date keys ----------------------------------------------------------------
 
@@ -108,76 +91,6 @@ test('local midnight is the day boundary in every zone, DST or not', () => {
   assert.equal(dailyDateKey(new Date('2026-09-01T18:30:00Z'), 'Asia/Kolkata'), '2026-09-02');
   assert.equal(dailyDateKey(new Date('2026-09-01T09:59:59Z'), 'Pacific/Kiritimati'), '2026-09-01');
   assert.equal(dailyDateKey(new Date('2026-09-01T10:00:00Z'), 'Pacific/Kiritimati'), '2026-09-02');
-});
-
-// --- seed + layout ------------------------------------------------------------
-
-test('seed and layout are pure functions of the key: pinned values', () => {
-  // Pinned so a refactor of the hash cannot silently re-deal every past date.
-  assert.equal(dailySeed('2026-09-01'), PINNED_SEED_2026_09_01);
-  assert.equal(dailyLayoutId('2026-09-01'), PINNED_LAYOUT_2026_09_01);
-  assert.notEqual(dailySeed('2026-09-01'), dailySeed('2026-09-02'));
-  assert.notEqual(dailySeed('2026-09-01'), dailySeed('2027-09-01'));
-  assert.ok(Number.isInteger(dailySeed('2026-09-01')));
-  assert.ok(dailySeed('2026-09-01') >= 0 && dailySeed('2026-09-01') <= 0xffffffff);
-  assert.ok(DAILY_LAYOUTS.includes(dailyLayoutId('2026-09-01')));
-  assert.equal(dailyLayoutId('2026-09-01'), dailyLayoutId('2026-09-01'));
-});
-
-test('seed and layout reject anything that is not a date key', () => {
-  for (const bad of ['2026-9-1', 'today', '']) {
-    assert.throws(() => dailySeed(bad), RangeError, bad);
-    assert.throws(() => dailyLayoutId(bad), RangeError, bad);
-  }
-});
-
-test('a year of dates uses every layout and never repeats a seed', () => {
-  const seeds = new Set<number>();
-  const layouts = new Set<string>();
-  for (let i = 0; i < 366; i++) {
-    const d = new Date(Date.UTC(2026, 0, 1 + i));
-    const key = dailyDateKey(d, 'UTC');
-    seeds.add(dailySeed(key));
-    layouts.add(dailyLayoutId(key));
-  }
-  assert.equal(seeds.size, 366);
-  assert.equal(layouts.size, DAILY_LAYOUTS.length);
-});
-
-test('DAILY_LAYOUTS is exactly the shipped set — every ladder pool layout, and every layout file', () => {
-  const pooled = [...new Set(Object.values(LADDER_POOLS).flat())].sort();
-  assert.deepEqual([...DAILY_LAYOUTS], pooled);
-  const files = readdirSync(LAYOUT_DIR)
-    .filter((f) => f.endsWith('.json'))
-    .map((f) => f.slice(0, -'.json'.length))
-    .sort();
-  assert.deepEqual([...DAILY_LAYOUTS], files);
-});
-
-test('the board for a date is identical across runs and clears by its own witness', () => {
-  for (const key of ['2026-09-01', '2026-03-08', '2026-11-01', '2026-12-31', '2027-01-01']) {
-    const layoutId = dailyLayoutId(key);
-    const layout = parseLayout(
-      JSON.parse(readFileSync(new URL(`${layoutId}.json`, LAYOUT_DIR), 'utf8')) as LayoutFile,
-    );
-    const a = generateValidatedLevel(layout, dailySeed(key));
-    const b = generateValidatedLevel(layout, dailySeed(key));
-    assert.deepEqual(
-      a.tiles.map((t) => t.face),
-      b.tiles.map((t) => t.face),
-      key,
-    );
-    assert.equal(a.seed, b.seed, key);
-    // Replay the witness: the shared board is a winnable one.
-    const board = new Board(a.tiles);
-    for (const [x, y] of a.solution) {
-      assert.ok(board.isFree(x) && board.isFree(y), `${key}: pair not free`);
-      assert.ok(facesMatch(board.get(x).face, board.get(y).face), `${key}: faces differ`);
-      board.remove(x);
-      board.remove(y);
-    }
-    assert.equal(board.presentTiles().length, 0, key);
-  }
 });
 
 // --- streaks + trophies -------------------------------------------------------

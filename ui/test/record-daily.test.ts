@@ -1,6 +1,6 @@
-// Progression persistence (issue #19, spec §6; stars removed by issue #119):
-// which ladder levels are cleared, total score, and the Daily Challenge
-// streak + trophies — all on the player record.
+// Progression persistence (issue #19, spec §6; stars removed by issue #119,
+// the Daily board by #183): which ladder levels are cleared, this week's
+// score, and the Daily challenge streak + trophies — all on the player record.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -12,7 +12,6 @@ import {
   EMPTY_RECORD,
   RECORD_STORAGE_KEY,
   RecordStore,
-  dailyLockedFor,
   hasCleared,
   liveStreak,
   parsePlayerRecord,
@@ -44,11 +43,11 @@ test('recordWin marks a ladder level cleared, once', () => {
   assert.deepEqual(new RecordStore(storage).value.cleared, [3, 10]);
 });
 
-test('a Daily clear pays trophies and the streak and nothing else', () => {
+test('a completed challenge pays trophies and the streak and nothing else', () => {
   // Issue #176: score belongs to the ladder and to the weekly board the ladder
   // feeds. A Daily contributes to neither, and is not a level cleared.
   const record = new RecordStore(fakeStorage());
-  const credit = record.recordDailyWin('2026-09-03');
+  const credit = record.creditDailyChallenge('2026-09-03');
   assert.equal(credit.credited, true);
   assert.ok(credit.trophies > 0);
   assert.equal(credit.streak, 1);
@@ -82,10 +81,10 @@ test('a record carrying both a cleared list and an old stars map merges them (is
 
 // --- daily streak + trophies ------------------------------------------------------
 
-test('the first Daily clear starts a 1-day streak and pays one trophy', () => {
+test("the day's first completion starts a 1-day streak and pays one trophy", () => {
   const storage = fakeStorage();
   const record = new RecordStore(storage);
-  assert.deepEqual(record.recordDailyWin('2026-09-01'), { credited: true, streak: 1, trophies: 1 });
+  assert.deepEqual(record.creditDailyChallenge('2026-09-01'), { credited: true, streak: 1, trophies: 1 });
   assert.deepEqual(new RecordStore(storage).value, {
     ...EMPTY_RECORD,
     dailyStreak: 1,
@@ -94,28 +93,61 @@ test('the first Daily clear starts a 1-day streak and pays one trophy', () => {
   });
 });
 
-test('consecutive days extend the streak; a replay of the same date pays nothing', () => {
+test('consecutive days extend the streak', () => {
   const record = new RecordStore(fakeStorage());
-  record.recordDailyWin('2026-09-01');
-  assert.deepEqual(record.recordDailyWin('2026-09-01'), { credited: false, streak: 1, trophies: 0 });
-  assert.deepEqual(record.recordDailyWin('2026-09-02'), { credited: true, streak: 2, trophies: 1 });
+  record.creditDailyChallenge('2026-09-01');
+  assert.deepEqual(record.creditDailyChallenge('2026-09-02'), {
+    credited: true,
+    streak: 2,
+    trophies: 1,
+  });
   assert.equal(record.value.trophies, 2);
   assert.equal(record.value.lastDaily, '2026-09-02');
 });
 
+test("the day's second and third completions pay a flat trophy and leave the streak", () => {
+  // A day serves three challenges (issue #183) and each one pays, but the
+  // streak counts days, not challenges.
+  const record = new RecordStore(fakeStorage());
+  const first = record.creditDailyChallenge('2026-09-01');
+  assert.deepEqual(first, { credited: true, streak: 1, trophies: 1 });
+  assert.deepEqual(record.creditDailyChallenge('2026-09-01'), {
+    credited: true,
+    streak: 1,
+    trophies: 1,
+  });
+  assert.deepEqual(record.creditDailyChallenge('2026-09-01'), {
+    credited: true,
+    streak: 1,
+    trophies: 1,
+  });
+  assert.equal(record.value.trophies, 3, 'three challenges, three trophies');
+  assert.equal(record.value.dailyStreak, 1);
+  assert.equal(record.value.lastDaily, '2026-09-01');
+});
+
+test('a streak bonus is paid once a day, not once a challenge', () => {
+  const record = new RecordStore(fakeStorage());
+  for (let day = 1; day <= 6; day++) record.creditDailyChallenge(`2026-09-0${day}`);
+  const seventh = record.creditDailyChallenge('2026-09-07');
+  assert.equal(seventh.streak, 7);
+  assert.equal(seventh.trophies, 2, 'one for the challenge, one for the 7-day tier');
+  assert.equal(record.creditDailyChallenge('2026-09-07').trophies, 1, 'the bonus is per day');
+});
+
 test('a missed day restarts the streak at 1', () => {
   const record = new RecordStore(fakeStorage());
-  record.recordDailyWin('2026-09-01');
-  record.recordDailyWin('2026-09-02');
-  assert.deepEqual(record.recordDailyWin('2026-09-04'), { credited: true, streak: 1, trophies: 1 });
+  record.creditDailyChallenge('2026-09-01');
+  record.creditDailyChallenge('2026-09-02');
+  assert.deepEqual(record.creditDailyChallenge('2026-09-04'), { credited: true, streak: 1, trophies: 1 });
   assert.equal(record.value.trophies, 3);
 });
 
-test('a past date is never credited out of order', () => {
+test('a date before the last credited one pays nothing', () => {
   const record = new RecordStore(fakeStorage());
-  record.recordDailyWin('2026-09-05');
+  record.creditDailyChallenge('2026-09-05');
   // Yesterday's board finished after today's: the streak is what it is.
-  assert.deepEqual(record.recordDailyWin('2026-09-04'), { credited: false, streak: 1, trophies: 0 });
+  assert.deepEqual(record.creditDailyChallenge('2026-09-04'), { credited: false, streak: 1, trophies: 0 });
   assert.equal(record.value.lastDaily, '2026-09-05');
 });
 
@@ -123,11 +155,11 @@ test('the streak crosses month, year and DST boundaries', () => {
   const record = new RecordStore(fakeStorage());
   // Oct 30 → Nov 3 2026 spans the US fall-back on Nov 1.
   for (const key of ['2026-10-30', '2026-10-31', '2026-11-01', '2026-11-02', '2026-11-03']) {
-    record.recordDailyWin(key);
+    record.creditDailyChallenge(key);
   }
   assert.equal(record.value.dailyStreak, 5);
-  record.recordDailyWin('2026-12-31');
-  assert.deepEqual(record.recordDailyWin('2027-01-01'), { credited: true, streak: 2, trophies: 1 });
+  record.creditDailyChallenge('2026-12-31');
+  assert.deepEqual(record.creditDailyChallenge('2027-01-01'), { credited: true, streak: 2, trophies: 1 });
 });
 
 test('trophies escalate at the 7- and 30-day tiers', () => {
@@ -136,7 +168,7 @@ test('trophies escalate at the 7- and 30-day tiers', () => {
   for (let i = 0; i < 30; i++) {
     const d = new Date(Date.UTC(2026, 8, 1 + i));
     const key = d.toISOString().slice(0, 10);
-    const credit = record.recordDailyWin(key);
+    const credit = record.creditDailyChallenge(key);
     paid += credit.trophies;
     assert.equal(credit.streak, i + 1);
     assert.equal(credit.trophies, i + 1 >= 30 ? 3 : i + 1 >= 7 ? 2 : 1, key);
@@ -176,7 +208,7 @@ test('a throwing storage still yields a working in-memory record', () => {
     },
   };
   const record = new RecordStore(broken);
-  assert.equal(record.recordDailyWin('2026-09-01').credited, true);
+  assert.equal(record.creditDailyChallenge('2026-09-01').credited, true);
   assert.deepEqual(record.recordWin(10, { level: 1 }, NOW).cleared, [1]);
   assert.equal(storageKeyIsStable(), true);
 });
@@ -185,29 +217,3 @@ function storageKeyIsStable(): boolean {
   return RECORD_STORAGE_KEY === 'mahjong.record.v1';
 }
 
-// --- dailyLockedFor (issue #166) ---------------------------------------------------
-
-test('dailyLockedFor: locked only once today itself is the last credited date', () => {
-  assert.equal(dailyLockedFor(EMPTY_RECORD, '2026-09-02'), false); // never cleared
-  const clearedToday = { ...EMPTY_RECORD, lastDaily: '2026-09-02' };
-  assert.equal(dailyLockedFor(clearedToday, '2026-09-02'), true);
-  const clearedYesterday = { ...EMPTY_RECORD, lastDaily: '2026-09-01' };
-  assert.equal(dailyLockedFor(clearedYesterday, '2026-09-02'), false); // rolled over
-});
-
-test('dailyLockedFor: a loss never sets lastDaily, so it never locks', () => {
-  const storage = fakeStorage();
-  const record = new RecordStore(storage);
-  // A loss (holder full) records no Daily credit at all — recordDailyWin is
-  // simply never called on that path — so the record stays exactly as a
-  // fresh install left it: unlocked.
-  assert.equal(dailyLockedFor(record.value, '2026-09-02'), false);
-});
-
-test('dailyLockedFor: credited today locks; the same credit stops locking once the date moves on', () => {
-  const storage = fakeStorage();
-  const record = new RecordStore(storage);
-  record.recordDailyWin('2026-09-02');
-  assert.equal(dailyLockedFor(record.value, '2026-09-02'), true);
-  assert.equal(dailyLockedFor(record.value, '2026-09-03'), false);
-});

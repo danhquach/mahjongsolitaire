@@ -6,6 +6,14 @@ commit and build time of the running bundle.
 
 ## 2026-09-03
 
+- **The Daily is now three challenges you finish while you climb.** The Daily
+  chip no longer deals a separate board — it opens today's three goals ("match
+  40 pairs", "match 10 Dots pairs", "match 12 pairs in a row without a hint or
+  shuffle"), the same three for everyone that day, and playing the ladder ticks
+  them off. Everything you play that day counts, and a lost board keeps what it
+  earned. Each one you finish pays a trophy and a booster charge, and the first
+  one each day keeps your streak alive (#183).
+
 - The leaderboard is now a **weekly** board, and it ranks the ladder. Every
   level you clear adds its score to your standing for the week; the week starts
   Sunday 00:00 UTC so everyone is ranked over the same seven days, and the

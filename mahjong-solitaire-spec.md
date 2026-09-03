@@ -22,7 +22,7 @@ Mahjong *solitaire* (tile-matching), not 4-player Mahjong. The app itself carrie
 | Classic level ladder | Several thousand levels (user reviews reference level 3400+) |
 | Special/innovation tiles | Twist on classic matching |
 | "Active Mind" mode | Memory-oriented variant |
-| Daily Challenge | Trophy collection, retention driver |
+| Daily challenges | Trophy collection, retention driver |
 | Boosters | Hint, Undo, Shuffle — granted free, replenished via ads/IAP |
 | Super Combo | Consecutive-match reward |
 | Offline | Full offline play, no network dependency |
@@ -48,7 +48,7 @@ Free, ad-supported (interstitial + rewarded video), with IAP for ad removal and 
 - Classic level ladder (150 hand-curated + generated levels at launch; plateau ladder per decision 0011)
 - Guaranteed-solvable board generation
 - Boosters: Hint, Undo, Shuffle
-- Daily Challenge
+- Daily challenges
 - Local progression persistence
 - Accessibility-first UI
 - Ads **suspended** (issue #3): fully playable ad-free; ads OFF by default, opt-in via settings toggle. When enabled, banner + interstitial + rewarded per §8. Remove-Ads IAP **deferred to v1.1+** (redundant while ads are opt-in)
@@ -211,7 +211,11 @@ Starting grant: 5 of each of the three charged boosters; the holder has no balan
 - **One score, and it is the week's.** A ladder clear adds its final score to the player's score for the current week, which is both what the profile shows and what the leaderboard ranks. It resets with the week. The lifetime total and the best-run score are gone (decision 0027, issue #176).
 - Persistent: level index, cleared levels, this week's score and the week it belongs to, streak, trophies. (Issue #19: all on the local player record, `mahjong.record.v1`, except cleared levels which issue #119 keeps as a plain set rather than per-level ratings; the level index keeps its own key.)
 
-**Daily Challenge:** one deterministic board per calendar date (seed = date hash), shared across all users. Completion grants a trophy; consecutive days build a streak with escalating rewards. (Decision 0016: the date is the player's local calendar date; layout and seed are hashes of the "YYYY-MM-DD" key; 1 trophy per clear, 2 from a 7-day streak, 3 from 30; credited once per date.) A cleared Daily locks against replay — chip and Restart both — until the next local calendar date; a loss stays replayable without limit (decision 0026, issue #166). **It pays trophies and the streak and nothing else** — no score is banked from it, it is not counted as a level cleared, and it grants no boosters. Its score HUD stays up during the run because it drives the Super Combo feedback (decision 0027, issue #176).
+**Daily challenges:** a calendar date names three challenges — finish N boards, match N pairs, match N pairs of one suit, match N pairs in a row without a hint or shuffle — dealt from the date itself, so everyone gets the same three that day. There is no Daily board: they are completed by playing the ladder, and the HUD's Daily chip opens a panel of today's three with live progress rather than dealing anything. (Decision 0028, issue #183, replacing the deterministic board of decision 0016 and the replay lock of 0026.)
+
+- **All of the day's play counts.** Every match and every finished board, on any level; progress accumulates across boards and survives a loss, a restart or an abandoned deal. The one counter that falls is the assist-free run, reset to zero by a charged Hint or Shuffle (never by Undo, which returns a parked tile and takes back no match). Counters roll over on the next local calendar date, carrying nothing.
+- **Each completed challenge pays 1 trophy and 1 booster charge**, and the day's first completion also extends the streak and pays its tier bonus — 2 trophies from a 7-day streak, 3 from 30 (decision 0016's schedule). A full day pays 3 trophies, 4 on a 7-day streak, 5 on a 30-day one. The streak counts days, not challenges, so a short session still keeps it alive.
+- **It pays trophies, the streak and that charge, and nothing else** — no score is banked from it and it is not counted as a level cleared (decision 0027, issue #176).
 
 **Leaderboard:** one weekly board, ranking players by score earned on the ladder over the week. The week starts Sunday 00:00 UTC on the server's clock, so everyone is ranked over the same seven days; only the live week is browsable, and the board shows a countdown to its reset. Appearing on it is a second opt-in, separate from cloud sync, and turning it off removes every entry. (Decision 0027, issue #176, superseding the Daily board of decision 0022.)
 
@@ -321,7 +325,7 @@ Key metrics: D1/D7/D30 retention, levels/session, abandon rate by level (difficu
 - Save/restore across force-quit at every move index of a sample level, including a play-through that uses the holder (holder contents and hold count restored exactly), and a lost level, which must resume *lost* (decision 0009 — a reload is not an escape hatch from a full holder).
 - Booster charge accounting vs. rewarded-ad callbacks (including ad-failed and ad-abandoned paths).
 - IAP restore, including Remove-Ads on a fresh install.
-- Daily Challenge determinism across devices, timezones, and DST boundaries.
+- Daily challenge determinism across devices, timezones, and DST boundaries: the date key, the three challenges it names, and the streak arithmetic.
 
 ### 11.3 E2E / device
 - Screen matrix: small phone, large phone, 7" tablet, 12.9" tablet; portrait + landscape.
@@ -352,7 +356,7 @@ Key metrics: D1/D7/D30 retention, levels/session, abandon rate by level (difficu
 
 1. **M1 — Core (2 wks):** lattice, free-tile rule, matching, generator + solver, headless test suite.
 2. **M2 — Playable (3 wks):** rendering, input, one layout, undo/hint/shuffle, persistence.
-3. **M3 — Content (2 wks):** 10 layouts, 150-level plateau ladder (decision 0011), difficulty band ordering, Daily Challenge.
+3. **M3 — Content (2 wks):** 10 layouts, 150-level plateau ladder (decision 0011), difficulty band ordering, daily challenges.
 4. **M4 — Services (2 wks):** ads, IAP, analytics, remote config.
 5. **M5 — Polish & Accessibility (2 wks):** device matrix, a11y audit, performance pass.
 6. **M6 — Soft launch:** limited geo, tune ad frequency and difficulty curve on real retention data.

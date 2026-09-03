@@ -210,6 +210,19 @@ function assertWitnessSolves(level: GeneratedLevel, label: string): void {
   assert.equal(board.presentTiles().length, 0, `${label}: witness left tiles behind`);
 }
 
+test('the pools name exactly the shipped layout files', () => {
+  // Was asserted through DAILY_LAYOUTS until issue #183 retired the Daily
+  // board; the invariant is the ladder's, so it lives here now: a layout file
+  // no pool draws from is dead weight, and a pool naming a missing file is a
+  // failed fetch at runtime.
+  const pooled = [...new Set(Object.values(LADDER_POOLS).flat())].sort();
+  const files = readdirSync(LAYOUT_DIR)
+    .filter((f) => f.endsWith('.json'))
+    .map((f) => f.slice(0, -'.json'.length))
+    .sort();
+  assert.deepEqual(pooled, files);
+});
+
 test('release gate: all shipped seeds solvable, every band window and ordering criterion holds', () => {
   // Load whatever ships (layout-files.test.ts asserts the exact set).
   const layouts = new Map<string, LayoutFile>(

@@ -51,7 +51,6 @@ import {
   HOLDER_SLOTS,
   concealedTileIds,
   generateValidatedLevel,
-  isDateKey,
 } from '@mahjongsolitaire/core';
 import type {
   Layout,
@@ -85,6 +84,12 @@ import type { KeyValueStorage } from './storage.js';
  *  ladder deal?) and this file does not guess. Same clean break, same
  *  consequence: the in-flight deal restarts.
  *
+ *  Issue #183 retired the Daily board, and with it `daily`. The field is
+ *  ignored rather than rejected and the version is not bumped: a board
+ *  captured mid-Daily is still a real deal, so it resumes as an ordinary
+ *  ladder board (main.ts reopens it at the level's own concealment ratio and
+ *  score multiplier) instead of being thrown away on upgrade.
+ *
  *  Issue #119 removed the star rating that `hints`/`undos` fed. The fields
  *  stay in the save format rather than forcing another version bump for a
  *  migration — main.ts just stops computing anything meaningful for them
@@ -116,10 +121,6 @@ export interface SaveState {
   readonly hints: number;
   readonly undos: number;
   readonly elapsedMs: number;
-  /** The Daily Challenge date this deal is for, or null for a ladder deal.
-   *  Stored so the deal resumes as the Daily it is, not as a ladder level
-   *  that happens to share its (layoutId, seed). */
-  readonly daily: string | null;
   readonly snapshot: GameSnapshot;
 }
 
@@ -129,7 +130,6 @@ export interface SaveContext {
   readonly hints: number;
   readonly undos: number;
   readonly elapsedMs: number;
-  readonly daily: string | null;
 }
 
 /** Capture the current game. Cheap enough to call on every move (144 faces). */
@@ -142,7 +142,6 @@ export function captureSave(game: Game, context: SaveContext): SaveState {
     hints: context.hints,
     undos: context.undos,
     elapsedMs: context.elapsedMs,
-    daily: context.daily,
     snapshot: game.snapshot(),
   };
 }
@@ -333,15 +332,13 @@ function parseSnapshot(value: unknown): GameSnapshot | null {
 /** A validated save, or null if the record cannot be trusted. */
 export function parseSave(record: unknown): SaveState | null {
   if (!isRecord(record)) return null;
-  const { version, layoutId, seed, shuffles, hints, undos, elapsedMs, daily } = record;
+  const { version, layoutId, seed, shuffles, hints, undos, elapsedMs } = record;
   if (version !== SAVE_VERSION) return null;
   if (typeof layoutId !== 'string' || layoutId.length === 0) return null;
   // Not capped at 2^32: a deal reseeded near the ceiling (generateValidatedLevel
   // tries seed+1, seed+2, …) legitimately carries a larger seed.
   if (!isCount(seed) || !Number.isSafeInteger(seed)) return null;
   if (!isCount(shuffles) || !isCount(hints) || !isCount(undos) || !isMs(elapsedMs)) return null;
-  // A Daily deal names its date; anything else must say null outright.
-  if (daily !== null && !isDateKey(daily)) return null;
   const snapshot = parseSnapshot(record['snapshot']);
   if (snapshot === null) return null;
   // The clock must not run behind the game it is resuming. main.ts continues
@@ -355,7 +352,7 @@ export function parseSave(record: unknown): SaveState | null {
     ...snapshot.stack.moves.map((m) => m.atMs),
   );
   if (elapsedMs < latestMs) return null;
-  return { version, layoutId, seed, shuffles, hints, undos, elapsedMs, daily, snapshot };
+  return { version, layoutId, seed, shuffles, hints, undos, elapsedMs, snapshot };
 }
 
 // --- resume -------------------------------------------------------------------

@@ -333,7 +333,7 @@ test('every palette keeps its id and has a label to pair with the colour', () =>
     assert.equal(palette.id, id);
     assert.ok(palette.label.length > 0, id);
   }
-  assert.deepEqual(Object.keys(PALETTES).sort(), ['daily', 'lantern', 'milestone']);
+  assert.deepEqual(Object.keys(PALETTES).sort(), ['lantern', 'milestone']);
 });
 
 test('a special palette changes felt and border only — face art and ink are untouched', () => {

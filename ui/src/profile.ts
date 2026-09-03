@@ -9,7 +9,7 @@
 //                        Challenge streak (+ the date it is anchored to),
 //                        trophies
 //
-// The Daily Challenge fields (issue #19, decision 0016) live here rather than
+// The daily-challenge fields (issue #19, decisions 0016 and 0028) live here rather than
 // on a second record; a record written before #19 parses with them empty.
 // The display name is clamped here but not screened: screening happens where
 // the name leaves the device (issue #138 — worker/profile.mjs owns the
@@ -177,13 +177,15 @@ export interface PlayerRecord {
   /** Ladder levels that have been cleared at least once (issue #119: a clear
    *  is a clear, no rating attached). */
   readonly cleared: readonly number[];
-  /** Consecutive Daily Challenge days, as of `lastDaily`. */
+  /** Consecutive days with at least one Daily challenge completed, as of
+   *  `lastDaily` (issue #183). */
   readonly dailyStreak: number;
-  /** The date key of the last Daily Challenge credited, or null. The streak
+  /** The date key of the last day a Daily challenge was credited, or null. The streak
    *  is only meaningful next to it: a streak whose last day was the day
    *  before today is alive, anything older is over (see `liveStreak`). */
   readonly lastDaily: string | null;
-  /** Trophies collected from Daily clears (`dailyTrophies` per clear). */
+  /** Trophies collected from completed Daily challenges (issue #183: one per
+   *  completion, plus the streak tier bonus on the day's first). */
   readonly trophies: number;
 }
 
@@ -284,17 +286,9 @@ export function liveStreak(record: PlayerRecord, today: string): number {
   return gap === 0 || gap === 1 ? record.dailyStreak : 0;
 }
 
-/** Whether today's Daily is locked against replay (issue #166): true once
- *  `today`'s board has been credited (`lastDaily === today`). A loss never
- *  sets `lastDaily`, so it never locks; the lock itself lifts the moment
- *  `today` rolls to the next local calendar date — `dailyDateKey()` picks
- *  `today`, so calling this again after midnight reopens the board. */
-export function dailyLockedFor(record: PlayerRecord, today: string): boolean {
-  return record.lastDaily === today;
-}
-
-/** What a Daily clear paid out (issue #19). `credited` is false when the
- *  date was already cleared — a replay earns nothing twice. */
+/** What a completed Daily challenge paid (issue #183). `credited` is false
+ *  only for a date earlier than the last one credited — a clock wound back
+ *  earns nothing. */
 export interface DailyCredit {
   readonly credited: boolean;
   readonly streak: number;
@@ -321,9 +315,10 @@ export class RecordStore {
    * A ladder level was won at `score`: one more clear, the score added to this
    * week's, and the level marked cleared.
    *
-   * Ladder only (issue #176). A Daily clear pays trophies and the streak and
-   * nothing else — it does not bank score and is not a level cleared — so it
-   * calls `recordDailyWin` alone and never comes through here.
+   * Ladder only (issue #176). A completed Daily challenge pays trophies and
+   * the streak and nothing else — it banks no score and is not a level
+   * cleared — so it calls `creditDailyChallenge` alone and never comes
+   * through here.
    *
    * `nowMs` decides the week. When the stored week is not the current one the
    * score starts again from this win rather than adding to a standing that has
@@ -357,17 +352,26 @@ export class RecordStore {
     return this.current;
   }
 
-  /** The Daily Challenge for `dateKey` was cleared: extend or restart the
-   *  streak (consecutive calendar days, `daysBetween` — DST-immune), pay the
-   *  trophies the streak earns, once per date. Clearing a *past* date's board
-   *  is credited too (a board dealt before midnight and finished after it),
-   *  but never re-credited and never counted out of order. */
-  recordDailyWin(dateKey: string): DailyCredit {
+  /**
+   * A Daily challenge for `dateKey` was completed (issue #183).
+   *
+   * A day serves three, and each one pays. The *day's* first completion is
+   * what moves the streak and pays its escalating bonus (`dailyTrophies`);
+   * the second and third pay a flat trophy, because the streak counts days,
+   * not challenges. A date *earlier* than the last credited one pays nothing
+   * at all — winding the device clock back must not re-earn a day.
+   */
+  creditDailyChallenge(dateKey: string): DailyCredit {
     const { lastDaily, dailyStreak } = this.current;
-    if (lastDaily !== null && daysBetween(lastDaily, dateKey) <= 0) {
-      return { credited: false, streak: dailyStreak, trophies: 0 };
+    const gap = lastDaily === null ? null : daysBetween(lastDaily, dateKey);
+    if (gap !== null && gap < 0) return { credited: false, streak: dailyStreak, trophies: 0 };
+    if (gap === 0) {
+      // Another challenge off the same day's three: a trophy, no streak move.
+      this.current = { ...this.current, trophies: this.current.trophies + 1 };
+      writeRecord(this.storage, this.key, this.current);
+      return { credited: true, streak: dailyStreak, trophies: 1 };
     }
-    const streak = lastDaily !== null && daysBetween(lastDaily, dateKey) === 1 ? dailyStreak + 1 : 1;
+    const streak = gap === 1 ? dailyStreak + 1 : 1;
     const trophies = dailyTrophies(streak);
     this.current = {
       ...this.current,
