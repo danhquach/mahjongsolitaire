@@ -107,7 +107,7 @@ import { hitTest } from './hit-test.js';
 import { HUD_PLACEMENTS, chooseHudPlacement } from './hud-fit.js';
 import type { HudCandidate, HudPlacement } from './hud-fit.js';
 import { BoardRenderer } from './render.js';
-import { parseChangelog, versionLabel } from './changelog.js';
+import { briefChangelog, versionLabel } from './changelog.js';
 import changelogMd from '../../CHANGELOG.md?raw';
 import {
   ATTACHMENT_ACCEPT,
@@ -1572,11 +1572,12 @@ async function start(): Promise<void> {
   // --- version + changelog (issue #81) ----------------------------------------
 
   /** Render the bundled CHANGELOG.md into the dialog: release headings become
-   *  sub-headings, bullets become list items, prose becomes paragraphs. */
+   *  sub-headings, and each entry becomes its lead sentence as a list item
+   *  (issue #181 — the full prose stays in the repo's CHANGELOG.md). */
   function fillChangelog(): void {
     changelogBody.textContent = '';
     let list: HTMLUListElement | null = null;
-    for (const block of parseChangelog(changelogMd)) {
+    for (const block of briefChangelog(changelogMd)) {
       if (block.kind === 'item') {
         if (!list) {
           list = document.createElement('ul');
@@ -1588,9 +1589,9 @@ async function start(): Promise<void> {
         continue;
       }
       list = null;
-      const node = document.createElement(block.kind === 'heading' ? 'h3' : 'p');
-      node.textContent = block.text;
-      changelogBody.append(node);
+      const heading = document.createElement('h3');
+      heading.textContent = block.text;
+      changelogBody.append(heading);
     }
   }
 

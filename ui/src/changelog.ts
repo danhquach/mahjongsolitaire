@@ -51,3 +51,39 @@ export function versionLabel(version: string, commit: string, buildTimeIso: stri
   const day = buildTimeIso.slice(0, 10);
   return `v${version}+${commit}${day ? ` · ${day}` : ''}`;
 }
+
+/** Entries longer than this read as a wall of text in the dialog. */
+const MAX_ITEM_CHARS = 150;
+
+/**
+ * The in-game view of one entry (issue #181): its lead sentence, without the
+ * markdown emphasis or the issue refs. The changelog's house style puts the
+ * summary first and the detail after it, so the lead sentence alone is the
+ * release note a player wants — and where that sentence is itself long, it is
+ * cut at the clause where its detail starts.
+ */
+export function briefItem(text: string): string {
+  const plain = text
+    .replace(/\s*\(#[^)]*\)/g, '')
+    .replace(/\*/g, '');
+  // A sentence ends at .!? followed by a space — a decimal ("×1.5") has none.
+  const stop = /[.!?](?=\s)/.exec(plain);
+  const lead = stop ? plain.slice(0, stop.index + 1) : plain;
+  if (lead.length <= MAX_ITEM_CHARS) return lead;
+  const clause = /[:;](?=\s)|\s—\s/.exec(lead);
+  if (clause) return `${lead.slice(0, clause.index)}.`;
+  const word = lead.lastIndexOf(' ', MAX_ITEM_CHARS);
+  return `${lead.slice(0, word)}…`;
+}
+
+/** What the in-game dialog renders: release headings and entries, never the
+ *  file's own prose header. */
+export type BriefBlock = ChangelogBlock & { readonly kind: 'heading' | 'item' };
+
+/** The blocks the in-game dialog renders: every release, one short line per
+ *  entry. The file's own prose header is dropped — it describes the file. */
+export function briefChangelog(md: string): BriefBlock[] {
+  return parseChangelog(md)
+    .filter((b): b is BriefBlock => b.kind !== 'text')
+    .map((b) => (b.kind === 'item' ? { kind: b.kind, text: briefItem(b.text) } : b));
+}
