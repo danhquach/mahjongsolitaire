@@ -152,11 +152,11 @@ test('replaying a level is never a first clear, and the milestone counter does n
   record.recordWin(100, { level: 7 }, NOW);
   assert.equal(clearedLevelCount(record.value), 3);
   assert.equal(thirdClearDue(clearedLevelCount(record.value)), true);
-  // A Daily clear is not a ladder clear, and since issue #176 it does not go
-  // through recordWin at all — it pays trophies and the streak only.
-  record.recordDailyWin('2026-09-03');
+  // A completed Daily challenge is not a ladder clear, and since issue #176 it
+  // does not go through recordWin at all — it pays trophies and the streak only.
+  record.creditDailyChallenge('2026-09-03');
   assert.equal(clearedLevelCount(record.value), 3);
-  assert.equal(record.value.levelsCleared, 6, 'a Daily is not a level cleared');
+  assert.equal(record.value.levelsCleared, 6, 'a Daily challenge is not a level cleared');
 });
 
 test('the every-third grant applied per main.ts: a replay leaves the balance alone', () => {
