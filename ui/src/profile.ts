@@ -245,6 +245,15 @@ export function liveStreak(record: PlayerRecord, today: string): number {
   return gap === 0 || gap === 1 ? record.dailyStreak : 0;
 }
 
+/** Whether today's Daily is locked against replay (issue #166): true once
+ *  `today`'s board has been credited (`lastDaily === today`). A loss never
+ *  sets `lastDaily`, so it never locks; the lock itself lifts the moment
+ *  `today` rolls to the next local calendar date — `dailyDateKey()` picks
+ *  `today`, so calling this again after midnight reopens the board. */
+export function dailyLockedFor(record: PlayerRecord, today: string): boolean {
+  return record.lastDaily === today;
+}
+
 /** What a Daily clear paid out (issue #19). `credited` is false when the
  *  date was already cleared — a replay earns nothing twice. */
 export interface DailyCredit {

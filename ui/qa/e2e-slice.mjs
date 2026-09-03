@@ -989,6 +989,54 @@ for (const vp of VIEWPORTS) {
     console.log(`${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: Daily Challenge deals, resumes, returns`);
   }
 
+  // 2b2. Issue #166: a cleared Daily locks the chip for the rest of the local
+  //      day — disabled, greyed out, its accessible name saying so — and does
+  //      not lift until the next local calendar date. A native `disabled`
+  //      closes the chip's own replay route on its own; this only checks that
+  //      the chip actually reaches that state and that a native `.click()`
+  //      (which a disabled control refuses to turn into a click event) really
+  //      does nothing.
+  {
+    const before = failures;
+    const key = dailyDateKey();
+    const priorRecord = await page.evaluate(() => localStorage.getItem('mahjong.record.v1'));
+    await page.evaluate(
+      (k) => localStorage.setItem('mahjong.record.v1', JSON.stringify({ cleared: [47], lastDaily: k })),
+      key,
+    );
+    await page.reload();
+    await page.waitForFunction(() => window.__slice !== undefined);
+    const locked = await page.evaluate(() => {
+      const b = document.getElementById('btn-daily');
+      return {
+        state: b.dataset.state,
+        disabled: b.disabled,
+        name: b.getAttribute('aria-label'),
+      };
+    });
+    check(locked.state === 'locked', 'a cleared Daily reads as locked, not pending', locked);
+    check(locked.disabled === true, 'a locked Daily chip is disabled, not just visually dimmed', locked);
+    check(
+      /cleared/i.test(locked.name) && /tomorrow/i.test(locked.name),
+      'the locked name says the board is cleared for today and a new one arrives tomorrow',
+      locked,
+    );
+    const clicked = await page.evaluate(() => {
+      document.getElementById('btn-daily').click();
+      return window.__slice.daily;
+    });
+    check(clicked === null, 'a disabled chip does not deal the Daily even when .click() is forced', { clicked });
+    // Restore the record the rest of the harness expects, and reload back to
+    // an unlocked chip before the sections below run.
+    await page.evaluate((v) => {
+      if (v === null) localStorage.removeItem('mahjong.record.v1');
+      else localStorage.setItem('mahjong.record.v1', v);
+    }, priorRecord);
+    await page.reload();
+    await page.waitForFunction(() => window.__slice !== undefined);
+    console.log(`${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: a cleared Daily locks the chip until the next local date`);
+  }
+
   // 2c. The Level chip opens the profile (issue #137): a real button, 48dp,
   //     named for what it shows and where it goes; closing returns focus to
   //     the chip and leaves the game exactly as it was.
