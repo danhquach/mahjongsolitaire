@@ -10,10 +10,13 @@
 // set. Characters, Winds and Dragons stay font glyphs, at bold weight for the
 // "thick, simplified strokes" decision 0002 asks for.
 //
-// The red/green banding is the traditional one, and it is one rule per suit:
-// the middle band is red, the outer bands green — by row for Dots, by column
-// for Bamboo (see `bandAccent`). Colour never carries meaning here; the shape
-// does.
+// The red/green accents are the traditional ones. Dots follow one rule: the
+// middle row is red, the outer rows green (see `bandAccent`). Bamboo follows
+// the traditional per-rank table instead (issue #163, decision 0024): 3 and 7
+// take a red top cane, 5 a red centre, 6 a red bottom row, 9 a red middle row,
+// and the rest are all green — so the two three-column grid ranks, 6 and 9,
+// no longer share a colour pattern as well as a column count. Colour never carries
+// meaning here; the shape does.
 //
 // Issue #152 (2026-09-02) removed the corner tag from every face: the West Wind
 // and the White Dragon both tagged "W", and on a phone the tag was often the
@@ -235,10 +238,37 @@ const BAMBOO_PIPS: readonly (readonly Pip[])[] = [
 ];
 
 /**
- * Traditional red/green banding, one rule for both suited pip suits: the middle
- * band is red and the outer bands are green — bands running by row for Dots and
- * by column for Bamboo. A rank whose bands are even in number has no middle, so
- * it is all green rather than picking an arbitrary side.
+ * Which canes of each Bamboo rank are red (issue #163), as indices into the
+ * rank's pip list — `rows()` and `grid()` emit top-to-bottom, left-to-right,
+ * and Bamboo-5's centre cane is appended last. The traditional set: a red top
+ * cane on 3 and 7, a red centre on 5, a red bottom row on 6 and a red middle
+ * row on 9. Everything else is green.
+ */
+const BAMBOO_RED: readonly (readonly number[])[] = [
+  [], // 1
+  [], // 2
+  [0], // 3: the single top cane
+  [], // 4
+  [4], // 5: the centre cane
+  [3, 4, 5], // 6: the bottom row
+  [0], // 7: the single top cane
+  [], // 8
+  [3, 4, 5], // 9: the middle row
+];
+
+/** Attach the traditional Bamboo accents to a rank's canes. */
+function bambooAccented(rank: number): Pip[] {
+  const red = new Set(BAMBOO_RED[rank - 1] ?? []);
+  return (BAMBOO_PIPS[rank - 1] ?? []).map((pip, i) => ({
+    ...pip,
+    accent: red.has(i) ? ACCENT_RED : ACCENT_GREEN,
+  }));
+}
+
+/**
+ * Traditional red/green banding for Dots: the middle band is red and the outer
+ * bands are green, bands running by row. A rank whose bands are even in number
+ * has no middle, so it is all green rather than picking an arbitrary side.
  *
  * `axis` is the coordinate the bands run across: 'y' groups pips into rows,
  * 'x' into columns. Values are rounded before grouping — `spread()` produces
@@ -278,9 +308,9 @@ export function faceStyle(face: string): FaceStyle {
         glyph: '∥',
         color: SUIT_COLOR.bamboo,
         label: `Bamboo ${value}`,
-        // Canes, banded by column: rank 9's three columns read green / red /
-        // green — the whole cane takes the accent, not half of it.
-        pips: banded(BAMBOO_PIPS[rank - 1] ?? [], 'x'),
+        // Canes with the traditional per-rank accents (issue #163) — the whole
+        // cane takes the accent, not half of it.
+        pips: bambooAccented(rank),
         pipShape: 'cane',
       };
     case 'char':

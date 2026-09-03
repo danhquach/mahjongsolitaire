@@ -96,12 +96,15 @@ export const RING_STROKE = 0.7;
  *
  * The vertical fill is well short of the room available on purpose: a cane's
  * bulges are a repeating pattern, so two canes stacked nose to tail read as
- * one long cane. The gap is what keeps a rank countable.
+ * one long cane. The gap is what keeps a rank countable. Issue #163: at 0.78
+ * of the row pitch the gap was not enough — Bamboo-6 and Bamboo-9 both read
+ * as three unbroken columns — so a cane now takes 0.6 of its pitch and the
+ * row gap it leaves (≥ 10% of the tile height, pinned) is part of the design.
  */
 const CANE_FILL_W = 0.42;
-const CANE_FILL_H = 0.78;
+const CANE_FILL_H = 0.6;
 const CANE_W_MAX = PIP_AREA.w * 0.21;
-const CANE_H_MAX = TILE_H * 0.4;
+const CANE_H_MAX = TILE_H * 0.3;
 /** Positions closer than this (in area px) are the same band, not two. */
 const BAND_EPSILON = 0.5;
 
