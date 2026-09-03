@@ -19,11 +19,19 @@ commit and build time of the running bundle.
   parks it (or clears it against the holder) as usual, and the peek simply
   flips back. Undo leaves a peek showing. The short-lived "match against the
   peek on the board" rule from #124 is gone (#165).
+- A cleared Daily Challenge stays cleared. Once today's board is credited,
+  the Daily chip greys out and can't be tapped again until tomorrow's board
+  arrives (its spoken name says so), and Restart won't re-deal it either — so
+  the Daily leaderboard measures one shared run, not the best of many. Losing
+  a Daily still lets you retry it as often as you like (#166).
 - Bamboo 6 and Bamboo 9 no longer look alike. Both used to show three tall
   green-red-green columns, and you had to count canes to tell two rows from
   three. Canes are now shorter, with a clear gap between rows, and the red
   canes follow the traditional pattern: a red bottom row on 6, a red middle
   row on 9, a red top cane on 3 and 7, a red centre on 5 (#163).
+- What's new opens at the newest release and closes on a tap outside the
+  card, like every other dialog. It used to open scrolled to the oldest
+  entry and only close from its Done button (#168).
 - A stuck board stays grey. The deadlock's grey-out used to fade in and then
   quietly let the tiles back to full colour under the "No moves left" card
   (and with Reduced motion on, the tiles were never grey at all). Now the
