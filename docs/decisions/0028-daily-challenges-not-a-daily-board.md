@@ -94,8 +94,25 @@ players once 0027 removed the Daily leaderboard.
   calendar does, with no timer at midnight.
 
 - **Clock-winding earns nothing.** `creditDailyChallenge` keeps 0016's guard: a
-  date earlier than the last credited one pays nothing at all. Within a day the
-  three payouts are bounded by the per-date `done` flags.
+  date earlier than the last credited one pays nothing at all.
+
+- **The per-day cap of three lives in the progress store, not in the record.**
+  0016's rule was one credit per date and the record enforced it by refusing a
+  second; three-a-day means the record now accepts three, and what stops a
+  fourth is the `done` flags in `mahjong.daily.v1` — a document the record
+  never consults. Clearing that key between completions therefore mints
+  trophies locally.
+
+  Left as it is, deliberately. The threat it would defend against is a player
+  editing their own storage, and that player can already set `trophies`
+  directly in `mahjong.record.v1`; trophies rank nothing, bank no score, and
+  are bounded on sync by the server's `Math.max`/`MAX_COUNTER` replace-merge.
+  Closing it properly means a per-date counter *in the record*, paired with
+  `lastDaily` the way `weekScore` is paired with `weekStart` (0027) — plus its
+  own merge rule, since a max-merge on a per-day counter would carry one day's
+  count into the next. That is a synced schema change buying nothing against
+  the actual threat. **Revisit the moment trophies unlock content or feed a
+  board**, at which point the counter is required rather than optional.
 
 - **The layout/pool invariant moved.** "The pools name exactly the shipped
   layout files" was asserted through `DAILY_LAYOUTS`; it is the ladder's
