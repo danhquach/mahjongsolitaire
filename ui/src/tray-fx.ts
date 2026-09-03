@@ -189,9 +189,14 @@ export class TrayFx {
    * The model already removed both tiles and the redraw already emptied the
    * slot, so everything visible here is overlay copies painting over a slot
    * that is really vacant — which is also why nothing can be matched twice.
+   *
+   * `incomingBack` (issue #165): the tapped tile was face-down and the board
+   * never showed its face. The copy takes off as the back and turns over
+   * mid-flight — the reference game's single flip-and-fly — so the face is
+   * first seen in the air, then side by side with its partner.
    */
   pairClear(
-    images: { readonly incoming: string; readonly parked: string },
+    images: { readonly incoming: string; readonly parked: string; readonly incomingBack?: string },
     from: Box,
     slot: HTMLElement,
     points: number,
@@ -227,13 +232,29 @@ export class TrayFx {
       ],
       { duration: TRAY_FLY_MS, easing: 'ease-out', fill: 'forwards' },
     );
+    const lift = `translate(${from.x - incomingBox.x}px, ${from.y - incomingBox.y}px)`;
+    const half = `translate(${(from.x - incomingBox.x) / 2}px, ${(from.y - incomingBox.y) / 2}px)`;
     const flight = incoming.animate(
-      [
-        { transform: `translate(${from.x - incomingBox.x}px, ${from.y - incomingBox.y}px)` },
-        { transform: 'translate(0, 0)' },
-      ],
+      images.incomingBack === undefined
+        ? [{ transform: lift }, { transform: 'translate(0, 0)' }]
+        : // The flip: the back narrows to an edge at mid-flight, the picture
+          // swaps to the face there (see the swap timer below), and the face
+          // widens out over the second half.
+          [
+            { transform: `${lift} scaleX(1)` },
+            { transform: `${half} scaleX(0)`, offset: 0.5 },
+            { transform: 'translate(0, 0) scaleX(1)' },
+          ],
       { duration: TRAY_FLY_MS, easing: 'ease-in', fill: 'forwards' },
     );
+    if (images.incomingBack !== undefined) {
+      incoming.style.backgroundImage = `url("${images.incomingBack}")`;
+      const epoch = this.epoch;
+      window.setTimeout(() => {
+        if (epoch !== this.epoch) return;
+        incoming.style.backgroundImage = `url("${images.incoming}")`;
+      }, TRAY_FLY_MS / 2);
+    }
     // Dwell, then clear: both copies scale down and fade together.
     const clear = (node: HTMLElement): Animation =>
       node.animate(
@@ -266,58 +287,6 @@ export class TrayFx {
     }, TRAY_FLY_MS + PAIR_SHOW_MS);
     this.track(parked, [makeRoom, clears[0]!]);
     this.track(incoming, [flight, clears[1]!]);
-  }
-
-  /**
-   * A peek-pair resolving directly on the board (issue #124): unlike
-   * `pairClear`, neither tile ever reaches the holder, so there is no slot to
-   * fly to and no flight — both pictures are already where the player tapped
-   * them. They just dwell in place, then clear together: same dwell/clear
-   * timings, score popup and particle burst as the holder version, anchored
-   * at the midpoint between the two tiles instead of a slot.
-   */
-  pairClearOnBoard(
-    images: { readonly a: string; readonly b: string },
-    boxA: Box,
-    boxB: Box,
-    points: number,
-    onClear: () => void,
-  ): void {
-    const anchor = {
-      x: (boxA.x + boxA.w / 2 + boxB.x + boxB.w / 2) / 2,
-      y: (boxA.y + boxA.h / 2 + boxB.y + boxB.h / 2) / 2,
-    };
-    if (this.reduced()) {
-      onClear();
-      this.scorePop(anchor, points, true);
-      return;
-    }
-    const tileA = tileImg(images.a, boxA);
-    const tileB = tileImg(images.b, boxB);
-    this.layer.append(tileA, tileB);
-    const clear = (node: HTMLElement): Animation =>
-      node.animate(
-        [
-          { transform: 'scale(1)', opacity: 1, offset: 0 },
-          {
-            transform: 'scale(1)',
-            opacity: 1,
-            offset: PAIR_SHOW_MS / (PAIR_SHOW_MS + PAIR_CLEAR_MS),
-          },
-          { transform: `scale(${END_SCALE})`, opacity: 0, offset: 1 },
-        ],
-        { duration: PAIR_SHOW_MS + PAIR_CLEAR_MS, easing: 'linear', fill: 'forwards' },
-      );
-    const clears = [clear(tileA), clear(tileB)];
-    const epoch = this.epoch;
-    window.setTimeout(() => {
-      if (epoch !== this.epoch) return;
-      onClear();
-      this.scorePop(anchor, points, false);
-      this.burst(anchor, (boxA.w + boxB.w) / 2);
-    }, PAIR_SHOW_MS);
-    this.track(tileA, [clears[0]!]);
-    this.track(tileB, [clears[1]!]);
   }
 
   /** The "+points" popup, rising and fading from the slot (issue #93). Reduced

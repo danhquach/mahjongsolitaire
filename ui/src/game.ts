@@ -43,16 +43,19 @@
 // fixed at deal time (core's concealedTileIds — deterministic, so a resume
 // re-derives it and nothing new is saved), and everything the solver, hint and
 // deadlock check read is untouched. The controller owns the reveal state: one
-// peek at a time, and any board change drops it. Under issue #93 the first tap
-// on a concealed free tile is the reveal and *only* the reveal — it never
-// consults the holder (decision 0010's tap-time leak) and never moves the tile;
-// the second tap sends the now-visible tile to the holder like any other.
+// peek at a time.
 //
-// Issue #124 amends decision 0013 point 4: while a peek is showing, a tap on
-// any *other* free tile matches directly against it on the board — no trip
-// through the holder — or, on a face mismatch, fails the attempt (peek drops,
-// tapped tile untouched, not a move). The peeked tile's own second tap is
-// unchanged: it still parks in the holder.
+// Issue #165 (decision 0025, following the reference game) sets the tap rule:
+// the holder IS consulted for a hidden face. A face-down free tile whose real
+// face matches a held tile clears against it on that very tap — the memory
+// payoff — and only otherwise does the tap peek: reveal in place, move
+// nothing, cost nothing. A peek is passive: a tap on any other free tile is an
+// ordinary move (park, or clear against the holder) and drops the peek; the
+// peeked tile's own second tap sends it to the holder like any visible tile.
+// Undo leaves the peek alone — only a change to the peeked tile itself (it
+// left the board, Shuffle re-faced it) drops it. This supersedes decision
+// 0018's "matching against the peek" mode (issue #124) and amends decision
+// 0010 point 1.
 
 import {
   Board,
@@ -60,7 +63,6 @@ import {
   ScoreKeeper,
   assessDifficulty,
   concealedTileIds,
-  facesMatch,
   findHint,
   hasPlayableMove,
   shuffleBoard,
@@ -84,8 +86,16 @@ export type GameStatus = 'playing' | 'won' | 'stuck' | 'lost';
 
 export type TapOutcome =
   /** The tapped board tile paired with `a` — always a held tile (issue #93:
-   *  every pair resolves in the holder). `b` is the tile just tapped. */
-  | { readonly kind: 'matched'; readonly a: TileId; readonly b: TileId; readonly score: MatchScore }
+   *  every pair resolves in the holder). `b` is the tile just tapped.
+   *  `revealed` (issue #165): `b` was face-down when tapped — the flight
+   *  shows the flip; the board never did. */
+  | {
+      readonly kind: 'matched';
+      readonly a: TileId;
+      readonly b: TileId;
+      readonly score: MatchScore;
+      readonly revealed?: true;
+    }
   | { readonly kind: 'blocked'; readonly id: TileId }
   /** Issue #93: the tapped free tile went to the holder in one tap. */
   | { readonly kind: 'held'; readonly id: TileId; readonly slot: number }
@@ -96,10 +106,6 @@ export type TapOutcome =
   /** Issue #64: a tap on a face-down free tile peeks at it — reveals the face
    *  in place, moves nothing, costs nothing. Only ever one peek at a time. */
   | { readonly kind: 'peeked'; readonly id: TileId }
-  /** Issue #124: while a peek is showing, a tap on a non-matching free tile is
-   *  a failed match attempt — not a park, not a move. Nothing changes but the
-   *  peek itself, which re-conceals; a face-down tapped tile is NOT revealed. */
-  | { readonly kind: 'peek-mismatch'; readonly peeked: TileId; readonly id: TileId }
   | { readonly kind: 'none' };
 
 /** A pair of tile ids the Hint booster is pointing at. */
@@ -304,9 +310,11 @@ export class Game {
     return id !== this.peekedId && id !== this.stack.selection;
   }
 
-  /** The board changed under the peek — re-conceal it (undo, shuffle, match,
-   *  park). Cheap and safe: a peek is free and unlimited, so dropping one never
-   *  costs the player anything but a tap. */
+  /** Drop the peek. Called when a tap on another tile moves it (park, match —
+   *  the reference game re-conceals on the next move) and when the peeked
+   *  tile itself changes under the player (shuffle re-faces it, its own tap
+   *  parks it). Not on undo (issue #165): the peek is the player's knowledge,
+   *  and taking a tile back out of the holder changes nothing they know. */
   private forgetPeek(): void {
     this.peekedId = null;
   }
@@ -377,9 +385,9 @@ export class Game {
     const record = this.stack.undo();
     if (record === null) return null;
     this.forgetHints();
-    // A returned concealed tile comes back face-down (the set is fixed), and
-    // the peek does not outlive the board it was taken on.
-    this.forgetPeek();
+    // A returned concealed tile comes back face-down (the set is fixed). The
+    // peek stays (issue #165): it is on a board tile, and the undo only moves
+    // a held one — the reference game leaves it showing too.
     return record;
   }
 
@@ -405,22 +413,14 @@ export class Game {
     return { kind: 'held', id, slot };
   }
 
-  /** Does tapping this board tile clear a pair in the holder (issue #93)?
-   *  The one home of the rule — the a11y labels and the QA harness ask here
-   *  rather than re-deriving face sets. */
+  /** Does tapping this *visible* board tile clear a pair in the holder (issue
+   *  #93)? The a11y labels and the QA harness ask here rather than re-deriving
+   *  face sets. Deliberately false for a hidden face (issue #165): the tap
+   *  would clear it — see tapBoard — but a label saying so would leak the
+   *  face, and the harness treats hidden tiles as unknowns the way a player
+   *  does. */
   pairsWithHeld(id: TileId): boolean {
     return !this.isFaceHidden(id) && this.holderPartner(id) !== null;
-  }
-
-  /** Does tapping this board tile clear a pair against the showing peek
-   *  (issue #124)? Real faces, regardless of whether `id` itself is hidden —
-   *  a matching second face-down tile clears too. False when there is no
-   *  peek showing, or `id` is the peeked tile itself (its own second tap is
-   *  the holder-park rule, unchanged). The one home of the rule — a11y labels
-   *  and the QA harness ask here rather than re-deriving face sets. */
-  pairsWithPeek(id: TileId): boolean {
-    if (this.peekedId === null || id === this.peekedId) return false;
-    return facesMatch(this.board.get(this.peekedId).face, this.board.get(id).face);
   }
 
   /**
@@ -505,55 +505,44 @@ export class Game {
   }
 
   /**
-   * Tap on a free board tile. In order:
+   * Tap on a free board tile. In order (issue #165, the reference game's
+   * rule):
    *
-   * 0. a peek is showing and this is a different tile (issue #124, amending
-   *    decision 0013 point 4): the board is briefly in "matching against the
-   *    peek" mode, and parking is not possible. Its real face matching the
-   *    peek's — hidden or not — clears the pair directly on the board, no
-   *    trip through the holder. A non-match is a failed attempt: the peek
-   *    re-conceals and the tapped tile is left exactly as it was (a hidden
-   *    one is NOT revealed by this tap);
-   * 1. its face is hidden → peek at it (issue #64), and nothing else: the tap
-   *    that reveals must not also move the tile, and the holder is never
-   *    consulted for a hidden face (decision 0010: that would leak the face on
-   *    the tap *before* the reveal). The second tap, on the now-visible tile,
-   *    falls through to the rules below;
-   * 2. its face matches a held tile → the pair clears (issue #93: pairs
-   *    assemble and resolve in the holder). The tapped tile never takes a
-   *    slot, so completing a pair cannot trip the full-holder loss in passing;
+   * 1. its real face matches a held tile → the pair clears (issue #93: pairs
+   *    assemble and resolve in the holder), *hidden or not*. A face-down tile
+   *    the player remembers goes straight in — the flight shows the flip —
+   *    which is the memory payoff; a face-down tile they guess wrong at is
+   *    caught by rule 2 and merely peeks, so a blind tap never mis-parks. The
+   *    tapped tile never takes a slot, so completing a pair cannot trip the
+   *    full-holder loss in passing;
+   * 2. its face is hidden → peek at it (issue #64), and nothing else. One peek
+   *    at a time: a second peek re-conceals the first in the same frame;
    * 3. otherwise it goes to the holder — one tap, no select-first step.
    *
-   * A tap on the peeked tile itself (`id === peekedId`) is not caught by rule
-   * 0 — the tile is now visible, so it falls through to rules 2/3: its own
-   * second tap still sends it to the holder like any other visible tile.
+   * A peek is passive: whatever a tap on another tile does, it is what that
+   * tap would do with no peek showing, and it drops the peek (rules 1/3 via
+   * playPair/park). The peeked tile's own second tap is a visible tile's tap.
    */
   private tapBoard(id: TileId, nowMs: number): TapOutcome {
-    const peekedId = this.peekedId;
-    if (peekedId !== null && id !== peekedId) {
-      if (facesMatch(this.board.get(peekedId).face, this.board.get(id).face)) {
-        return this.playPair(peekedId, id, nowMs);
-      }
-      // Failed match attempt: not a move. Nothing parks, nothing moves; the
-      // peek drops and the tapped tile (hidden or not) is left untouched.
-      this.forgetPeek();
-      return { kind: 'peek-mismatch', peeked: peekedId, id };
+    const partner = this.holderPartner(id);
+    if (partner !== null) {
+      const revealed = this.isFaceHidden(id);
+      const outcome = this.playPair(partner, id, nowMs);
+      return revealed ? { ...outcome, revealed: true } : outcome;
     }
     if (this.isFaceHidden(id)) {
       // One peek at a time: this assignment is what re-conceals the previous
-      // one (issue #64 answer 3, kept under issue #93).
+      // one (issue #64 answer 3).
       this.peekedId = id;
       return { kind: 'peeked', id };
     }
-    const partner = this.holderPartner(id);
-    if (partner !== null) return this.playPair(partner, id, nowMs);
     return this.park(id, nowMs);
   }
 
-  private playPair(a: TileId, b: TileId, nowMs: number): TapOutcome {
+  private playPair(a: TileId, b: TileId, nowMs: number): TapOutcome & { kind: 'matched' } {
     const score = this.stack.play(a, b, nowMs);
     this.forgetHints(); // the board changed: the cycled pairs are stale
-    this.forgetPeek();
+    this.forgetPeek(); // a move on another tile, or the peeked tile leaving
     return { kind: 'matched', a, b, score };
   }
 }

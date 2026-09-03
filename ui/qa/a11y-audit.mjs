@@ -665,9 +665,11 @@ for (const vp of VIEWPORTS) {
       }, id);
       const pressedFocus = await page.evaluate(() => document.activeElement.dataset.tileId);
       check(Number(pressedFocus) === id, 'focus lands on the intended tile', { id, pressedFocus });
-      // A face-down tile takes an extra Enter — the peek (issue #64).
+      // A face-down tile takes an extra Enter — the peek (issue #64) — unless
+      // its match is already held, when that Enter clears it (issue #165).
       if (await page.evaluate((i) => window.__slice.game.isFaceHidden(i), id)) {
         await page.keyboard.press('Enter');
+        if (await page.evaluate((i) => window.__slice.game.board.get(i).removed, id)) continue;
       }
       await page.keyboard.press('Enter');
     }
@@ -696,7 +698,8 @@ for (const vp of VIEWPORTS) {
     await page.evaluate((tileId) => {
       document.querySelector(`#a11y-layer [data-tile-id="${tileId}"]`).focus();
     }, c);
-    // Extra Enter to peek first if the tile is face-down (issue #64).
+    // Extra Enter to peek first if the tile is face-down (issue #64). Its
+    // face is not held here (the holder is empty), so the peek only peeks.
     if (await page.evaluate((i) => window.__slice.game.isFaceHidden(i), c)) {
       await page.keyboard.press('Enter');
     }
@@ -728,9 +731,13 @@ for (const vp of VIEWPORTS) {
       const { game } = window.__slice;
       const click = (id) =>
         document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.click();
-      // Issue #64: the first activation of a face-down tile only peeks.
+      // Issue #64: the first activation of a face-down tile peeks — unless
+      // its match is held, when it clears right there (issue #165).
       const act = (id) => {
-        if (game.isFaceHidden(id)) click(id);
+        if (game.isFaceHidden(id)) {
+          click(id);
+          if (game.board.get(id).removed) return;
+        }
         click(id);
       };
       // Replay the remaining witness pairs; already-removed pairs are no-ops.

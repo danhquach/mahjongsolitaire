@@ -93,40 +93,14 @@ test('with one slot left the label warns that parking loses (issue #63)', () => 
   );
 });
 
-test('with a peek showing, a matching free tile offers the match, not the park (issue #124)', () => {
+test('a face-down tile only ever offers the peek, even when its match is held (issue #165)', () => {
+  // The activation would clear the pair, but saying so names the face by
+  // implication — the label must not hand a screen-reader player what a
+  // sighted one cannot see. pairsWithHeld is never set for a hidden face;
+  // even if it were, the concealed branch ignores it.
   assert.equal(
-    tileAriaLabel({ ...t(0, 0, 0, 0, 'bamboo-3'), peekShowing: true, pairsWithPeek: true }),
-    'Bamboo 3, available, row 1, column 1, activate to match it with the revealed tile',
-  );
-});
-
-test('with a peek showing, a non-matching free tile offers a try, not the park (issue #124)', () => {
-  assert.equal(
-    tileAriaLabel({ ...t(0, 0, 0, 0, 'bamboo-3'), peekShowing: true, pairsWithPeek: false }),
-    'Bamboo 3, available, row 1, column 1, activate to try it against the revealed tile',
-  );
-});
-
-test('with a peek showing, a face-down free tile no longer offers to peek (issue #124)', () => {
-  // A tap on it either matches the peek or fails the attempt — it never
-  // reveals the tile the way a peek with nothing else showing would.
-  assert.equal(
-    tileAriaLabel({
-      ...t(0, 0, 0, 0, 'bamboo-3'),
-      concealed: true,
-      peekShowing: true,
-      pairsWithPeek: false,
-    }),
-    'Face-down tile, available, row 1, column 1, activate to try it against the revealed tile',
-  );
-  assert.equal(
-    tileAriaLabel({
-      ...t(0, 0, 0, 0, 'bamboo-3'),
-      concealed: true,
-      peekShowing: true,
-      pairsWithPeek: true,
-    }),
-    'Face-down tile, available, row 1, column 1, activate to match it with the revealed tile',
+    tileAriaLabel({ ...t(0, 0, 0, 0, 'bamboo-3'), concealed: true, pairsWithHeld: true }, true),
+    'Face-down tile, available, row 1, column 1, activate to peek at it',
   );
 });
 

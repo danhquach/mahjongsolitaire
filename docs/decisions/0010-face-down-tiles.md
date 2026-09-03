@@ -32,7 +32,11 @@ second, and match. Concealment never constrains generation.
 
 The consequences, as built:
 
-1. **Tap semantics.** The first tap on a face-down free tile peeks it —
+1. **Tap semantics.** *(Amended by decision 0025, issue #165, 2026-09-02: the
+   holder auto-clear now does apply to a hidden face — a face-down tile whose
+   match is already held clears on its first tap, the reference game's memory
+   payoff; the rest of this point stands for a tile with no match held.)*
+   The first tap on a face-down free tile peeks it —
    nothing else, not even the holder auto-clear (issue #62 rule 2), which
    would otherwise act on a face the player has not seen. The next tap acts
    under the ordinary rules. Peeking another concealed tile re-conceals the

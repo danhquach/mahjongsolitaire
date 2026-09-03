@@ -150,10 +150,14 @@ async function huntDeadlock(maxDeals) {
   // activatable any more (issue #93): a pair with one half in the holder is
   // played by tapping the board half.
   const click = (id) => document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.click();
-  // Issue #64: the first tap on a face-down tile only peeks at it — the tap
-  // that acts is the next one.
+  // Issue #64: the first tap on a face-down tile peeks at it — the tap that
+  // acts is the next one — unless (issue #165) its match is already held, in
+  // which case that first tap clears it and there is nothing left to tap.
   const activate = (id) => {
-    if (slice.game.isFaceHidden(id)) click(id);
+    if (slice.game.isFaceHidden(id)) {
+      click(id);
+      if (slice.game.board.get(id).removed) return;
+    }
     click(id);
   };
   const pairs = () => {
@@ -494,13 +498,16 @@ for (const vp of VIEWPORTS) {
     }, id);
 
   /** Tap a board tile the way a player has to (issue #64): a face-down tile
-   *  takes one extra tap first — the peek — before the tap that acts. A tile
-   *  already in the holder (its partner will fetch it) takes no tap at all. */
+   *  takes one extra tap first — the peek — before the tap that acts, except
+   *  (issue #165) when its match is already held: then the first tap clears
+   *  it and a second click would land on whatever is under the vacated spot.
+   *  A tile already in the holder (its partner will fetch it) takes no tap. */
   const tapTile = async (id) => {
     if (await page.evaluate((i) => window.__slice.game.board.isHeld(i), id)) return;
     const c = await tileCenter(id);
     if (await page.evaluate((i) => window.__slice.game.isFaceHidden(i), id)) {
       await page.mouse.click(c.x, c.y);
+      if (await page.evaluate((i) => window.__slice.game.board.get(i).removed, id)) return;
     }
     await page.mouse.click(c.x, c.y);
   };
@@ -583,9 +590,15 @@ for (const vp of VIEWPORTS) {
     });
     // 8dp forgiveness at the rotated scale (spec §7), through a real tap.
     const probe = await page.evaluate(() => {
-      const t = window.__slice.game
+      // Issue #165: a hidden tile whose match is held clears on its peek tap,
+      // so the probe wants a tile that will still be there for the edge tap.
+      const s = window.__slice;
+      const heldFaces = new Set(
+        s.holder().slots.filter((id) => id !== null).map((id) => s.game.board.get(id).face),
+      );
+      const t = s.game
         .hitCandidates()
-        .filter((c) => c.free)
+        .filter((c) => c.free && !heldFaces.has(s.game.board.get(c.id).face))
         .sort((a, b) => a.slot.x - b.slot.x)[0];
       const r = window.__slice.tileCssRect(t.id);
       const c = document.querySelector('#board canvas').getBoundingClientRect();
@@ -749,9 +762,14 @@ for (const vp of VIEWPORTS) {
       // issue #99 the taller stacks project over board-x neighbours, so the
       // probe point is checked against every drawn face, not inferred from
       // slot coordinates.
+      // Issue #165: a hidden tile whose match is held clears on its peek tap,
+      // so the probe wants a tile that will still be there for the edge tap.
+      const heldFaces = new Set(
+        slice.holder().slots.filter((id) => id !== null).map((id) => game.board.get(id).face),
+      );
       const candidates = game
         .hitCandidates()
-        .filter((x) => x.free)
+        .filter((x) => x.free && !heldFaces.has(game.board.get(x.id).face))
         .map((x) => ({ id: x.id, r: slice.tileCssRect(x.id) }))
         .sort((a, b) => a.r.x - b.r.x);
       for (const { id, r } of candidates) {
@@ -1849,9 +1867,14 @@ for (const vp of VIEWPORTS) {
     const played = await page.evaluate(() => {
       const s = window.__slice;
       const click = (id) => document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.click();
-      // Issue #64: the first tap on a face-down tile only peeks.
+      // Issue #64: the first tap on a face-down tile peeks — unless its match
+      // is held, when it clears right there (issue #165) and the second tap
+      // would land on nothing.
       const act = (id) => {
-        if (s.game.isFaceHidden(id)) click(id);
+        if (s.game.isFaceHidden(id)) {
+          click(id);
+          if (s.game.board.get(id).removed) return;
+        }
         click(id);
       };
       for (const [a, b] of s.game.level.solution.slice(0, 4)) {
@@ -1955,8 +1978,8 @@ for (const vp of VIEWPORTS) {
         .freeTileIds()
         .find((id) => s.game.board.get(id).face === heldFace);
       if (partner !== undefined) {
-        // A resume re-conceals (issue #64), so the partner may need its peek.
-        if (s.game.isFaceHidden(partner)) click(partner);
+        // A resume re-conceals (issue #64). Its match is held, so a hidden
+        // partner clears on that one tap (issue #165); a visible one too.
         click(partner);
       }
       return { tilesLeft: s.game.tilesLeft, score: s.game.score, status: s.game.status() };
@@ -1974,9 +1997,13 @@ for (const vp of VIEWPORTS) {
     const won = await page.evaluate(() => {
       const s = window.__slice;
       const click = (id) => document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.click();
-      // Issue #64: face-down tiles take the extra peek tap.
+      // Issue #64: face-down tiles take the extra peek tap — unless the peek
+      // tap already cleared them against the holder (issue #165).
       const act = (id) => {
-        if (s.game.isFaceHidden(id)) click(id);
+        if (s.game.isFaceHidden(id)) {
+          click(id);
+          if (s.game.board.get(id).removed) return;
+        }
         click(id);
       };
       for (const [a, b] of s.game.level.solution) {

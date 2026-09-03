@@ -65,21 +65,24 @@ function fingerprint(game: Game) {
 
 /** Issue #93's park: one tap on a revealed free tile is the whole gesture. */
 function park(game: Game, id: TileId, atMs: number): void {
-  reveal(game, id, atMs);
+  if (reveal(game, id, atMs)) return;
   game.tap(free(id), atMs + 1);
 }
 
 /** Peek a face-down tile so the next tap acts on it (issue #64: the first tap
- *  on a hidden tile only reveals it). No-op for a face-up tile. */
-function reveal(game: Game, id: TileId, nowMs: number): void {
-  if (game.isFaceHidden(id)) game.tap(free(id), nowMs);
+ *  on a hidden tile only reveals it). No-op for a face-up tile. Returns true
+ *  when the tap already acted (issue #165: a hidden tile whose match is held
+ *  clears on its first tap), so the caller must not tap again. */
+function reveal(game: Game, id: TileId, nowMs: number): boolean {
+  if (!game.isFaceHidden(id)) return false;
+  return game.tap(free(id), nowMs).kind !== 'peeked';
 }
 
 /** Tap a tile wherever it is. A held tile is a no-op (issue #93: a held tile
  *  is not tappable — its partner's board tap is what clears the pair). */
 function tapAnywhere(game: Game, id: TileId, nowMs: number): void {
   if (game.board.isHeld(id) || game.board.get(id).removed) return;
-  reveal(game, id, nowMs);
+  if (reveal(game, id, nowMs)) return;
   game.tap(free(id), nowMs);
 }
 
@@ -148,6 +151,7 @@ test('issue #43: save/restore at every move index of a level played with holds',
         .freeTileIds()
         .find((id) => copiesInPlay(game, id) === 2 && !parkedFaces.has(game.board.get(id).face));
       if (target !== undefined) {
+        // The target's face is not parked, so the reveal can only peek.
         reveal(game, target, t);
         if (game.tap(free(target), t + 1).kind === 'held') holds++;
       }
@@ -165,10 +169,8 @@ test('a resumed game keeps playing identically to one that never quit', () => {
   const level = generateValidatedLevel(TURTLE, SAMPLE_SEED);
   const live = new Game(level);
   for (const [a, b] of level.solution.slice(0, 20)) {
-    reveal(live, a, 0);
-    live.tap(free(a), 0);
-    reveal(live, b, 0);
-    live.tap(free(b), 0);
+    if (!reveal(live, a, 0)) live.tap(free(a), 0);
+    if (!reveal(live, b, 0)) live.tap(free(b), 0);
   }
   const resumed = forceQuit(live)!;
   // Same 10 further moves, same timestamps: the combo ladder must agree too.
@@ -176,10 +178,8 @@ test('a resumed game keeps playing identically to one that never quit', () => {
   // may need a reveal tap the live one does not — the tracked state stays equal.
   for (const [a, b] of level.solution.slice(20, 30)) {
     for (const g of [live, resumed]) {
-      reveal(g, a, 0);
-      g.tap(free(a), 0);
-      reveal(g, b, 0);
-      g.tap(free(b), 0);
+      if (!reveal(g, a, 0)) g.tap(free(a), 0);
+      if (!reveal(g, b, 0)) g.tap(free(b), 0);
     }
   }
   assert.deepEqual(fingerprint(resumed), fingerprint(live));

@@ -6,6 +6,13 @@ commit and build time of the running bundle.
 
 ## 2026-09-02
 
+- Face-down tiles now play like the reference game. A face-down tile whose
+  match is already in the holder goes straight there on one tap, turning over
+  in flight — so remembering a peeked face pays off in one tap instead of
+  two. A peek no longer changes what other taps do: tapping another tile
+  parks it (or clears it against the holder) as usual, and the peek simply
+  flips back. Undo leaves a peek showing. The short-lived "match against the
+  peek on the board" rule from #124 is gone (#165).
 - Bamboo 6 and Bamboo 9 no longer look alike. Both used to show three tall
   green-red-green columns, and you had to count canes to tell two rows from
   three. Canes are now shorter, with a clear gap between rows, and the red
