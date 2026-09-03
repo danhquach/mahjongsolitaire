@@ -16,6 +16,13 @@ export {
   isDateKey,
 } from './daily.js';
 export {
+  CHALLENGE_KINDS,
+  CHALLENGE_SUITS,
+  DAILY_CHALLENGE_COUNT,
+  dailyChallenges,
+} from './challenges.js';
+export type { ChallengeKind, ChallengeSuit, DailyChallenge } from './challenges.js';
+export {
   WEEK_MS,
   isWeekKey,
   msUntilWeekReset,
