@@ -2083,6 +2083,96 @@ for (const vp of VIEWPORTS) {
     );
   }
 
+  // Issue #175: face-down tiles start at level 5. The ratio itself is core's
+  // (core/test/ladder.test.ts pins the whole ladder); what only the real app
+  // can show is the wiring — that the deal reads the ladder level it is
+  // actually on. It used to read the band alone, which made the entire easy
+  // band face-up. Boot-level, so viewport-independent: runs once.
+  //
+  // Its own context per level: this file's shared init script pins the ladder
+  // to level 47 on every navigation, so a reload here would undo the level
+  // being probed.
+  if (vp === VIEWPORTS[0]) {
+    const before = failures;
+    const faceDownAt = async (level) => {
+      const fresh = await browser.newContext({
+        viewport: { width: vp.width, height: vp.height },
+        deviceScaleFactor: vp.dpr,
+        hasTouch: true,
+      });
+      await fresh.addInitScript((lvl) => {
+        localStorage.setItem('mahjong.progress.v1', JSON.stringify({ level: lvl }));
+        localStorage.setItem('mahjong.profile.v1', JSON.stringify({ choice: 'guest' }));
+        localStorage.setItem('mahjong.settings.v1', JSON.stringify({ showTutorial: false }));
+      }, level);
+      const p2 = await fresh.newPage();
+      p2.on('pageerror', (e) => {
+        console.error(`  page error: ${e.message}`);
+        failures++;
+      });
+      await p2.goto(url);
+      await p2.waitForFunction(() => window.__slice !== undefined && !window.__slice.dealing);
+      const count = () =>
+        p2.evaluate(() => {
+          const { game } = window.__slice;
+          const tiles = game.board.allTiles();
+          return {
+            level: window.__slice.ladderLevel,
+            tiles: tiles.length,
+            faceDown: tiles.filter((t) => game.isFaceHidden(t.id)).length,
+          };
+        });
+      const seen = await count();
+      // ...and again through a force-quit. The resume path is the one that
+      // passes the ratio to reopen(), where a teaching level's 0 must not be
+      // read as "no ratio supplied" and fall back to the deal's own
+      // difficulty-derived set. Park one tile first: with no save there is
+      // nothing to reopen and the reload would just deal afresh.
+      await p2.evaluate(() => {
+        const { game } = window.__slice;
+        const id = game.board.freeTileIds().find((t) => !game.isFaceHidden(t));
+        document.querySelector(`#a11y-layer [data-tile-id="${id}"]`).click();
+      });
+      await p2.waitForFunction(() => window.__slice.savedState() !== null);
+      await p2.reload();
+      await p2.waitForFunction(() => window.__slice !== undefined && !window.__slice.dealing);
+      const resumed = await count();
+      await fresh.close();
+      return { ...seen, resumedFaceDown: resumed.faceDown };
+    };
+    const teaching = await faceDownAt(4);
+    check(
+      teaching.level === 4 && teaching.faceDown === 0,
+      'level 4 is a teaching level: nothing face-down',
+      teaching,
+    );
+    check(
+      teaching.resumedFaceDown === 0,
+      'and it resumes face-up after a force-quit, not at the deal default',
+      teaching,
+    );
+    const first = await faceDownAt(5);
+    check(
+      first.level === 5 && first.faceDown === 5,
+      'level 5 deals face-down tiles — the peek mechanic is introduced there',
+      first,
+    );
+    check(
+      first.resumedFaceDown === 5,
+      'and a resume re-derives the same 5, never a reveal-all',
+      first,
+    );
+    // The decade spike keeps the 8% it had before the ramp (PM, 2026-09-03):
+    // a milestone never conceals less than the base levels around it.
+    const spike = await faceDownAt(10);
+    check(
+      spike.faceDown === 11 && spike.faceDown > first.faceDown,
+      'level 10 stays the milestone step up, not a dip',
+      { spike, first },
+    );
+    console.log(`${failures === before ? 'ok' : 'FAIL'} — face-down tiles start at level 5 (issue #175)`);
+  }
+
   // Issue #118: Send feedback — disabled until both fields are filled, the
   // failure state (mocked 503) keeps the typed text and offers a mailto
   // fallback whose href carries the subject, and the success state (mocked

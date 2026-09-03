@@ -19,6 +19,9 @@ export type { GeneratedLevel } from './generator.js';
 export {
   bandForLevel,
   concealBucketForBand,
+  concealRatioForLevel,
+  EASY_CONCEAL_RATIO,
+  FIRST_CONCEALED_LEVEL,
   LADDER_LENGTH,
   LADDER_POOLS,
   LADDER_WINDOWS,

@@ -21,6 +21,7 @@
 // Full holder-aware calibration (decisions 0008/0009) and concealment
 // re-balance (decision 0010) are deferred; see issue #18.
 
+import { CONCEAL_RATIO } from './conceal.js';
 import type { DifficultyBucket } from './difficulty.js';
 
 export const LADDER_LENGTH = 150;
@@ -85,9 +86,48 @@ export function bandForLevel(level: number): LadderPosition {
 /**
  * The concealment band a ladder level plays at (decision 0011): easy 0%,
  * medium and medium-plus 8%, hard spikes 15%. Expert never ships in v1.
+ *
+ * Still the whole story for the Daily, which has a fixed band and no level
+ * number; the ladder now goes through `concealRatioForLevel` instead.
  */
 export function concealBucketForBand(band: LadderBand): DifficultyBucket {
   return band === 'medium-plus' ? 'medium' : band;
+}
+
+/**
+ * Face-down tiles inside the easy band (issue #175). Concealment used to
+ * follow the band alone, so the easy band concealed nothing and the first
+ * face-down tile a player ever met was on level 10 — nine levels before the
+ * peek mechanic was introduced. Levels 1–4 stay the teaching levels; from 5
+ * on, every level deals some tiles face-down, ramping once inside the band.
+ */
+export const EASY_CONCEAL_RATIO = {
+  /** Levels 1–4: fully face-up while the game is still being taught. */
+  teaching: 0,
+  /** Levels 5–9: the introduction, 5 tiles of a 144-tile deal. */
+  lower: 0.04,
+  /** Levels 11–19: 8 tiles of a 144-tile deal. */
+  upper: 0.06,
+} as const;
+
+/** First level that deals any tile face-down. */
+export const FIRST_CONCEALED_LEVEL = 5;
+
+/**
+ * The fraction of a deal dealt face-down at ladder `level`.
+ *
+ * Only the easy band's *base* levels ramp. Every other level keeps its band's
+ * bucket ratio, so the decade spikes are untouched: `bandForLevel` already
+ * reports level 10 and level 20 as medium, and they keep concealing at 8% —
+ * a step above the base levels on either side, the way every other spike sits
+ * above its decade (PM, 2026-09-03). That is why this reads `band`, not
+ * `level <= 20`.
+ */
+export function concealRatioForLevel(level: number): number {
+  const { band } = bandForLevel(level);
+  if (band !== 'easy') return CONCEAL_RATIO[concealBucketForBand(band)];
+  if (level < FIRST_CONCEALED_LEVEL) return EASY_CONCEAL_RATIO.teaching;
+  return level <= 9 ? EASY_CONCEAL_RATIO.lower : EASY_CONCEAL_RATIO.upper;
 }
 
 export interface LadderEntry {

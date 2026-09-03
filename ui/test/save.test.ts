@@ -11,7 +11,13 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { HOLDER_SLOTS, concealedTileIds, generateValidatedLevel, parseLayout } from '@mahjongsolitaire/core';
+import {
+  CONCEAL_RATIO,
+  HOLDER_SLOTS,
+  concealedTileIds,
+  generateValidatedLevel,
+  parseLayout,
+} from '@mahjongsolitaire/core';
 import type { Layout, TileId } from '@mahjongsolitaire/core';
 import { Game } from '../src/game.js';
 import { SAVE_STORAGE_KEY, SAVE_VERSION, SaveStore, captureSave, parseSave, reopen } from '../src/save.js';
@@ -185,11 +191,11 @@ test('a resumed game keeps playing identically to one that never quit', () => {
   assert.deepEqual(fingerprint(resumed), fingerprint(live));
 });
 
-test('reopen with a conceal bucket re-derives that band’s concealment (issue #79)', () => {
+test('reopen with a conceal ratio re-derives that level’s concealment (issues #79, #175)', () => {
   const level = generateValidatedLevel(TURTLE, SAMPLE_SEED);
-  const live = new Game(level, undefined, concealedTileIds(level, 'medium'));
+  const live = new Game(level, undefined, concealedTileIds(level, CONCEAL_RATIO.medium));
   const save = captureSave(live, { shuffles: 0, hints: 0, undos: 0, elapsedMs: 0, daily: null });
-  const resumed = reopen(TURTLE, save, 'medium');
+  const resumed = reopen(TURTLE, save, CONCEAL_RATIO.medium);
   assert.notEqual(resumed, null);
   const hidden = (g: Game) =>
     g.board
@@ -198,9 +204,25 @@ test('reopen with a conceal bucket re-derives that band’s concealment (issue #
       .map((t) => t.id);
   assert.deepEqual(hidden(resumed!), hidden(live));
   assert.ok(hidden(live).length > 0, 'the medium band conceals at least one tile');
-  // Without the bucket the default (difficulty-derived) set applies, as before.
+  // Without a ratio the default (difficulty-derived) set applies, as before.
   const plain = reopen(TURTLE, save);
   assert.notEqual(plain, null);
+});
+
+test('a ratio of 0 conceals nothing — it is not read as “no ratio given”', () => {
+  // Levels 1-4 pass 0 (issue #175). A truthiness check here would silently
+  // fall back to the deal's difficulty-derived set and deal face-down tiles on
+  // the teaching levels.
+  const level = generateValidatedLevel(TURTLE, SAMPLE_SEED);
+  const live = new Game(level, undefined, concealedTileIds(level, CONCEAL_RATIO.medium));
+  const save = captureSave(live, { shuffles: 0, hints: 0, undos: 0, elapsedMs: 0, daily: null });
+  const teaching = reopen(TURTLE, save, 0);
+  assert.notEqual(teaching, null);
+  assert.equal(
+    teaching!.board.allTiles().filter((t) => teaching!.isFaceHidden(t.id)).length,
+    0,
+    'a teaching level must resume fully face-up',
+  );
 });
 
 test('resume restores a mid-pair holder, and the undo stack behind it', () => {

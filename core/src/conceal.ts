@@ -22,6 +22,11 @@ import { hashString, mulberry32 } from './rng.js';
  * Fraction of the deal dealt face-down, per difficulty bucket (ticket answer
  * 4: none on easy, growing from the next band up). Provisional like the
  * difficulty weights themselves — Phase 3 ladder calibration (#18) re-balances.
+ *
+ * This is the *bucket* table, and it is no longer the only source of a ratio:
+ * the ladder's easy band ramps by level number instead (issue #175, see
+ * `concealRatioForLevel`), which is why the functions below take a ratio
+ * rather than looking one up from a bucket themselves.
  */
 export const CONCEAL_RATIO: Record<DifficultyBucket, number> = {
   easy: 0,
@@ -34,19 +39,28 @@ export const CONCEAL_RATIO: Record<DifficultyBucket, number> = {
  *  guard against a board becoming a memory-test slog. */
 export const CONCEAL_CAP = 24;
 
-/** Tiles dealt face-down for a deal of `tileCount` tiles in `bucket`. */
-export function concealedCount(tileCount: number, bucket: DifficultyBucket): number {
-  return Math.min(CONCEAL_CAP, Math.floor(tileCount * CONCEAL_RATIO[bucket]));
+/**
+ * Tiles dealt face-down for a deal of `tileCount` tiles at `ratio`.
+ *
+ * Floored at zero. A bucket was a closed set of four non-negative values; a
+ * ratio is any number, and a negative one used to sail through the `count ===
+ * 0` guard and the pick loop and land in `ids.slice(0, -6)` — which counts
+ * from the *end*, concealing nearly the whole board. No caller computes a
+ * ratio today, but the failure is silent and in the worst direction, so it is
+ * clamped here rather than trusted at each call site.
+ */
+export function concealedCount(tileCount: number, ratio: number): number {
+  return Math.min(CONCEAL_CAP, Math.max(0, Math.floor(tileCount * ratio)));
 }
 
 /**
  * The ids dealt face-down, ascending. Deterministic per (layoutId, seed,
- * bucket); any tile is eligible — a concealed pair stays matchable because
+ * ratio); any tile is eligible — a concealed pair stays matchable because
  * selection pins a reveal (decision 0010), so the generator needs no
  * partner-must-be-face-up constraint.
  */
-export function concealedTileIds(level: GeneratedLevel, bucket: DifficultyBucket): TileId[] {
-  const count = concealedCount(level.tiles.length, bucket);
+export function concealedTileIds(level: GeneratedLevel, ratio: number): TileId[] {
+  const count = concealedCount(level.tiles.length, ratio);
   if (count === 0) return [];
   // '#conceal' forks the stream: same (layoutId, seed) as the generator, but
   // never the generator's own sequence.

@@ -3,44 +3,58 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CONCEAL_CAP, concealedCount, concealedTileIds } from '../src/conceal.js';
+import { CONCEAL_CAP, CONCEAL_RATIO, concealedCount, concealedTileIds } from '../src/conceal.js';
 import type { DifficultyBucket } from '../src/difficulty.js';
 import { generateLevel } from '../src/generator.js';
 import { SEED_LAYOUTS } from '../src/layouts.js';
 
 const BUCKETS: DifficultyBucket[] = ['easy', 'medium', 'hard', 'expert'];
 
+// concealedCount/concealedTileIds take a ratio since issue #175 (the ladder's
+// easy band ramps by level, not by bucket); the bucket table is still what
+// the Daily and the deal-derived default look through.
+const R = (b: DifficultyBucket): number => CONCEAL_RATIO[b];
+
 test('easy deals no face-down tiles at all', () => {
-  assert.equal(concealedCount(144, 'easy'), 0);
+  assert.equal(concealedCount(144, R('easy')), 0);
   const level = generateLevel(SEED_LAYOUTS[0]!, 7);
-  assert.deepEqual(concealedTileIds(level, 'easy'), []);
+  assert.deepEqual(concealedTileIds(level, R('easy')), []);
 });
 
 test('counts grow with the bucket and are capped', () => {
-  const counts = BUCKETS.map((b) => concealedCount(144, b));
+  const counts = BUCKETS.map((b) => concealedCount(144, R(b)));
   for (let i = 1; i < counts.length; i++) {
     assert.ok(counts[i]! >= counts[i - 1]!, `bucket ${BUCKETS[i]} not below ${BUCKETS[i - 1]}`);
   }
   assert.ok(counts[1]! > 0, 'medium must conceal something on a 144-tile deal');
   // A deal big enough to blow past the cap is still capped.
-  assert.equal(concealedCount(100000, 'expert'), CONCEAL_CAP);
+  assert.equal(concealedCount(100000, R('expert')), CONCEAL_CAP);
   for (const b of BUCKETS) {
-    assert.ok(concealedCount(144, b) <= CONCEAL_CAP);
+    assert.ok(concealedCount(144, R(b)) <= CONCEAL_CAP);
   }
 });
 
-test('pick is deterministic per (layoutId, seed, bucket)', () => {
+test('a ratio below zero conceals nothing, not almost everything', () => {
+  // The bucket API could not express this; a ratio can. A negative count used
+  // to skip the zero guard and the pick loop and reach ids.slice(0, -n), which
+  // counts from the end — near-total concealment, silently.
+  assert.equal(concealedCount(144, -0.04), 0);
+  const level = generateLevel(SEED_LAYOUTS[0]!, 7);
+  assert.deepEqual(concealedTileIds(level, -0.04), []);
+});
+
+test('pick is deterministic per (layoutId, seed, ratio)', () => {
   const level = generateLevel(SEED_LAYOUTS[0]!, 42);
   const again = generateLevel(SEED_LAYOUTS[0]!, 42);
-  assert.deepEqual(concealedTileIds(level, 'expert'), concealedTileIds(again, 'expert'));
+  assert.deepEqual(concealedTileIds(level, R('expert')), concealedTileIds(again, R('expert')));
 });
 
 test('picked ids are unique, ascending, and belong to the deal', () => {
   for (const layout of SEED_LAYOUTS) {
     for (const seed of [1, 99, 424242]) {
       const level = generateLevel(layout, seed);
-      const ids = concealedTileIds(level, 'expert');
-      assert.equal(ids.length, concealedCount(level.tiles.length, 'expert'));
+      const ids = concealedTileIds(level, R('expert'));
+      assert.equal(ids.length, concealedCount(level.tiles.length, R('expert')));
       assert.equal(new Set(ids).size, ids.length, 'duplicate id in pick');
       const known = new Set(level.tiles.map((t) => t.id));
       for (const id of ids) assert.ok(known.has(id), `unknown id ${id}`);
@@ -51,7 +65,7 @@ test('picked ids are unique, ascending, and belong to the deal', () => {
 
 test('different seeds pick different sets', () => {
   const layout = SEED_LAYOUTS[0]!;
-  const a = concealedTileIds(generateLevel(layout, 1), 'expert');
-  const b = concealedTileIds(generateLevel(layout, 2), 'expert');
+  const a = concealedTileIds(generateLevel(layout, 1), R('expert'));
+  const b = concealedTileIds(generateLevel(layout, 2), R('expert'));
   assert.notDeepEqual(a, b);
 });

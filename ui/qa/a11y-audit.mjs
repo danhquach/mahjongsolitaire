@@ -311,7 +311,10 @@ for (const vp of VIEWPORTS) {
     );
     check(
       controls.map((c) => c.name).join('|') ===
-        'Profile|Daily Challenge|New game|Restart|Leaderboard|Hint|Undo|Shuffle|Settings',
+        // Leaderboard sits last among the board actions, beside Settings, since
+        // issue #153 moved it out of the header into the bottom bar; the
+        // expectation here still read the old header order.
+        'Profile|Daily Challenge|New game|Restart|Hint|Undo|Shuffle|Leaderboard|Settings',
       'board screen exposes the complete slice action set',
       controls,
     );

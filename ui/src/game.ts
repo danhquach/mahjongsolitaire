@@ -73,6 +73,7 @@ import {
   Board,
   MoveStack,
   ScoreKeeper,
+  CONCEAL_RATIO,
   assessDifficulty,
   concealedTileIds,
   findHint,
@@ -247,7 +248,9 @@ export class Game {
     this.scores = new ScoreKeeper();
     this.stack = new MoveStack(this.board, this.scores);
     if (resume) this.stack.restoreState(resume.stack);
-    this.concealed = new Set(concealed ?? concealedTileIds(level, assessDifficulty(level).bucket));
+    this.concealed = new Set(
+      concealed ?? concealedTileIds(level, CONCEAL_RATIO[assessDifficulty(level).bucket]),
+    );
   }
 
   /** Everything about this game the deal does not imply (issue #14). */
