@@ -1,6 +1,10 @@
 # 0022 — The Daily board first, and scores are bounded rather than verified
 
-**Date:** 2026-09-02 · **Status:** accepted · **Ticket:** issue #70
+**Date:** 2026-09-02 · **Status:** superseded in part · **Ticket:** issue #70
+**Superseded by:** [0027](0027-one-weekly-score.md) — the Daily board chosen
+here is replaced by one weekly board ranking the ladder (issue #176). This
+record's central position, that scores are **bounded rather than verified**,
+stands unchanged and is why every run still stores its move history.
 
 ## Context
 

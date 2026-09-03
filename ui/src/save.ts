@@ -88,8 +88,15 @@ import type { KeyValueStorage } from './storage.js';
  *  Issue #119 removed the star rating that `hints`/`undos` fed. The fields
  *  stay in the save format rather than forcing another version bump for a
  *  migration — main.ts just stops computing anything meaningful for them
- *  (always writes 0), and this parser stays as tolerant of them as before. */
-export const SAVE_VERSION = 6;
+ *  (always writes 0), and this parser stays as tolerant of them as before.
+ *
+ *  v7 (issue #176): every pair is now scored at the level's band multiplier.
+ *  A v6 snapshot holds a score accumulated at the old flat rate, so resuming
+ *  one would keep those points and then pay a different rate for every match
+ *  after the reload — one deal scored two ways, with the seam invisible. The
+ *  version bump is the same clean break as every one before it: the in-flight
+ *  deal restarts, and level progress (stored separately) keeps. */
+export const SAVE_VERSION = 7;
 /** The slot key is deliberately *not* versioned with the record: the `version`
  *  field inside is what decides whether a record can be trusted, and renaming
  *  the key would only orphan the old bytes instead of overwriting them. */
@@ -365,6 +372,7 @@ export function reopen(
   layout: Layout,
   save: SaveState,
   concealRatio?: number,
+  scoreMultiplier = 1,
 ): Game | null {
   if (layout.id !== save.layoutId) return null;
   try {
@@ -379,7 +387,7 @@ export function reopen(
     // and must conceal nothing rather than fall back to the deal's default.
     const concealed =
       concealRatio === undefined ? undefined : concealedTileIds(level, concealRatio);
-    return new Game(level, save.snapshot, concealed);
+    return new Game(level, save.snapshot, concealed, scoreMultiplier);
   } catch {
     return null;
   }

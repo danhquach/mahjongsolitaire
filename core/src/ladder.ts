@@ -22,6 +22,7 @@
 // re-balance (decision 0010) are deferred; see issue #18.
 
 import { CONCEAL_RATIO } from './conceal.js';
+import { FLAWLESS_RUN_POINTS } from './scoring.js';
 import type { DifficultyBucket } from './difficulty.js';
 
 export const LADDER_LENGTH = 150;
@@ -93,6 +94,36 @@ export function bandForLevel(level: number): LadderPosition {
 export function concealBucketForBand(band: LadderBand): DifficultyBucket {
   return band === 'medium-plus' ? 'medium' : band;
 }
+
+/**
+ * How much a level's band multiplies every pair's score (issue #176).
+ *
+ * The weekly leaderboard ranks by score earned, and the profile shows that
+ * same number, so a flat score would make grinding the easiest level the best
+ * way to climb. Scaling by band means a harder level is worth more per match
+ * and level 1 is the *worst* board to farm — the ordering does the work, so no
+ * once-per-week or first-clear-only rule is needed (PM, 2026-09-03).
+ *
+ * Keyed on the band rather than the level number so a decade spike is paid at
+ * the band it actually plays at: `bandForLevel` reports level 10 as medium and
+ * level 30 as hard, and each is worth its spike.
+ */
+export const BAND_SCORE_MULTIPLIER: Record<LadderBand, number> = {
+  easy: 1,
+  medium: 1.5,
+  'medium-plus': 2,
+  hard: 2.5,
+};
+
+/** The score multiplier a ladder level plays at. */
+export function scoreMultiplierForLevel(level: number): number {
+  return BAND_SCORE_MULTIPLIER[bandForLevel(level).band];
+}
+
+/** The most any single run can pay: a flawless 144-tile board on the highest
+ *  multiplier the ladder can deal. The leaderboard bounds each submitted score
+ *  by this — never the standing it accumulates into (issue #176). */
+export const MAX_RUN_SCORE = FLAWLESS_RUN_POINTS * Math.max(...Object.values(BAND_SCORE_MULTIPLIER));
 
 /**
  * Face-down tiles inside the easy band (issue #175). Concealment used to

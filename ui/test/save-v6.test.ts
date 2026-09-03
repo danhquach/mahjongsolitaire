@@ -1,7 +1,15 @@
-// Save format v6 (issue #19): the assist counts (hints/undos, unused since
-// the star rating they fed was removed by issue #119) and the Daily
-// Challenge date ride with the deal, are validated like every other field,
-// and a v5 record reads as absent.
+// The save format's v6 fields (issue #19): the assist counts (hints/undos,
+// unused since the star rating they fed was removed by issue #119) and the
+// Daily Challenge date ride with the deal, and are validated like every other
+// field.
+//
+// The version itself is v7 since issue #176. The record's *shape* did not
+// change — these fields are all still here — but every pair is now scored at
+// the level's band multiplier, so a v6 snapshot holds a score accumulated at
+// the old flat rate. Resuming one would keep those points and then pay a
+// different rate for every match after the reload: one deal scored two ways,
+// with the seam invisible. So an older record reads as absent, the same clean
+// break every previous bump made.
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -38,7 +46,7 @@ test('v6 carries hints, undos and the daily date, and round-trips them', () => {
     elapsedMs: 4000,
     daily: KEY,
   });
-  assert.equal(SAVE_VERSION, 6);
+  assert.equal(SAVE_VERSION, 7);
   assert.equal(save.hints, 2);
   assert.equal(save.undos, 3);
   assert.equal(save.daily, KEY);
@@ -81,13 +89,16 @@ test('bad assist counts or a bad date reject the record', () => {
   }
 });
 
-test('a v5 record reads as absent — the in-flight deal restarts, progress keeps', () => {
-  const v5 = JSON.parse(
+test('an older record reads as absent — the in-flight deal restarts, progress keeps', () => {
+  const current = JSON.parse(
     JSON.stringify(captureSave(dailyGame(), { shuffles: 0, hints: 0, undos: 0, elapsedMs: 0, daily: null })),
   ) as Record<string, unknown>;
-  v5['version'] = 5;
+  const v5: Record<string, unknown> = { ...current, version: 5 };
   delete v5['hints'];
   delete v5['undos'];
   delete v5['daily'];
   assert.equal(parseSave(v5), null);
+  // v6 too (issue #176): its shape is fine, but its score was accumulated at
+  // the old flat rate, so it must not be resumed at the new one.
+  assert.equal(parseSave({ ...current, version: 6 }), null);
 });

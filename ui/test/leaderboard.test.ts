@@ -1,4 +1,4 @@
-// Daily Challenge leaderboard, device side (issue #70).
+// The weekly leaderboard, device side (issues #70, #176).
 //
 // Two things are worth pinning here. One: the opt-in is a real consent, so it
 // has to default to off and stay off when the stored record is anything other
@@ -13,14 +13,15 @@ import {
   LEADERBOARD_STORAGE_KEY,
   boardRows,
   compactHistory,
-  fetchDailyBoard,
-  formatBoardTime,
+  fetchWeeklyBoard,
+  formatResetCountdown,
   readOptIn,
-  submitDailyScore,
+  speakResetCountdown,
+  submitRunScore,
   withdrawFromBoard,
   writeOptIn,
 } from '../src/leaderboard.js';
-import type { BoardEntry, DailyBoard } from '../src/leaderboard.js';
+import type { BoardEntry, WeeklyBoard } from '../src/leaderboard.js';
 import type { KeyValueStorage } from '../src/storage.js';
 
 function fakeStorage(seed: Record<string, string> = {}): KeyValueStorage & {
@@ -71,12 +72,15 @@ const entry = (rank: number, over: Partial<BoardEntry> = {}): BoardEntry => ({
   name: `Player ${rank}`,
   avatar: 'lantern',
   score: 2000 - rank * 100,
-  elapsedMs: 90_000,
+  runs: 3,
   ...over,
 });
 
+const RESETS_AT = Date.parse('2026-09-06T00:00:00Z');
+
 const BOARD = {
-  date: '2026-09-02',
+  weekStart: '2026-08-30',
+  resetsAt: RESETS_AT,
   top: [entry(1), entry(2)],
   you: entry(2),
   around: [],
@@ -103,31 +107,34 @@ test('the choice persists both ways', () => {
 
 // --- the endpoint ----------------------------------------------------------------
 
-test('a finished Daily posts its date, score and time under the player code', async () => {
+test('a finished level posts its score and time under the player code', async () => {
   const { fetchImpl, calls } = stubFetch({ status: 200, body: BOARD });
-  const result = await submitDailyScore(
+  const result = await submitRunScore(
     CREDENTIALS,
-    { date: '2026-09-02', score: 4200, elapsedMs: 90_000 },
+    { score: 4200, elapsedMs: 90_000 },
     { fetchImpl },
   );
   assert.ok(result.ok);
   assert.equal(result.value.you?.rank, 2);
-  assert.equal(calls[0]!.url, '/api/leaderboard/daily');
+  assert.equal(calls[0]!.url, '/api/leaderboard/weekly');
   assert.equal(calls[0]!.method, 'POST');
   assert.equal(calls[0]!.headers['Authorization'], `Bearer ${CREDENTIALS.code}`);
-  assert.deepEqual(calls[0]!.body, { date: '2026-09-02', score: 4200, elapsedMs: 90_000 });
+  // No week and no date: the server decides which week the run lands in, so
+  // the client never gets to claim one.
+  assert.deepEqual(calls[0]!.body, { score: 4200, elapsedMs: 90_000 });
 });
 
-test('reading a board carries a code only when there is one', async () => {
+test('reading a board carries a code only when there is one, and names no week', async () => {
   const signed = stubFetch({ status: 200, body: BOARD });
-  await fetchDailyBoard('2026-09-02', CREDENTIALS, { fetchImpl: signed.fetchImpl });
-  assert.equal(signed.calls[0]!.url, '/api/leaderboard/daily?date=2026-09-02');
+  await fetchWeeklyBoard(CREDENTIALS, { fetchImpl: signed.fetchImpl });
+  assert.equal(signed.calls[0]!.url, '/api/leaderboard/weekly');
   assert.equal(signed.calls[0]!.headers['Authorization'], `Bearer ${CREDENTIALS.code}`);
 
   const anonymous = stubFetch({ status: 200, body: { ...BOARD, you: null } });
-  const result = await fetchDailyBoard('2026-09-02', null, { fetchImpl: anonymous.fetchImpl });
+  const result = await fetchWeeklyBoard(null, { fetchImpl: anonymous.fetchImpl });
   assert.ok(result.ok);
   assert.equal(result.value.you, null);
+  assert.equal(result.value.resetsAt, RESETS_AT);
   assert.equal(anonymous.calls[0]!.headers['Authorization'], undefined);
 });
 
@@ -144,15 +151,23 @@ test('withdrawing deletes, and reports the same failures everything else does', 
 });
 
 test('a board the server answers malformed never reaches the renderer', async () => {
+  const ok = { weekStart: '2026-08-30', resetsAt: RESETS_AT, top: [], around: [] };
   for (const body of [
     {},
-    { date: 5, top: [], around: [] },
-    { date: '2026-09-02', top: 'nope', around: [] },
-    { date: '2026-09-02', top: [{ rank: 1 }], around: [] },
-    { date: '2026-09-02', top: [], around: [], you: { rank: 'first' } },
+    { ...ok, weekStart: 5 },
+    { ...ok, top: 'nope' },
+    { ...ok, top: [{ rank: 1 }] },
+    { ...ok, you: { rank: 'first' } },
+    // A countdown is the one thing on this panel that keeps moving, so a
+    // missing or nonsense reset instant fails the whole board rather than
+    // rendering as NaN or as a week that has already ended.
+    { weekStart: '2026-08-30', top: [], around: [] },
+    { ...ok, resetsAt: 'soon' },
+    { ...ok, resetsAt: Number.NaN },
+    { ...ok, resetsAt: Number.POSITIVE_INFINITY },
   ]) {
     const { fetchImpl } = stubFetch({ status: 200, body });
-    const result = await fetchDailyBoard('2026-09-02', null, { fetchImpl });
+    const result = await fetchWeeklyBoard(null, { fetchImpl });
     assert.deepEqual(result, { ok: false, reason: 'unavailable' }, JSON.stringify(body));
   }
 });
@@ -166,10 +181,7 @@ test('an unreachable board is offline, a broken one is unavailable', async () =>
   ];
   for (const [reply, reason] of cases) {
     const { fetchImpl } = stubFetch(reply);
-    assert.deepEqual(await fetchDailyBoard('2026-09-02', null, { fetchImpl }), {
-      ok: false,
-      reason,
-    });
+    assert.deepEqual(await fetchWeeklyBoard(null, { fetchImpl }), { ok: false, reason });
   }
 });
 
@@ -195,15 +207,49 @@ test('the submitted history keeps what a replay needs and drops the rest', () =>
 
 // --- rendering -------------------------------------------------------------------
 
-test('times read like the in-game clock', () => {
-  assert.equal(formatBoardTime(0), '0:00');
-  assert.equal(formatBoardTime(9_000), '0:09');
-  assert.equal(formatBoardTime(247_000), '4:07');
-  assert.equal(formatBoardTime(-5), '0:00');
+// --- the countdown ---------------------------------------------------------
+//
+// Two units at most, and never a unit that is always zero next to a bigger
+// one: a countdown reading "2d 14h 03m 11s" invites watching the seconds tick
+// on something a week away.
+
+const s = (n: number): number => n * 1000;
+const m = (n: number): number => n * 60_000;
+const h = (n: number): number => n * 3_600_000;
+const d = (n: number): number => n * 86_400_000;
+
+test('the countdown tightens as the boundary approaches', () => {
+  assert.equal(formatResetCountdown(d(2) + h(14) + m(3) + s(11)), '2d 14h');
+  assert.equal(formatResetCountdown(d(6) + h(23)), '6d 23h');
+  // Under a day, hours and minutes; under an hour, minutes and seconds.
+  assert.equal(formatResetCountdown(h(5) + m(9) + s(30)), '5h 9m');
+  assert.equal(formatResetCountdown(m(42) + s(7)), '42m 7s');
+  assert.equal(formatResetCountdown(s(9)), '9s');
+  assert.equal(formatResetCountdown(0), '0s');
+  // A clock that jumps past the boundary reads zero, never a negative.
+  assert.equal(formatResetCountdown(-60_000), '0s');
 });
 
-const board = (over: Partial<DailyBoard>): DailyBoard => ({
-  date: '2026-09-02',
+test('a zero unit is still shown when a bigger one is not zero', () => {
+  // "1d" alone would read as a whole day left when it is a day and no hours;
+  // dropping the smaller unit only when it leads is what keeps it honest.
+  assert.equal(formatResetCountdown(d(1)), '1d 0h');
+  assert.equal(formatResetCountdown(h(1)), '1h 0m');
+  assert.equal(formatResetCountdown(m(1)), '1m 0s');
+});
+
+test('the spoken countdown says its units, and pluralizes them', () => {
+  assert.equal(speakResetCountdown(d(2) + h(14)), '2 days, 14 hours');
+  assert.equal(speakResetCountdown(d(1) + h(1)), '1 day, 1 hour');
+  assert.equal(speakResetCountdown(h(3) + m(1)), '3 hours, 1 minute');
+  assert.equal(speakResetCountdown(m(2) + s(30)), '2 minutes, 30 seconds');
+  assert.equal(speakResetCountdown(s(1)), '1 second');
+  assert.equal(speakResetCountdown(0), '0 seconds');
+});
+
+const board = (over: Partial<WeeklyBoard>): WeeklyBoard => ({
+  weekStart: '2026-08-30',
+  resetsAt: RESETS_AT,
   top: [],
   you: null,
   around: [],

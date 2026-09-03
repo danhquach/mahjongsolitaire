@@ -4,6 +4,9 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+
+/** A fixed Thursday, so a run that straddles a Sunday cannot flake. */
+const NOW = Date.parse('2026-09-03T12:00:00Z');
 import { LADDER_LENGTH } from '@mahjongsolitaire/core';
 import {
   EMPTY_RECORD,
@@ -31,22 +34,28 @@ function fakeStorage(seed: Record<string, string> = {}): KeyValueStorage & { dat
 test('recordWin marks a ladder level cleared, once', () => {
   const storage = fakeStorage();
   const record = new RecordStore(storage);
-  record.recordWin(500, { level: 3 });
+  record.recordWin(500, { level: 3 }, NOW);
   assert.deepEqual(record.value.cleared, [3]);
-  record.recordWin(500, { level: 3 }); // a replay does not duplicate the entry
+  record.recordWin(500, { level: 3 }, NOW); // a replay does not duplicate the entry
   assert.deepEqual(record.value.cleared, [3]);
-  record.recordWin(500, { level: 10 });
+  record.recordWin(500, { level: 10 }, NOW);
   assert.deepEqual(record.value.cleared, [3, 10]);
   // Persisted, and read back through the parser.
   assert.deepEqual(new RecordStore(storage).value.cleared, [3, 10]);
 });
 
-test('a Daily clear (no level) banks score and the clear but marks no level', () => {
+test('a Daily clear pays trophies and the streak and nothing else', () => {
+  // Issue #176: score belongs to the ladder and to the weekly board the ladder
+  // feeds. A Daily contributes to neither, and is not a level cleared.
   const record = new RecordStore(fakeStorage());
-  record.recordWin(700);
+  const credit = record.recordDailyWin('2026-09-03');
+  assert.equal(credit.credited, true);
+  assert.ok(credit.trophies > 0);
+  assert.equal(credit.streak, 1);
   assert.deepEqual(record.value.cleared, []);
-  assert.equal(record.value.levelsCleared, 1);
-  assert.equal(record.value.totalScore, 700);
+  assert.equal(record.value.levelsCleared, 0, 'a Daily is not a level cleared');
+  assert.equal(record.value.weekScore, 0, 'a Daily banks no score');
+  assert.equal(record.value.weekStart, null);
 });
 
 test('parsePlayerRecord keeps only well-formed cleared levels', () => {
@@ -168,7 +177,7 @@ test('a throwing storage still yields a working in-memory record', () => {
   };
   const record = new RecordStore(broken);
   assert.equal(record.recordDailyWin('2026-09-01').credited, true);
-  assert.deepEqual(record.recordWin(10, { level: 1 }).cleared, [1]);
+  assert.deepEqual(record.recordWin(10, { level: 1 }, NOW).cleared, [1]);
   assert.equal(storageKeyIsStable(), true);
 });
 

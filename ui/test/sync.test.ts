@@ -73,7 +73,7 @@ const REMOTE = {
   playerId: '7K3MQ2R9WD',
   name: 'Alex',
   avatar: 'crane',
-  record: { ...EMPTY_RECORD, bestScore: 900, cleared: [1, 2], trophies: 4 },
+  record: { ...EMPTY_RECORD, weekScore: 900, weekStart: '2026-08-30', cleared: [1, 2], trophies: 4 },
 };
 
 // --- credentials ---------------------------------------------------------------
@@ -193,7 +193,7 @@ test('a push carries the code as a bearer token and no name', async () => {
     { fetchImpl },
   );
   assert.ok(result.ok);
-  assert.equal(result.value.record.bestScore, 900);
+  assert.equal(result.value.record.weekScore, 900);
   assert.equal(calls[0]!.url, '/api/profile/sync');
   assert.equal(calls[0]!.headers['Authorization'], `Bearer ${CREDENTIALS.code}`);
   assert.deepEqual(Object.keys(calls[0]!.body as object), ['avatar', 'record']);
@@ -258,22 +258,51 @@ test('a record the server answers with junk fields is parsed, not trusted', asyn
 
 // --- merging -------------------------------------------------------------------
 
+const WEEK = '2026-08-30';
 const withRecord = (fields: Partial<PlayerRecord>): PlayerRecord => ({ ...EMPTY_RECORD, ...fields });
 
 test('merging keeps the best of both and loses nothing', () => {
   const merged = mergeRecords(
-    withRecord({ levelsCleared: 10, bestScore: 900, totalScore: 5000, cleared: [1, 2], trophies: 7 }),
-    withRecord({ levelsCleared: 3, bestScore: 1200, totalScore: 400, cleared: [2, 5], trophies: 1 }),
+    withRecord({ levelsCleared: 10, weekScore: 5000, weekStart: WEEK, cleared: [1, 2], trophies: 7 }),
+    withRecord({ levelsCleared: 3, weekScore: 400, weekStart: WEEK, cleared: [2, 5], trophies: 1 }),
   );
   assert.deepEqual(merged, {
     levelsCleared: 10,
-    bestScore: 1200,
-    totalScore: 5000,
+    weekScore: 5000,
+    weekStart: WEEK,
     cleared: [1, 2, 5],
     dailyStreak: 0,
     lastDaily: null,
     trophies: 7,
   });
+});
+
+// --- the week score is the one field that may go down -----------------------
+//
+// Every other counter here only grows, so Math.max is the whole merge rule for
+// them. A weekly score resets (issue #176): taking the larger of two weeks
+// would resurrect last week's total at the rollover and then keep winning
+// every merge after it, so the reset could never stick on any device.
+
+test('a later week beats a bigger score from an earlier one', () => {
+  const lastWeek = withRecord({ weekScore: 90000, weekStart: '2026-08-30' });
+  const thisWeek = withRecord({ weekScore: 120, weekStart: '2026-09-06' });
+  assert.equal(mergeRecords(lastWeek, thisWeek).weekScore, 120);
+  assert.equal(mergeRecords(lastWeek, thisWeek).weekStart, '2026-09-06');
+  assert.deepEqual(mergeRecords(thisWeek, lastWeek), mergeRecords(lastWeek, thisWeek));
+});
+
+test('within one week the larger score wins, as before', () => {
+  const a = withRecord({ weekScore: 400, weekStart: WEEK });
+  const b = withRecord({ weekScore: 5000, weekStart: WEEK });
+  assert.equal(mergeRecords(a, b).weekScore, 5000);
+  assert.equal(mergeRecords(a, b).weekStart, WEEK);
+});
+
+test('a side that has never scored contributes no week', () => {
+  const scored = withRecord({ weekScore: 700, weekStart: WEEK });
+  assert.deepEqual(mergeRecords(scored, EMPTY_RECORD), scored);
+  assert.deepEqual(mergeRecords(EMPTY_RECORD, scored), scored);
 });
 
 test('a reinstalled device that clears today keeps the streak it never saw', () => {
@@ -295,8 +324,8 @@ test('a streak already broken by a gap is not resurrected by a merge', () => {
 });
 
 test('merging is symmetric, and a side with no Daily history contributes none', () => {
-  const a = withRecord({ bestScore: 10, cleared: [1], dailyStreak: 4, lastDaily: '2026-09-01' });
-  const b = withRecord({ bestScore: 20, cleared: [2], dailyStreak: 1, lastDaily: '2026-09-02' });
+  const a = withRecord({ weekScore: 10, weekStart: WEEK, cleared: [1], dailyStreak: 4, lastDaily: '2026-09-01' });
+  const b = withRecord({ weekScore: 20, weekStart: WEEK, cleared: [2], dailyStreak: 1, lastDaily: '2026-09-02' });
   assert.deepEqual(mergeRecords(a, b), mergeRecords(b, a));
   const played = withRecord({ dailyStreak: 5, lastDaily: '2026-09-02' });
   assert.deepEqual(mergeRecords(played, EMPTY_RECORD), played);

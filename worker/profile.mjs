@@ -242,8 +242,8 @@ function counter(value) {
 
 export const EMPTY_RECORD = {
   levelsCleared: 0,
-  bestScore: 0,
-  totalScore: 0,
+  weekScore: 0,
+  weekStart: null,
   cleared: [],
   dailyStreak: 0,
   lastDaily: null,
@@ -266,10 +266,15 @@ export function validateRecord(raw) {
   }
   const lastDaily =
     typeof raw.lastDaily === 'string' && DATE_KEY.test(raw.lastDaily) ? raw.lastDaily : null;
+  // A week score is only meaningful next to the week it was earned in (issue
+  // #176). Without one it is not a score but a number of unknown age, which is
+  // also what keeps a pre-#176 record's lifetime total off the first board.
+  const weekStart =
+    typeof raw.weekStart === 'string' && DATE_KEY.test(raw.weekStart) ? raw.weekStart : null;
   return {
     levelsCleared: counter(raw.levelsCleared),
-    bestScore: counter(raw.bestScore),
-    totalScore: counter(raw.totalScore),
+    weekScore: weekStart === null ? 0 : counter(raw.weekScore),
+    weekStart,
     cleared: Array.from(cleared).sort((a, b) => a - b),
     dailyStreak: lastDaily === null ? 0 : counter(raw.dailyStreak),
     lastDaily,
@@ -299,10 +304,30 @@ export function mergeRecords(a, b) {
       lastDaily: later.lastDaily,
     };
   })();
+  // The week score is the one field here that can legitimately go *down*, so
+  // it is the one field "take max" would break (issue #176). Taking the larger
+  // of two weeks' scores would resurrect last week's total at the rollover and
+  // then keep winning every merge after it, so the reset could never stick.
+  // The later week wins outright; only within one shared week is the larger
+  // score the better record of what was earned.
+  const week = (() => {
+    if (a.weekStart === b.weekStart) {
+      // The larger score, not a sum: sync runs repeatedly, so summing two
+      // already-merged records would double the total every time. Without a
+      // per-run identity to deduplicate on, summing is unsafe in a way
+      // under-counting is not. `weekly_scores` is the authoritative standing
+      // and accumulates each submission independently.
+      return { weekScore: Math.max(a.weekScore, b.weekScore), weekStart: a.weekStart };
+    }
+    if (a.weekStart === null) return { weekScore: b.weekScore, weekStart: b.weekStart };
+    if (b.weekStart === null) return { weekScore: a.weekScore, weekStart: a.weekStart };
+    return a.weekStart > b.weekStart
+      ? { weekScore: a.weekScore, weekStart: a.weekStart }
+      : { weekScore: b.weekScore, weekStart: b.weekStart };
+  })();
   return {
     levelsCleared: Math.max(a.levelsCleared, b.levelsCleared),
-    bestScore: Math.max(a.bestScore, b.bestScore),
-    totalScore: Math.max(a.totalScore, b.totalScore),
+    ...week,
     cleared: Array.from(new Set([...a.cleared, ...b.cleared])).sort((x, y) => x - y),
     ...streak,
     trophies: Math.max(a.trophies, b.trophies),
@@ -328,8 +353,11 @@ function rowToProfile(row) {
     avatar: row.avatar,
     record: {
       levelsCleared: row.levels_cleared,
-      bestScore: row.best_score,
-      totalScore: row.total_score,
+      // Zeroed without a week, exactly as validateRecord and the client's
+      // parsePlayerRecord do. Nothing writes that combination today; this is
+      // the one place the invariant would otherwise not be enforced.
+      weekScore: row.week_start ? (row.week_score ?? 0) : 0,
+      weekStart: row.week_start ?? null,
       cleared: JSON.parse(row.cleared),
       dailyStreak: row.daily_streak,
       lastDaily: row.last_daily,
@@ -405,7 +433,7 @@ async function register(request, env, deps, now) {
     try {
       await env.DB.prepare(
         `INSERT INTO players
-           (id, code_hash, name, avatar, levels_cleared, best_score, total_score,
+           (id, code_hash, name, avatar, levels_cleared, week_score, week_start,
             cleared, daily_streak, last_daily, trophies, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
@@ -415,8 +443,8 @@ async function register(request, env, deps, now) {
           name,
           avatar,
           record.levelsCleared,
-          record.bestScore,
-          record.totalScore,
+          record.weekScore,
+          record.weekStart,
           JSON.stringify(record.cleared),
           record.dailyStreak,
           record.lastDaily,
@@ -462,15 +490,15 @@ async function sync(request, env, deps, now) {
   const merged = mergeRecords(rowToProfile(auth.row).record, clientRecord);
   await env.DB.prepare(
     `UPDATE players
-        SET avatar = ?, levels_cleared = ?, best_score = ?, total_score = ?,
+        SET avatar = ?, levels_cleared = ?, week_score = ?, week_start = ?,
             cleared = ?, daily_streak = ?, last_daily = ?, trophies = ?, updated_at = ?
       WHERE id = ?`,
   )
     .bind(
       avatar,
       merged.levelsCleared,
-      merged.bestScore,
-      merged.totalScore,
+      merged.weekScore,
+      merged.weekStart,
       JSON.stringify(merged.cleared),
       merged.dailyStreak,
       merged.lastDaily,

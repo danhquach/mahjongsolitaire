@@ -12,7 +12,12 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 
 /** Applied in order, exactly as they are applied to the live database. */
-const SCHEMA_FILES = ['../schema.sql', '../schema-0002-leaderboard.sql'];
+const SCHEMA_FILES = [
+  '../schema.sql',
+  '../schema-0002-leaderboard.sql',
+  '../schema-0003-weekly-leaderboard.sql',
+  '../schema-0004-drop-daily-board.sql',
+];
 
 /**
  * The slice of the D1 binding the routes use: `prepare().bind()` returning

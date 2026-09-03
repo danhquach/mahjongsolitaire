@@ -236,16 +236,22 @@ export class Game {
    * face-down; by default they are derived from the deal and its difficulty
    * bucket. Derived, not saved: a resumed game re-derives the same set, so a
    * reload is never a free reveal-all — it re-conceals, the safe direction.
+   *
+   * `scoreMultiplier` (issue #176) is the level's band multiplier, applied to
+   * every pair. Like `concealed` it is re-derived by the caller rather than
+   * stored: a resumed snapshot carries the points already awarded, so the
+   * multiplier is never applied twice to the same match.
    */
   constructor(
     readonly level: GeneratedLevel,
     resume?: GameSnapshot,
     concealed?: readonly TileId[],
+    scoreMultiplier = 1,
   ) {
     this.board = resume
       ? new Board(applySnapshot(level, resume), { holder: resume.holder })
       : new Board(level.tiles);
-    this.scores = new ScoreKeeper();
+    this.scores = new ScoreKeeper(scoreMultiplier);
     this.stack = new MoveStack(this.board, this.scores);
     if (resume) this.stack.restoreState(resume.stack);
     this.concealed = new Set(

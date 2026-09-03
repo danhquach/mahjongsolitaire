@@ -14,11 +14,22 @@ export {
   daysBetween,
   isDateKey,
 } from './daily.js';
+export {
+  WEEK_MS,
+  isWeekKey,
+  msUntilWeekReset,
+  weekResetAt,
+  weekStartKey,
+  weekStartMs,
+} from './week.js';
 export { generateLevel, generateValidatedLevel } from './generator.js';
 export type { GeneratedLevel } from './generator.js';
 export {
+  BAND_SCORE_MULTIPLIER,
+  MAX_RUN_SCORE,
   bandForLevel,
   concealBucketForBand,
+  scoreMultiplierForLevel,
   concealRatioForLevel,
   EASY_CONCEAL_RATIO,
   FIRST_CONCEALED_LEVEL,
@@ -51,6 +62,6 @@ export type {
   MoveRecord,
   MoveStackState,
 } from './moves.js';
-export { ScoreKeeper, BASE_PAIR_POINTS, COMBO_WINDOW_MS } from './scoring.js';
+export { ScoreKeeper, BASE_PAIR_POINTS, COMBO_WINDOW_MS, FLAWLESS_RUN_POINTS } from './scoring.js';
 export type { MatchScore, ScoreSnapshot } from './scoring.js';
 export { shuffleBoard } from './shuffle.js';

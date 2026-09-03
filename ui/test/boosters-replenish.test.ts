@@ -5,6 +5,9 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+
+/** A fixed instant, so a run that straddles a Sunday cannot flake. */
+const NOW = Date.parse('2026-09-03T12:00:00Z');
 import { bandForLevel, dailyDateKey } from '@mahjongsolitaire/core';
 import {
   BOOSTER_CAP,
@@ -109,7 +112,7 @@ test('the grants applied per main.ts: a plain first clear pays nothing; every th
   // random charge; a decade level pays one of each; nothing else pays.
   const winLevel = (level: number, roll: number): Record<BoosterKind, number> => {
     const firstClear = !hasCleared(record.value, level);
-    record.recordWin(100, { level });
+    record.recordWin(100, { level }, NOW);
     const got: Record<BoosterKind, number> = { hint: 0, undo: 0, shuffle: 0 };
     if (!firstClear) return got;
     const add = (part: Record<BoosterKind, number>): void => {
@@ -137,21 +140,23 @@ test('the grants applied per main.ts: a plain first clear pays nothing; every th
 test('replaying a level is never a first clear, and the milestone counter does not move', () => {
   const record = new RecordStore(fakeStorage());
   assert.equal(hasCleared(record.value, 5), false);
-  record.recordWin(100, { level: 5 });
+  record.recordWin(100, { level: 5 }, NOW);
   assert.equal(hasCleared(record.value, 5), true);
   assert.equal(clearedLevelCount(record.value), 1);
   // Three more clears of the same level: still one distinct level, no third-clear bonus.
-  for (let i = 0; i < 3; i++) record.recordWin(100, { level: 5 });
+  for (let i = 0; i < 3; i++) record.recordWin(100, { level: 5 }, NOW);
   assert.equal(clearedLevelCount(record.value), 1);
   assert.equal(thirdClearDue(clearedLevelCount(record.value)), false);
   // Two *different* levels bring the distinct count to three.
-  record.recordWin(100, { level: 6 });
-  record.recordWin(100, { level: 7 });
+  record.recordWin(100, { level: 6 }, NOW);
+  record.recordWin(100, { level: 7 }, NOW);
   assert.equal(clearedLevelCount(record.value), 3);
   assert.equal(thirdClearDue(clearedLevelCount(record.value)), true);
-  // A Daily clear (no level) is not a ladder clear.
-  record.recordWin(100);
+  // A Daily clear is not a ladder clear, and since issue #176 it does not go
+  // through recordWin at all — it pays trophies and the streak only.
+  record.recordDailyWin('2026-09-03');
   assert.equal(clearedLevelCount(record.value), 3);
+  assert.equal(record.value.levelsCleared, 6, 'a Daily is not a level cleared');
 });
 
 test('the every-third grant applied per main.ts: a replay leaves the balance alone', () => {
@@ -159,7 +164,7 @@ test('the every-third grant applied per main.ts: a replay leaves the balance alo
   const charges = new BoosterCharges();
   const winLevel = (level: number): void => {
     const firstClear = !hasCleared(record.value, level);
-    record.recordWin(100, { level });
+    record.recordWin(100, { level }, NOW);
     if (firstClear && thirdClearDue(clearedLevelCount(record.value))) charges.grantSplit(THIRD_CLEAR_GRANT, () => 0.5); // → undo
   };
   winLevel(1);
