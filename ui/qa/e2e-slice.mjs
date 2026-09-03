@@ -1629,6 +1629,9 @@ for (const vp of VIEWPORTS) {
       check(stuck.title === 'No moves left', 'deadlock raises the stuck dialog', stuck);
       check(stuck.shuffleOffered, 'stuck dialog offers Shuffle', stuck);
       check(stuck.focus === 'overlay-shuffle', 'focus lands on the way out', stuck);
+      // Issue #159: the grey-out is the resting state of a stuck board, not a
+      // fade that ends — read after the theatre drained, it is still full.
+      check(stuck.desaturation === 1, 'the board is fully grey under the stuck dialog', stuck);
       // Spec §7 48dp, measured while the stuck dialog actually shows them
       // (the a11y audit can only measure the controls a win reveals).
       const small = await page.evaluate(() =>

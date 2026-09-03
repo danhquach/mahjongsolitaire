@@ -6,6 +6,12 @@ commit and build time of the running bundle.
 
 ## 2026-09-02
 
+- A stuck board stays grey. The deadlock's grey-out used to fade in and then
+  quietly let the tiles back to full colour under the "No moves left" card
+  (and with Reduced motion on, the tiles were never grey at all). Now the
+  board holds its grey for as long as it is stuck — through a rotation, and
+  through a Shuffle that leaves it still stuck — and only comes back to
+  colour when a rescue or a new deal lifts the deadlock (#159).
 - The phone header is one row again. The New game and Restart buttons used to
   wrap under the stat chips and the two half-empty rows cost the board about
   50 px of height; now the chips and the two buttons share one row at every
