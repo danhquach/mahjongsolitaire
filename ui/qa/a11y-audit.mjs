@@ -16,6 +16,10 @@
 //   4. a pair can be matched with the keyboard alone, outcomes are announced,
 //      and focus survives the tiles being removed;
 //   5. the end-of-level dialog is modal and takes focus;
+//  5b. a cleared Daily's Leaderboard button opens the board *over* the win
+//      dialog (issue #174) — the dialog behind it goes inert, so a leaderboard
+//      painted underneath would leave nothing on screen able to respond —
+//      and Escape closes it and hands the live dialog back;
 //   6. the settings screen (issue #14, plus issue #45's Highlight free tiles
 //      and issue #44's Reduced motion) is a labelled modal, reachable in one
 //      tap, every control named and ≥ 48dp, and Escape returns focus to it.
@@ -816,6 +820,95 @@ for (const vp of VIEWPORTS) {
       back,
     );
     check(/New game dealt\./.test(back.announced), 'new deal is announced', back.announced);
+  }
+
+  // --- 5b. The Daily win's Leaderboard opens *over* the win dialog, not -----
+  //         behind it, and Escape hands the win dialog back (issue #174).
+  {
+    await page.click('#btn-daily');
+    await page.waitForFunction(() => !window.__slice.dealing);
+    await page.evaluate(() => {
+      const { game } = window.__slice;
+      const click = (id) =>
+        document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.click();
+      const act = (id) => {
+        if (game.isFaceHidden(id)) {
+          click(id);
+          if (game.board.get(id).removed) return;
+        }
+        click(id);
+      };
+      for (const [a, b] of game.level.solution) {
+        if (game.board.get(a).removed || game.board.get(b).removed) continue;
+        act(a);
+        act(b);
+      }
+    });
+    await page.waitForFunction(() => !window.__slice.animating(), { timeout: 2000 });
+    const won = await page.evaluate(() => ({
+      status: window.__slice.game.status(),
+      title: document.getElementById('overlay-title').textContent,
+      offered: !document.getElementById('overlay-leaderboard').hidden,
+    }));
+    check(
+      won.status === 'won' && /Daily Challenge complete/.test(won.title) && won.offered,
+      'a cleared Daily offers the Leaderboard on its win dialog',
+      won,
+    );
+
+    await page.click('#overlay-leaderboard');
+    // The stacking claim, taken from the real cascade rather than the source:
+    // both panels are absolute, inset:0 siblings inside #board, so the win
+    // dialog's z-index beats a leaderboard left on `auto` however late it
+    // opens — and `openLeaderboard` marks the dialog behind it inert, so a
+    // leaderboard painted underneath leaves nothing on screen able to respond
+    // at all. Not probed with elementFromPoint: that skips the inert dialog
+    // and reports the leaderboard on top either way.
+    const over = await page.evaluate(() => {
+      const z = (id) => {
+        const v = getComputedStyle(document.getElementById(id)).zIndex;
+        return v === 'auto' ? 0 : Number(v);
+      };
+      return {
+        visible: document.getElementById('leaderboard').classList.contains('visible'),
+        leaderboardZ: z('leaderboard'),
+        overlayZ: z('overlay'),
+        focus: document.activeElement?.id,
+        overlayInert: document.getElementById('overlay').hasAttribute('inert'),
+      };
+    });
+    check(over.visible, 'the Leaderboard button opens the daily board', over);
+    check(
+      over.leaderboardZ > over.overlayZ,
+      'the leaderboard is painted over the win dialog, not behind it',
+      over,
+    );
+    check(over.focus === 'leaderboard-close', 'focus moves into the leaderboard', over);
+    check(over.overlayInert, 'the win dialog behind it is inert while it is open', over);
+
+    await page.keyboard.press('Escape');
+    const closed = await page.evaluate(() => {
+      const card = document.querySelector('#overlay .card');
+      const r = card.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      return {
+        visible: document.getElementById('leaderboard').classList.contains('visible'),
+        focus: document.activeElement?.id,
+        overlayInert: document.getElementById('overlay').hasAttribute('inert'),
+        dialogOnTop: hit !== null && document.getElementById('overlay').contains(hit),
+      };
+    });
+    check(!closed.visible, 'Escape closes the leaderboard', closed);
+    check(closed.focus === 'overlay-leaderboard', 'focus returns to the Leaderboard button', closed);
+    check(
+      !closed.overlayInert && closed.dialogOnTop,
+      'the win dialog is live and on top again once the leaderboard closes',
+      closed,
+    );
+
+    // Back to the ladder, so the sections below start from a dealt board.
+    await page.click('#overlay-new');
+    await page.waitForFunction(() => !window.__slice.dealing);
   }
 
   // --- 6. Settings screen is a modal, named, 48dp, and keyboard-escapable. --
