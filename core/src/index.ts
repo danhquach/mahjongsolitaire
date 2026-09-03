@@ -6,11 +6,8 @@ export { CONCEAL_CAP, CONCEAL_RATIO, concealedCount, concealedTileIds } from './
 export { assessDifficulty, bucketDifficulty, difficultyScore, scoreDifficulty } from './difficulty.js';
 export type { DifficultyAssessment, DifficultyBucket, DifficultyMetrics } from './difficulty.js';
 export {
-  DAILY_LAYOUTS,
   STREAK_TIERS,
   dailyDateKey,
-  dailyLayoutId,
-  dailySeed,
   dailyTrophies,
   daysBetween,
   isDateKey,
