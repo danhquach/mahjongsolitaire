@@ -26,7 +26,7 @@
 // Issue #69 gives the game a player: a local profile (display name + avatar,
 // profile.ts) editable from Settings, and a profile screen showing the
 // player's own record — current level, levels cleared, best score, and the
-// streak/trophy counters that start moving when the Daily Challenge lands.
+// streak/trophy counters that move as daily challenges are completed.
 // Issue #63 makes the holder one-way and a full one final (decision 0009), so
 // the HUD gains the two things a hard-fail owes the player: a warning before
 // the fatal park (the last empty slot is marked, and — since issue #93 — every
@@ -1203,8 +1203,19 @@ async function start(): Promise<void> {
    *  focus in and back to the chip on the way out. */
   function openDailyPanel(): void {
     // The chip lives in the HUD, which goes inert behind any dialog — but the
-    // guard is cheap and does not rely on that staying true.
-    if (dailyPanelVisible || settingsVisible || overlayVisible || profileVisible) return;
+    // guard is cheap and does not rely on that staying true. Same list as
+    // openSettings, so the two read alike.
+    if (
+      dailyPanelVisible ||
+      settingsVisible ||
+      overlayVisible ||
+      changelogVisible ||
+      profileVisible ||
+      feedbackVisible ||
+      welcomeVisible ||
+      tutorialVisible
+    )
+      return;
     renderDailyPanel();
     dailyPanelVisible = true;
     dailyPanel.classList.add('visible');

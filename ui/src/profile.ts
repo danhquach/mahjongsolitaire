@@ -9,7 +9,7 @@
 //                        Challenge streak (+ the date it is anchored to),
 //                        trophies
 //
-// The Daily Challenge fields (issue #19, decision 0016) live here rather than
+// The daily-challenge fields (issue #19, decisions 0016 and 0028) live here rather than
 // on a second record; a record written before #19 parses with them empty.
 // The display name is clamped here but not screened: screening happens where
 // the name leaves the device (issue #138 — worker/profile.mjs owns the

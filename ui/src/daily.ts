@@ -14,7 +14,7 @@
 // clock-free as core is.
 
 import { DAILY_CHALLENGE_COUNT, dailyChallenges } from '@mahjongsolitaire/core';
-import type { DailyChallenge } from '@mahjongsolitaire/core';
+import type { DailyChallenge, FaceSuit } from '@mahjongsolitaire/core';
 import { readRecord, writeRecord } from './storage.js';
 import type { KeyValueStorage } from './storage.js';
 
@@ -112,8 +112,9 @@ export class DailyStore {
   }
 
   /** A pair of `suit` was matched: the pair count, the matching suit count and
-   *  the clean run all move. */
-  onMatch(today: string, suit: string): readonly number[] {
+   *  the clean run all move. `suit` is any of the six — Winds, Dragons and
+   *  Seasons simply match no challenge, since none names them. */
+  onMatch(today: string, suit: FaceSuit): readonly number[] {
     return this.advance(
       today,
       (c) => c.kind === 'pairs' || c.kind === 'clean-run' || (c.kind === 'suit' && c.suit === suit),

@@ -1340,7 +1340,7 @@ Add one short line per issue #181's rule — one line per entry, not the whole s
 
 In `ui/qa/e2e-slice.mjs` replace the Daily steps: the chip opens the panel, the panel lists three challenges, a match moves a counter. In `ui/qa/a11y-audit.mjs` add the panel to the audited dialogs.
 
-Run: `cd ui && CHROMIUM_PATH=... node qa/e2e-slice.mjs` and `node qa/a11y-audit.mjs` (the `CHROMIUM_PATH` override this machine needs is in memory).
+Run both Playwright harnesses: `cd ui && npm run build`, then `CHROMIUM_PATH=<your Playwright Chromium binary> node qa/e2e-slice.mjs` and the same for `node qa/a11y-audit.mjs`. Both serve `ui/dist-web`, so the build comes first; the scripts' own fallback path does not match every Playwright install, hence the override.
 Expected: both green.
 
 - [ ] **Step 5: Full clean-install QA**

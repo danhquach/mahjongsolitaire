@@ -1097,7 +1097,14 @@ for (const vp of VIEWPORTS) {
       ]),
     );
 
-    // One challenge one match short of done, so a single match completes it.
+    // Prime exactly one challenge one match short of done, so a single match
+    // completes exactly one. It has to be a challenge *any* match finishes:
+    // 'pairs' and 'clean-run' both count every match, 'suit' only its own, and
+    // 'boards' none. The day serves three of the four kinds, so at least one
+    // of 'pairs'/'clean-run' is always dealt — this section must not assume
+    // which, or it would fail on the ~28% of dates that omit 'pairs'.
+    const day = dailyChallenges(key);
+    const primeSlot = day.findIndex((c) => c.kind === 'pairs' || c.kind === 'clean-run');
     const short = await page.evaluate(
       ([k, counts]) => {
         localStorage.setItem(
@@ -1106,9 +1113,13 @@ for (const vp of VIEWPORTS) {
         );
         return counts;
       },
-      [key, dailyChallenges(key).map((c) => (c.kind === 'pairs' ? c.target - 1 : 0))],
+      [key, day.map((c, i) => (i === primeSlot ? c.target - 1 : 0))],
     );
-    check(short.some((n) => n > 0), 'the fixture primed a pairs challenge', { short });
+    check(
+      primeSlot !== -1 && short[primeSlot] === day[primeSlot].target - 1,
+      'the fixture primed a challenge that any single match completes',
+      { kinds: day.map((c) => c.kind), primeSlot, short },
+    );
     await page.reload();
     await page.waitForFunction(() => window.__slice !== undefined);
 
@@ -1643,19 +1654,26 @@ for (const vp of VIEWPORTS) {
         !document.getElementById('overlay').classList.contains('visible') &&
         !window.__slice.dealing,
     );
-    // Pin the balances at the starting grant first. This section is about
-    // spending — "a charge goes only when the booster did something" — and
-    // since issue #183 the play above legitimately *earns* charges by
-    // completing daily challenges, so the balance reaching here is no longer a
-    // fixed number. The starting grant itself is asserted in
-    // ui/test/boosters.test.ts, where no play can move it.
-    await page.evaluate(() => {
+    // Pin the balances at the starting grant, and take today's challenges as
+    // already finished. Everything from here down is about *spending* — "a
+    // charge goes only when the booster did something" — and since issue #183
+    // play also *earns* charges: a completed daily challenge grants one of a
+    // random kind, which would drift these balances by an amount no assertion
+    // can predict. Marking the day done closes that channel for the rest of
+    // the run; the payout itself is asserted in the daily-challenge section
+    // above, and the starting grant in ui/test/boosters.test.ts, where no play
+    // can move either.
+    await page.evaluate((today) => {
       const stored = JSON.parse(localStorage.getItem('mahjong.boosters.v1') ?? '{}');
       localStorage.setItem(
         'mahjong.boosters.v1',
         JSON.stringify({ ...stored, hint: 5, undo: 5, shuffle: 5 }),
       );
-    });
+      localStorage.setItem(
+        'mahjong.daily.v1',
+        JSON.stringify({ date: today, counts: [0, 0, 0], done: [true, true, true] }),
+      );
+    }, dailyDateKey());
     await page.reload();
     await page.waitForFunction(() => window.__slice !== undefined && !window.__slice.dealing);
     const start = await page.evaluate(() => window.__slice.boosterCharges());
@@ -2038,7 +2056,11 @@ for (const vp of VIEWPORTS) {
           'the rescue undo returned one parked tile',
           rescued,
         );
-        check(rescued.charges.undo === 4, 'the rescue undo spent one charge', rescued.charges);
+        check(
+          rescued.charges.undo === stuck.charges.undo - 1,
+          'the rescue undo spent one charge',
+          { before: stuck.charges, after: rescued.charges },
+        );
         check(
           /taken back out of the holder/.test(rescued.said),
           'the return is announced',
