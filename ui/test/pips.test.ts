@@ -149,3 +149,38 @@ test('pips never collide with each other', () => {
     }
   }
 });
+
+// --- issue #163: Bamboo-6 and Bamboo-9 were the same three columns ------------
+
+/** Smallest clear vertical gap between canes sharing a column, in board px. */
+function rowGap(face: string): number {
+  const pips = faceStyle(face).pips!;
+  const m = pipMetrics(pips);
+  let gap = Infinity;
+  for (let i = 0; i < pips.length; i++) {
+    for (let j = i + 1; j < pips.length; j++) {
+      if (Math.abs(pips[i]!.x - pips[j]!.x) * PIP_AREA.w > 0.5) continue;
+      gap = Math.min(gap, Math.abs(pips[i]!.y - pips[j]!.y) * PIP_AREA.h - m.caneH);
+    }
+  }
+  return gap;
+}
+
+test('issue #163: every stacked bamboo rank leaves a clear row gap', () => {
+  // Two canes nose to tail read as one long cane, so the gap between rows is
+  // what makes a rank countable. Floor: 10% of the tile height — ~4 CSS px on
+  // the smallest phone tile.
+  for (const rank of [2, 4, 5, 6, 7, 8, 9]) {
+    const gap = rowGap(`bamboo-${rank}`);
+    assert.ok(gap >= TILE_H * 0.1, `bamboo-${rank} row gap ${gap.toFixed(2)} board px`);
+  }
+});
+
+test('issue #163: bamboo-6 canes are markedly taller than bamboo-9 canes', () => {
+  // Same footprint, same column count: the cane length is the shape cue that
+  // tells the two ranks apart, so it has to be a difference you see, not one
+  // you measure.
+  const six = pipMetrics(faceStyle('bamboo-6').pips!).caneH;
+  const nine = pipMetrics(faceStyle('bamboo-9').pips!).caneH;
+  assert.ok(six >= 1.4 * nine, `bamboo-6 ${six.toFixed(1)} vs bamboo-9 ${nine.toFixed(1)}`);
+});

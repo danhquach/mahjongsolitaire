@@ -243,17 +243,47 @@ function bandAccents(
   });
 }
 
-test('rank 9 reproduces the traditional banding: dots by row, bamboo by column', () => {
-  // The reference case, and the reason the rule is per-axis: Dots-9 reads
-  // green / red / green down its three rows, Bamboo-9 across its three columns.
+test('rank 9 reproduces the traditional banding: dots and bamboo by row', () => {
+  // The reference case: Dots-9 reads green / red / green down its three rows,
+  // and so does Bamboo-9 (issue #163 — it used to band by column, which made it
+  // the same colour pattern as Bamboo-6).
   const dots = bandAccents(faceStyle('dots-9').pips!, 'y');
-  const bamboo = bandAccents(faceStyle('bamboo-9').pips!, 'x');
+  const bamboo = bandAccents(faceStyle('bamboo-9').pips!, 'y');
   assert.equal(dots.length, 3);
   assert.equal(bamboo.length, 3);
   assert.equal(dots[0], dots[2], 'outer rows share the green accent');
   assert.notEqual(dots[1], dots[0], 'the middle row is the red one');
-  assert.equal(bamboo[0], bamboo[2], 'outer columns share the green accent');
-  assert.notEqual(bamboo[1], bamboo[0], 'the middle column is the red one');
+  assert.equal(bamboo[0], bamboo[2], 'outer rows share the green accent');
+  assert.notEqual(bamboo[1], bamboo[0], 'the middle row is the red one');
+});
+
+test('issue #163: bamboo carries the traditional per-rank red canes', () => {
+  // The whole point of the table is that Bamboo-6 and Bamboo-9 — the two grid
+  // ranks with the same three-column footprint — no longer share a colour
+  // pattern: 6 has a red bottom row, 9 a red middle row.
+  const green = faceStyle('bamboo-1').pips![0]!.accent;
+  const red = faceStyle('bamboo-9').pips![4]!.accent;
+  assert.notEqual(red, green);
+  const reds = (rank: number): { x: number; y: number }[] =>
+    faceStyle(`bamboo-${rank}`)
+      .pips!.filter((p) => p.accent === red)
+      .map(({ x, y }) => ({ x, y }));
+
+  for (const rank of [1, 2, 4, 8]) assert.deepEqual(reds(rank), [], `bamboo-${rank} is all green`);
+  // 3 and 7: only the single top cane.
+  for (const rank of [3, 7]) {
+    const r = reds(rank);
+    assert.equal(r.length, 1, `bamboo-${rank} has one red cane`);
+    const topY = Math.min(...faceStyle(`bamboo-${rank}`).pips!.map((p) => p.y));
+    assert.equal(r[0]!.y, topY, `bamboo-${rank}: the red cane is the top one`);
+  }
+  // 5: only the centre cane.
+  assert.deepEqual(reds(5), [{ x: 0.5, y: 0.5 }]);
+  // 6: the bottom row, all three canes; 9: the middle row, all three.
+  const six = bandAccents(faceStyle('bamboo-6').pips!, 'y');
+  assert.deepEqual(six, [green, red], 'bamboo-6: green over red');
+  const nine = bandAccents(faceStyle('bamboo-9').pips!, 'y');
+  assert.deepEqual(nine, [green, red, green], 'bamboo-9: green / red / green');
 });
 
 test('every pip carries an accent, and only two accents are ever used', () => {

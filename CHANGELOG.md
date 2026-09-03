@@ -6,6 +6,11 @@ commit and build time of the running bundle.
 
 ## 2026-09-02
 
+- Bamboo 6 and Bamboo 9 no longer look alike. Both used to show three tall
+  green-red-green columns, and you had to count canes to tell two rows from
+  three. Canes are now shorter, with a clear gap between rows, and the red
+  canes follow the traditional pattern: a red bottom row on 6, a red middle
+  row on 9, a red top cane on 3 and 7, a red centre on 5 (#163).
 - A stuck board stays grey. The deadlock's grey-out used to fade in and then
   quietly let the tiles back to full colour under the "No moves left" card
   (and with Reduced motion on, the tiles were never grey at all). Now the

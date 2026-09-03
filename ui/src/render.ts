@@ -106,12 +106,11 @@ const CANE_CAP_H = 0.13;
  *  thread. The caps run wider than the bulge, which is the flare. */
 const CANE_BULGE = 0.42;
 const CANE_PINCH = 0.3;
-/** Bulges per cane — two, meeting at one waist (issue #152: the thicker cane
- *  has room for a drawn node there, and three bulges on it read as beads). */
+/** Bulges per cane — two, meeting at one waist (issue #152: three bulges on
+ *  the thicker cane read as beads). Issue #163 removed the face-coloured node
+ *  that used to sit on the waist: with the shorter canes it read as a break,
+ *  and the row gap now does the counting the node was meant to help with. */
 const CANE_BULGES = 2;
-/** The waist node: a thin band in the face colour across the waist, as a
- *  fraction of the cane's height — a joint on the cane, not a break in it. */
-const CANE_NODE_H = 0.07;
 
 /**
  * A Dots pip: a ring, split two-tone along the traditional taijitu boundary.
@@ -144,8 +143,8 @@ function drawRing(
 }
 
 /**
- * A Bamboo pip: one cane segment — a flared cap at each end, a waisted body of
- * two bulges between them, and a face-coloured node across the waist.
+ * A Bamboo pip: one cane segment — a flared cap at each end and a waisted body
+ * of two bulges between them.
  *
  * The body is a closed path whose sides are quadratic curves pinned at the
  * waist and bowed out at each bulge's midpoint. A quadratic only reaches
@@ -159,7 +158,6 @@ function drawCane(
   w: number,
   h: number,
   color: number,
-  face: number,
 ): void {
   const capH = h * CANE_CAP_H;
   const top = cy - h / 2;
@@ -185,12 +183,6 @@ function drawCane(
   const capR = capH * 0.45;
   g.roundRect(cx - w / 2, top, w, capH, capR).fill(color);
   g.roundRect(cx - w / 2, bottom - capH, w, capH, capR).fill(color);
-
-  // The node sits on the waist between the two bulges, in the face colour so
-  // it tracks the layer shade like the ring holes do.
-  const nodeH = h * CANE_NODE_H;
-  const waistY = bodyTop + step;
-  g.roundRect(cx - pinch, waistY - nodeH / 2, 2 * pinch, nodeH, nodeH / 2).fill(face);
 }
 
 /**
@@ -511,7 +503,7 @@ export class BoardRenderer {
         // keep one bright half and read as partly lit.
         const accent = pip.accent === undefined ? ink : shade.ink(pip.accent);
         if (style.pipShape === 'cane') {
-          drawCane(pipG, px, py, metrics.caneW, metrics.caneH, accent, shade.face);
+          drawCane(pipG, px, py, metrics.caneW, metrics.caneH, accent);
         } else {
           drawRing(pipG, px, py, metrics.ringR, ink, accent, shade.face);
         }
