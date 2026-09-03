@@ -256,6 +256,8 @@ async function start(): Promise<void> {
   const settingsPanel = el<HTMLDivElement>('settings');
   const settingsButton = el<HTMLButtonElement>('btn-settings');
   const changelogPanel = el<HTMLDivElement>('changelog');
+  const changelogCard = changelogPanel.querySelector<HTMLDivElement>('.card')!;
+  const changelogTitle = el<HTMLHeadingElement>('changelog-title');
   const changelogBody = el<HTMLDivElement>('changelog-body');
   const changelogClose = el<HTMLButtonElement>('changelog-close');
   const welcomePanel = el<HTMLDivElement>('welcome');
@@ -1560,7 +1562,13 @@ async function start(): Promise<void> {
     changelogVisible = true;
     changelogPanel.classList.add('visible');
     setBackgroundInert(true);
-    changelogClose.focus();
+    // Focus goes to the heading, not the Done button at the end of the card
+    // (issue #168) — landing focus there dragged the scrollable card down to
+    // it, burying the newest release. preventScroll plus an explicit
+    // scrollTop reset guarantee the top of the list is what's on screen,
+    // on every open including a reopen.
+    changelogCard.scrollTop = 0;
+    changelogTitle.focus({ preventScroll: true });
     announcer.say('What’s new.');
   }
 
@@ -2492,6 +2500,12 @@ async function start(): Promise<void> {
       if (ev.target === settingsPanel) closeSettings();
     });
     settingsButton.addEventListener('click', () => openSettings());
+    // What's new should close on a backdrop tap same as every other dialog
+    // (issue #168) — the target check keeps taps on the card itself from
+    // closing it.
+    changelogPanel.addEventListener('click', (ev) => {
+      if (ev.target === changelogPanel) closeChangelog();
+    });
     // The HUD's Daily chip (issue #136) deals today's board in one tap.
     dailyButton.addEventListener('click', () => void startDaily());
     // The Level chip opens the profile (issue #137); focus comes back to it.
