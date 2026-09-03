@@ -915,6 +915,58 @@ for (const vp of VIEWPORTS) {
     check(!closed.boardInert, 'closing settings gives the board back', closed);
   }
 
+  // --- 6b. What's new opens at the top, closes on a backdrop tap like every -
+  //         other dialog, and Escape returns focus to Settings (issue #168).
+  {
+    await page.click('#btn-settings');
+    await page.click('#btn-version');
+    const open = await page.evaluate(() => {
+      const card = document.querySelector('#changelog .card');
+      const title = document.getElementById('changelog-title');
+      const rect = title.getBoundingClientRect();
+      return {
+        visible: document.getElementById('changelog').classList.contains('visible'),
+        scrollTop: card.scrollTop,
+        focus: document.activeElement?.id,
+        headingOnScreen: rect.top >= 0 && rect.top < card.getBoundingClientRect().bottom,
+      };
+    });
+    check(open.visible, 'What’s new opens', open);
+    check(open.scrollTop === 0, 'the card is scrolled to the top on open', open);
+    check(open.focus === 'changelog-title', 'focus moves into the dialog, onto the heading', open);
+    check(open.headingOnScreen, 'the newest release heading is the first thing visible', open);
+
+    // A click on the card itself must not close it — only a backdrop click
+    // and Escape do (issue #168's other half).
+    await page.evaluate(() => document.getElementById('changelog-title').click());
+    const innerClick = await page.evaluate(() =>
+      document.getElementById('changelog').classList.contains('visible'),
+    );
+    check(innerClick, 'clicking inside the card does not close it', { visible: innerClick });
+
+    // The backdrop is the panel element itself — clicking it directly (rather
+    // than a child) is what a tap outside the card dispatches.
+    await page.evaluate(() => document.getElementById('changelog').click());
+    const backdrop = await page.evaluate(() => ({
+      visible: document.getElementById('changelog').classList.contains('visible'),
+      focus: document.activeElement?.id,
+    }));
+    check(!backdrop.visible, 'tapping the backdrop closes What’s new', backdrop);
+    check(backdrop.focus === 'btn-settings', 'focus returns to the settings button', backdrop);
+
+    // Escape closes it too, same as every other dialog. Reopen via Settings
+    // first: closing What's new left Settings closed, same as opening it did.
+    await page.click('#btn-settings');
+    await page.click('#btn-version');
+    await page.keyboard.press('Escape');
+    const escaped = await page.evaluate(() => ({
+      visible: document.getElementById('changelog').classList.contains('visible'),
+      focus: document.activeElement?.id,
+    }));
+    check(!escaped.visible, 'Escape closes What’s new', escaped);
+    check(escaped.focus === 'btn-settings', 'focus returns to the settings button after Escape', escaped);
+  }
+
   // --- 7. Feedback form is a labelled modal, its fields are named and ------
   //        48dp, Send starts disabled, and Escape returns focus (issue #118).
   {
