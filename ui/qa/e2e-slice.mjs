@@ -2409,15 +2409,26 @@ for (const vp of VIEWPORTS) {
       check(!geo.underCard, `step ${step}: no actor under the card`, geo);
       if (step === 4) check(!geo.gearInside, 'step 4: the Settings gear is outside the boosters hole', geo);
       if (step === 3) {
-        // Turn the phone: the pair moves, and the holes follow it. No wait
-        // on the spotlight itself is needed: the app re-fits the board and
-        // re-lays the holes synchronously in the same `resize` handler, so
-        // by the time this evaluate runs both are done.
-        const before = await p2.evaluate(() => window.__slice.spotlight().holes.map((h) => [h.x, h.y]));
+        // Turn the phone: the pair moves, and the holes follow it. The app
+        // re-fits the board and re-lays the holes synchronously in its
+        // `resize` handler, but the viewport change itself lands in the page
+        // asynchronously (issue #160: a read straight after setViewportSize
+        // sometimes saw the pre-turn holes). Wait for the holes to actually
+        // move before reading; a turn that never moves them times out here
+        // and fails the "moved" check below on the unchanged coordinates.
+        const holesNow = () => window.__slice.spotlight().holes.map((h) => [h.x, h.y]);
+        const before = await p2.evaluate(holesNow);
         await p2.setViewportSize({ width: vp.height, height: vp.width });
         await p2.waitForFunction(() => !window.__slice.dealing);
+        await p2
+          .waitForFunction(
+            (was) => JSON.stringify(window.__slice.spotlight().holes.map((h) => [h.x, h.y])) !== was,
+            JSON.stringify(before),
+            { timeout: 5000 },
+          )
+          .catch(() => {});
         const turned = await spotGeometry();
-        const after = await p2.evaluate(() => window.__slice.spotlight().holes.map((h) => [h.x, h.y]));
+        const after = await p2.evaluate(holesNow);
         check(turned.visible && turned.matches && !turned.underCard, 'after a viewport change the holes still sit on the pair', turned);
         check(JSON.stringify(before) !== JSON.stringify(after), 'the holes actually moved with the tiles', { before, after });
         await p2.setViewportSize({ width: vp.width, height: vp.height });
