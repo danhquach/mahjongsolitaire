@@ -728,6 +728,16 @@
         justify-content: center;
         background: rgba(0, 0, 0, 0.55);
       }
+      /* Issue #174: the leaderboard is the one panel that opens over another
+         dialog — the Daily win screen's Leaderboard button — so it has to
+         paint above #overlay (40). Every other panel is only ever opened from
+         the HUD, which the win screen covers, so they keep the default
+         stacking. Without this the leaderboard opened *behind* the win dialog
+         while `openLeaderboard` marked that dialog (and the HUD) inert:
+         nothing on screen responded, which read as a frozen game. */
+      #leaderboard {
+        z-index: 41;
+      }
       #settings.visible,
       #changelog.visible,
       #profile.visible,

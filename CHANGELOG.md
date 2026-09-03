@@ -4,6 +4,15 @@ Playtest builds deploy from `main` on every merge; entries are grouped by
 deploy day. The in-game Settings screen shows this file with the exact
 commit and build time of the running bundle.
 
+## 2026-09-03
+
+- The Leaderboard button on a cleared Daily Challenge works again. It used to
+  open the daily board *behind* the win dialog, and because opening it also
+  puts everything behind it out of reach, nothing on screen responded — the
+  game looked frozen, and pressing Escape once only closed the leaderboard you
+  could not see. The board now opens over the win dialog, and closing it hands
+  the dialog back (#174).
+
 ## 2026-09-02
 
 - Spotting a match while peeking at a face-down tile now clears it. Tapping a
