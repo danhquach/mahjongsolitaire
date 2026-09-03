@@ -1,6 +1,7 @@
 export { Board, footprintsOverlap, slotKey, HOLDER_SLOTS } from './board.js';
 export type { BoardOptions, Slot, Tile, TileId, TileInput } from './board.js';
-export { facesMatch, STANDARD_144 } from './faces.js';
+export { facesMatch, faceSuit, STANDARD_144 } from './faces.js';
+export type { FaceSuit } from './faces.js';
 export { CONCEAL_CAP, CONCEAL_RATIO, concealedCount, concealedTileIds } from './conceal.js';
 export { assessDifficulty, bucketDifficulty, difficultyScore, scoreDifficulty } from './difficulty.js';
 export type { DifficultyAssessment, DifficultyBucket, DifficultyMetrics } from './difficulty.js';
