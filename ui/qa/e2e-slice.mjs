@@ -121,6 +121,14 @@ const DEADLOCK_HUNT_DEALS = 40;
 
 const browser = await chromium.launch({ executablePath: CHROMIUM });
 let failures = 0;
+/**
+ * Viewports whose deadlock hunt (sections 5 and 6 below) found no deadlock
+ * and so asserted nothing. A skip on one viewport is the hunt's honest
+ * randomness; a skip on every viewport means the spec §4 deadlock coverage
+ * ran zero times, and that must fail the run rather than read as a pass
+ * (issue #48).
+ */
+const deadlockSkips = { shuffle: 0, undoOnly: 0 };
 
 /**
  * Deal and play naive greedy lines in the page until one deadlocks — how a real
@@ -1615,6 +1623,7 @@ for (const vp of VIEWPORTS) {
     const before = failures;
     const stuck = await page.evaluate(huntDeadlock, DEADLOCK_HUNT_DEALS);
     if (stuck === null) {
+      deadlockSkips.shuffle++;
       console.log(`  note — ${vp.name}: no deadlock in ${DEADLOCK_HUNT_DEALS} naive deals; stuck-dialog check skipped`);
     } else {
       check(stuck.title === 'No moves left', 'deadlock raises the stuck dialog', stuck);
@@ -1759,6 +1768,7 @@ for (const vp of VIEWPORTS) {
     await page.waitForFunction(() => window.__slice !== undefined);
     const stuck = await page.evaluate(huntDeadlock, DEADLOCK_HUNT_DEALS);
     if (stuck === null) {
+      deadlockSkips.undoOnly++;
       console.log(`  note — ${vp.name}: no deadlock in ${DEADLOCK_HUNT_DEALS} naive deals; Undo-only check skipped`);
     } else {
       check(!stuck.shuffleOffered, 'a spent Shuffle is not offered', stuck);
@@ -2550,6 +2560,16 @@ for (const vp of VIEWPORTS) {
     await ctx.close();
   }
   console.log(`${failures === before ? 'ok' : 'FAIL'} — one-row phone header + split bottom bar (issue #153)`);
+}
+
+// Issue #48: the deadlock sections above skip silently on a viewport that
+// never deadlocked. Coverage that ran nowhere is a failure, not a pass.
+for (const [section, skips] of Object.entries(deadlockSkips)) {
+  check(
+    skips < VIEWPORTS.length,
+    `deadlock ${section} coverage ran on at least one viewport`,
+    { skipped: skips, viewports: VIEWPORTS.length, dealsPerHunt: DEADLOCK_HUNT_DEALS },
+  );
 }
 
 await browser.close();
