@@ -46,7 +46,7 @@ function fakeStorage(seed: Record<string, string> = {}): KeyValueStorage & { dat
 }
 
 /** The whole force-quit path: capture → JSON → parse → regenerate → reopen. */
-function forceQuit(game: Game, context = { shuffles: 0, hints: 0, undos: 0, elapsedMs: 0, daily: null }): Game | null {
+function forceQuit(game: Game, context = { shuffles: 0, hints: 0, undos: 0, elapsedMs: 0 }): Game | null {
   const storage = fakeStorage();
   const store = new SaveStore(storage, SAVE_STORAGE_KEY);
   store.write(captureSave(game, context));
@@ -106,7 +106,7 @@ test('spec §11.2: save/restore at every move index of the Turtle sample level',
   const solution = level.solution;
   // Index 0 is the untouched deal; index 72 is the cleared board.
   for (let index = 0; index <= solution.length; index++) {
-    const resumed = forceQuit(game, { shuffles: 0, hints: 0, undos: 0, elapsedMs: index * 1500, daily: null });
+    const resumed = forceQuit(game, { shuffles: 0, hints: 0, undos: 0, elapsedMs: index * 1500 });
     assert.notEqual(resumed, null, `move index ${index}: resume was refused`);
     assert.deepEqual(fingerprint(resumed!), fingerprint(game), `move index ${index}`);
 
@@ -135,7 +135,7 @@ test('issue #43: save/restore at every move index of a level played with holds',
   const game = new Game(level);
   let holds = 0;
   for (let index = 0; index <= level.solution.length; index++) {
-    const resumed = forceQuit(game, { shuffles: 0, hints: 0, undos: 0, elapsedMs: index * 1500, daily: null });
+    const resumed = forceQuit(game, { shuffles: 0, hints: 0, undos: 0, elapsedMs: index * 1500 });
     assert.notEqual(resumed, null, `move index ${index}: resume was refused`);
     assert.deepEqual(fingerprint(resumed!), fingerprint(game), `move index ${index}`);
 
@@ -194,7 +194,7 @@ test('a resumed game keeps playing identically to one that never quit', () => {
 test('reopen with a conceal ratio re-derives that level’s concealment (issues #79, #175)', () => {
   const level = generateValidatedLevel(TURTLE, SAMPLE_SEED);
   const live = new Game(level, undefined, concealedTileIds(level, CONCEAL_RATIO.medium));
-  const save = captureSave(live, { shuffles: 0, hints: 0, undos: 0, elapsedMs: 0, daily: null });
+  const save = captureSave(live, { shuffles: 0, hints: 0, undos: 0, elapsedMs: 0 });
   const resumed = reopen(TURTLE, save, CONCEAL_RATIO.medium);
   assert.notEqual(resumed, null);
   const hidden = (g: Game) =>
@@ -215,7 +215,7 @@ test('a ratio of 0 conceals nothing — it is not read as “no ratio given”',
   // the teaching levels.
   const level = generateValidatedLevel(TURTLE, SAMPLE_SEED);
   const live = new Game(level, undefined, concealedTileIds(level, CONCEAL_RATIO.medium));
-  const save = captureSave(live, { shuffles: 0, hints: 0, undos: 0, elapsedMs: 0, daily: null });
+  const save = captureSave(live, { shuffles: 0, hints: 0, undos: 0, elapsedMs: 0 });
   const teaching = reopen(TURTLE, save, 0);
   assert.notEqual(teaching, null);
   assert.equal(
@@ -270,7 +270,7 @@ test('resume reproduces shuffled faces, including undo across a shuffle', () => 
   assert.equal(game.shuffle(0xbeef), true);
   assert.notEqual(game.undo(), null);
 
-  const resumed = forceQuit(game, { shuffles: 1, hints: 0, undos: 0, elapsedMs: 0, daily: null })!;
+  const resumed = forceQuit(game, { shuffles: 1, hints: 0, undos: 0, elapsedMs: 0 })!;
   assert.deepEqual(fingerprint(resumed), fingerprint(game));
   assert.deepEqual(
     [...resumed.board.allTiles()].sort((a, b) => a.id - b.id).map((t) => t.face),
@@ -280,7 +280,7 @@ test('resume reproduces shuffled faces, including undo across a shuffle', () => 
 
 test('the save carries the session fields the HUD needs back', () => {
   const game = new Game(generateValidatedLevel(TURTLE, SAMPLE_SEED));
-  const save = captureSave(game, { shuffles: 3, hints: 0, undos: 0, elapsedMs: 91400, daily: null });
+  const save = captureSave(game, { shuffles: 3, hints: 0, undos: 0, elapsedMs: 91400 });
   assert.equal(save.version, SAVE_VERSION);
   assert.equal(save.layoutId, 'turtle_classic');
   assert.equal(save.seed, SAMPLE_SEED);
@@ -299,7 +299,7 @@ function sampleSave(): SaveState {
     game.tap(free(a), (i + 1) * 100);
     game.tap(free(b), (i + 1) * 100 + 10);
   });
-  return captureSave(game, { shuffles: 0, hints: 0, undos: 0, elapsedMs: 1000, daily: null });
+  return captureSave(game, { shuffles: 0, hints: 0, undos: 0, elapsedMs: 1000 });
 }
 
 /** The same, with a hold and a holder match in the move stack and a tile left
@@ -311,7 +311,7 @@ function heldSave(): SaveState {
   game.tap(free(b), 120); // …and clear it in the holder with one tap (issue #93)
   const parked = game.level.solution[1]![0];
   park(game, parked, 140); // leave a second tile in the holder
-  return captureSave(game, { shuffles: 0, hints: 0, undos: 0, elapsedMs: 1000, daily: null });
+  return captureSave(game, { shuffles: 0, hints: 0, undos: 0, elapsedMs: 1000 });
 }
 
 const snap = (save: Record<string, unknown>): Record<string, unknown> =>
@@ -515,7 +515,7 @@ test('a lost level still saves, so a reload is not an escape hatch (issue #63)',
   }
   assert.equal(game.status(), 'lost');
 
-  const resumed = forceQuit(game, { shuffles: 0, hints: 0, undos: 0, elapsedMs: 5000, daily: null });
+  const resumed = forceQuit(game, { shuffles: 0, hints: 0, undos: 0, elapsedMs: 5000 });
   assert.notEqual(resumed, null, 'a lost level is saved, not dropped');
   assert.equal(resumed!.status(), 'lost', 'and it comes back lost');
   assert.deepEqual(resumed!.holderSlots(), game.holderSlots());
@@ -606,7 +606,7 @@ test('every saved move timestamp is within the saved elapsed time', () => {
     game.tap(free(a), i * 1000);
     game.tap(free(b), i * 1000 + 10);
   });
-  const save = captureSave(game, { shuffles: 0, hints: 0, undos: 0, elapsedMs: 5_010, daily: null });
+  const save = captureSave(game, { shuffles: 0, hints: 0, undos: 0, elapsedMs: 5_010 });
   const stamps = save.snapshot.stack.moves.map((m) => m.atMs);
   assert.ok(stamps.every((ms) => ms <= save.elapsedMs), `${stamps} vs ${save.elapsedMs}`);
 });
@@ -622,7 +622,7 @@ test('a resumed game accepts the next match at the restored elapsed time', () =>
     game.tap(free(b), 10_000 + i * 1000 + 10);
   });
   const elapsedMs = 13_010;
-  const resumed = forceQuit(game, { shuffles: 0, hints: 0, undos: 0, elapsedMs, daily: null })!;
+  const resumed = forceQuit(game, { shuffles: 0, hints: 0, undos: 0, elapsedMs })!;
 
   const [a, b] = level.solution[4]!;
   resumed.tap(free(a), elapsedMs + 1);
@@ -631,7 +631,7 @@ test('a resumed game accepts the next match at the restored elapsed time', () =>
   assert.equal(resumed.tilesLeft, game.tilesLeft - 2);
 
   // And the opposite: a clock that restarted at 0 is exactly what used to break.
-  const restarted = forceQuit(game, { shuffles: 0, hints: 0, undos: 0, elapsedMs, daily: null })!;
+  const restarted = forceQuit(game, { shuffles: 0, hints: 0, undos: 0, elapsedMs })!;
   restarted.tap(free(a), 0);
   assert.throws(() => restarted.tap(free(b), 1), /monotonic/);
 });

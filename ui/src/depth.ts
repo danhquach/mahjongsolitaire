@@ -79,7 +79,7 @@ export interface BoardPalette {
   readonly backKeyline: number;
 }
 
-export type PaletteId = 'lantern' | 'daily' | 'milestone';
+export type PaletteId = 'lantern' | 'milestone';
 
 /** The default warm lantern palette — the constants above, named. */
 export const LANTERN: BoardPalette = {
@@ -93,19 +93,11 @@ export const LANTERN: BoardPalette = {
 };
 
 /** Every shipped palette, by the level kind that wears it: ordinary ladder
- *  levels → lantern; the Daily Challenge → night indigo with gold edges; the
- *  decade milestone spikes (decision 0011) → burgundy with rose edges. */
+ *  levels → lantern; the decade milestone spikes (decision 0011) → burgundy
+ *  with rose edges. (The Daily's night indigo went with its board, issue
+ *  #183; the HUD chip keeps those colours in CSS.) */
 export const PALETTES: Record<PaletteId, BoardPalette> = {
   lantern: LANTERN,
-  daily: {
-    id: 'daily',
-    label: 'Daily Challenge',
-    felt: 0x1e1b4b,
-    border: 0x5b4a1e,
-    side: 0xd4b96a,
-    back: 0x8b95f5,
-    backKeyline: 0x1e1b4b,
-  },
   milestone: {
     id: 'milestone',
     label: 'Milestone',

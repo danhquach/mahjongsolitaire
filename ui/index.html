@@ -196,17 +196,10 @@
       header .stat.daily .stat-label {
         color: #c7d2fe;
       }
-      header .stat.daily svg.stat-value {
-        width: 26px;
-        height: 25px; /* the same box as a 22px tabular digit */
-        fill: currentColor;
-      }
-      /* Pending (today's board not yet cleared): a slow gold pulse, so the
-         chip is the one live thing in the HUD. Locked (issue #166: cleared
-         today, disabled until the next local date): dimmed and static, like
-         every other disabled control (`#feedback .card > button:disabled`).
-         Active (the Daily is on the table): a filled gold edge, no pulse —
-         the Level chip already shows the date. */
+      /* Pending (none of today's three done): a slow gold pulse, so the chip
+         is the one live thing in the HUD. Done (all three): a filled gold
+         edge and no pulse — the day is finished, and the panel is still
+         readable. Partial sits between the two: no pulse, plain edge. */
       @keyframes daily-pulse {
         50% {
           box-shadow: 0 0 14px 3px rgba(252, 211, 77, 0.55);
@@ -215,7 +208,7 @@
       #app header .stat.daily[data-state='pending'] {
         animation: daily-pulse 2.4s ease-in-out infinite;
       }
-      #app header .stat.daily[data-state='active'] {
+      #app header .stat.daily[data-state='done'] {
         border-width: 2px;
         padding: 2px 11px 4px; /* absorb the thicker edge */
         box-shadow: 0 0 10px rgba(252, 211, 77, 0.45);
@@ -720,6 +713,7 @@
       #profile,
       #feedback,
       #leaderboard,
+      #daily-panel,
       #welcome {
         position: absolute;
         inset: 0;
@@ -743,6 +737,7 @@
       #profile.visible,
       #feedback.visible,
       #leaderboard.visible,
+      #daily-panel.visible,
       #welcome.visible {
         display: flex;
       }
@@ -751,6 +746,7 @@
       #profile .card,
       #feedback .card,
       #leaderboard .card,
+      #daily-panel .card,
       #welcome .card {
         background: #f0fdf4;
         color: #14532d;
@@ -767,6 +763,7 @@
       #profile h2,
       #feedback h2,
       #leaderboard h2,
+      #daily-panel h2,
       #welcome h2 {
         margin: 0 0 12px;
         font-size: 24px;
@@ -1155,6 +1152,89 @@
         color: #3f6212;
       }
 
+      /* --- Daily challenges panel (issue #183) --------------------------------
+         Three rows, each a goal with its own progress bar. A completed row is
+         marked four ways over — a green check, bold dark-green text, a full
+         bar and a mint wash with a green left edge — because colour alone
+         never carries meaning (spec §7). Contrast on the wash: #14532d 10:1,
+         #166534 7:1, both past the 4.5:1 floor. */
+      #daily-panel .daily-summary {
+        margin: 0 0 12px;
+        font-size: 15px;
+        color: #3f6212;
+      }
+      #daily-panel .daily-list {
+        list-style: none;
+        margin: 0 0 12px;
+        padding: 0;
+      }
+      #daily-panel .daily-row {
+        padding: 10px 12px 10px 15px;
+      }
+      #daily-panel .daily-row[data-done='true'] {
+        background: #dcfce7;
+        border-left: 3px solid #166534;
+        padding-left: 12px;
+      }
+      #daily-panel .daily-goal {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 17px;
+        color: #14532d;
+      }
+      #daily-panel .daily-text {
+        flex: 1;
+      }
+      #daily-panel .daily-row[data-done='true'] .daily-goal {
+        font-weight: 700;
+      }
+      #daily-panel .daily-mark {
+        width: 18px;
+        color: #86a893;
+      }
+      #daily-panel .daily-row[data-done='true'] .daily-mark {
+        color: #166534;
+      }
+      #daily-panel .daily-count {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 15px;
+      }
+      #daily-panel .daily-track {
+        height: 6px;
+        border-radius: 3px;
+        background: #d1fae5;
+        margin-top: 8px;
+      }
+      #daily-panel .daily-row[data-done='true'] .daily-track {
+        background: #bbf7d0;
+      }
+      #daily-panel .daily-fill {
+        height: 6px;
+        border-radius: 3px;
+        background: #166534;
+        transition: width 240ms ease-out;
+      }
+      #daily-panel .record-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 6px 0;
+      }
+      #daily-panel .record-hint {
+        margin: 6px 0 12px;
+        font-size: 15px;
+        color: #3f6212;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #daily-panel .daily-fill {
+          transition: none;
+        }
+      }
+      #app[data-motion='reduced'] #daily-panel .daily-fill {
+        transition: none;
+      }
+
       /* --- Cloud sync (issue #138) -------------------------------------------
          Buttons wrap rather than shrink: on a narrow phone two 48dp targets
          side by side would each fall under the spec §7 minimum. */
@@ -1476,28 +1556,23 @@
           <span class="stat-label">Score</span>
           <strong class="stat-value" id="score">0</strong>
         </span>
-        <!-- Daily Challenge (issue #136): one tap from the board, in the
-             Daily's own palette (depth.ts: night indigo, gold edge). main.ts
-             owns data-state — pending (pulses until today's board is cleared),
-             locked (issue #166: cleared today, disabled until the next local
-             date), or active while the Daily is on the table — and the
-             aria-label/title that say where the player stands. -->
+        <!-- Daily challenges (issue #136 put the chip here; issue #183 made it
+             open today's three challenges instead of dealing a board). Its own
+             palette (night indigo, gold edge) so it reads as its own thing.
+             main.ts owns data-state — pending (none done yet, pulsing),
+             partial, done — and the value, which is how many of the three are
+             complete. -->
         <button
           id="btn-daily"
           type="button"
           class="stat daily"
           data-state="pending"
-          data-action="Daily Challenge"
-          title="Daily Challenge"
-          aria-label="Daily Challenge"
+          data-action="Daily challenges"
+          title="Daily challenges"
+          aria-label="Daily challenges"
         >
           <span class="stat-label">Daily</span>
-          <!-- A star: the one shared board of the day. -->
-          <svg class="stat-value" viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              d="M12 2.6l2.85 6.1 6.65.8-4.9 4.6 1.3 6.6L12 17.4l-5.9 3.3 1.3-6.6-4.9-4.6 6.65-.8z"
-            />
-          </svg>
+          <span class="stat-value" id="daily-value">0/3</span>
         </button>
         <span class="hud-actions">
           <!-- Icon-only, like the booster rail: the accessible name is the
@@ -1665,8 +1740,6 @@
                    only for the stuck dialog, hidden on a win. -->
               <button id="overlay-shuffle" type="button" data-action="Shuffle" hidden>Shuffle</button>
               <button id="overlay-undo" type="button" data-action="Undo" hidden>Undo</button>
-              <!-- Issue #70: only on a Daily win. Reading a board needs no
-                   account, so this shows whether or not sync is on. -->
               <button id="overlay-restart" type="button">Restart level</button>
               <button id="overlay-new" type="button">New game</button>
             </div>
@@ -1704,12 +1777,13 @@
                      same number rather than a second, separate tally. -->
                 <div class="record-row"><span>Score this week</span><strong id="record-week">0</strong></div>
                 <!-- Issue #19: the Daily streak as it stands today, and the
-                     trophies Daily clears have paid. -->
-                <div class="record-row"><span>Daily Challenge streak</span><strong id="record-streak">0</strong></div>
+                     trophies completed challenges have paid (issue #183). -->
+                <div class="record-row"><span>Daily challenge streak</span><strong id="record-streak">0</strong></div>
                 <div class="record-row"><span>Trophies</span><strong id="record-trophies">0</strong></div>
                 <p class="record-hint">
-                  Clear the Daily Challenge on consecutive days to build a streak. Each clear
-                  earns a trophy — two from a 7-day streak, three from 30.
+                  Finish a daily challenge on consecutive days to build a streak. Each
+                  challenge you finish earns a trophy, and the first one each day earns another
+                  from a 7-day streak, a third from 30.
                 </p>
               </fieldset>
               <!-- Cloud sync (issue #138): opt-in, off by default. The game
@@ -1779,11 +1853,34 @@
                   </span>
                 </label>
                 <div class="sync-actions">
-                  <button id="board-open" type="button" class="secondary">View today's board</button>
+                  <button id="board-open" type="button" class="secondary">View the leaderboard</button>
                 </div>
                 <span id="board-status" aria-live="polite"></span>
               </fieldset>
               <button id="profile-close" type="button">Done</button>
+            </div>
+          </div>
+          <!-- Today's three challenges (issue #183). The Daily chip opens this
+               instead of dealing a board: the goals are completed by playing
+               the ladder, so this panel reports progress rather than starting
+               anything. main.ts fills the list. -->
+          <div
+            id="daily-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="daily-panel-title"
+          >
+            <div class="card">
+              <h2 id="daily-panel-title">Daily challenges</h2>
+              <p id="daily-panel-summary" class="daily-summary"></p>
+              <ul id="daily-panel-list" class="daily-list"></ul>
+              <div class="record-row"><span>Streak</span><strong id="daily-panel-streak">0</strong></div>
+              <div class="record-row"><span>Trophies</span><strong id="daily-panel-trophies">0</strong></div>
+              <p class="record-hint">
+                Each challenge you finish pays a trophy and a booster charge. The first one
+                each day keeps your streak alive.
+              </p>
+              <button id="daily-panel-close" type="button">Close</button>
             </div>
           </div>
           <!-- Weekly leaderboard (issues #70, #176). Its own dialog rather than a

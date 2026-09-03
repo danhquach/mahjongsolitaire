@@ -53,9 +53,9 @@ import {
   concealRatioForLevel,
   scoreMultiplierForLevel,
   BAND_SCORE_MULTIPLIER,
+  DAILY_CHALLENGE_COUNT,
   dailyDateKey,
-  dailyLayoutId,
-  dailySeed,
+  faceSuit,
   nextPoolLayout,
   concealedTileIds,
   generateValidatedLevel,
@@ -126,6 +126,7 @@ import {
   reportText,
   sendFeedback,
 } from './feedback-form.js';
+import { DailyStore, describeChallenge } from './daily.js';
 import { ProgressStore } from './progress.js';
 import {
   AVATARS,
@@ -133,7 +134,6 @@ import {
   RecordStore,
   avatarGlyph,
   clearedLevelCount,
-  dailyLockedFor,
   hasCleared,
   liveStreak,
   weekScoreNow,
@@ -198,16 +198,6 @@ const BOOSTER_PLURAL: Record<BoosterKind, string> = {
   undo: 'undos',
   shuffle: 'shuffles',
 };
-
-/** The band a Daily Challenge board plays at (issue #19, decision 0016): its
- *  concealment bucket. The Daily draws from all ten layouts, hard-pool ones
- *  included, so it sits one band up from the ladder's middle rather than at
- *  easy. */
-const DAILY_BAND: LadderBand = 'medium-plus';
-
-/** The Daily's concealment ratio. Unaffected by the easy-band ramp (issue
- *  #175): the Daily has its own fixed band and no ladder level. */
-const DAILY_CONCEAL_RATIO = CONCEAL_RATIO[concealBucketForBand(DAILY_BAND)];
 
 /** A date key as the HUD chip shows it ("Sep 1") and as it is read out
  *  ("September 1, 2026"). Formatted in UTC from the key's own digits so the
@@ -319,6 +309,13 @@ async function start(): Promise<void> {
   const overlayGrant = el<HTMLElement>('overlay-grant');
   const lossWashLayer = el<HTMLDivElement>('loss-wash-layer');
   const dailyButton = el<HTMLButtonElement>('btn-daily');
+  const dailyValue = el<HTMLElement>('daily-value');
+  const dailyPanel = el<HTMLDivElement>('daily-panel');
+  const dailyPanelSummary = el<HTMLElement>('daily-panel-summary');
+  const dailyPanelList = el<HTMLElement>('daily-panel-list');
+  const dailyPanelStreak = el<HTMLElement>('daily-panel-streak');
+  const dailyPanelTrophies = el<HTMLElement>('daily-panel-trophies');
+  const dailyPanelClose = el<HTMLButtonElement>('daily-panel-close');
   const feedbackPanel = el<HTMLDivElement>('feedback');
   const feedbackButton = el<HTMLButtonElement>('btn-feedback');
   const feedbackSummaryInput = el<HTMLInputElement>('feedback-summary');
@@ -363,10 +360,6 @@ async function start(): Promise<void> {
   // build) reads as absent, like every other untrusted record.
   const saved = saves.load();
   let entry = ladder[progress.level - 1]!;
-  /** The Daily Challenge on the table, as its date key — null on the ladder
-   *  (issue #19). A saved Daily resumes as one, whatever today's date is: a
-   *  board dealt before midnight is still that date's board. */
-  let daily: string | null = saved?.daily ?? null;
   let bootLayout: Layout | null = null;
   if (saved !== null) {
     try {
@@ -405,26 +398,20 @@ async function start(): Promise<void> {
   }
 
   /** The score multiplier the deal on the table plays at (issue #176): the
-   *  ladder level's band, or the Daily's own. The Daily banks nothing, but its
-   *  HUD still shows a score — it drives the Super Combo feedback — so it is
-   *  scored at its band like any other deal rather than at a bare ×1. */
+   *  ladder level's band. Every deal is a ladder deal since issue #183. */
   function scoreMultiplierInPlay(): number {
-    return daily === null
-      ? scoreMultiplierForLevel(progress.level)
-      : BAND_SCORE_MULTIPLIER[DAILY_BAND];
+    return scoreMultiplierForLevel(progress.level);
   }
 
-  /** The concealment ratio the deal on the table plays at. The Daily has a
-   *  fixed band and no level number, so it stays on the bucket table; a ladder
-   *  deal goes through the level ramp (issue #175). */
+  /** The concealment ratio the deal on the table plays at: the level ramp
+   *  (issue #175). */
   function concealRatioInPlay(): number {
-    return daily === null ? concealRatioForLevel(progress.level) : DAILY_CONCEAL_RATIO;
+    return concealRatioForLevel(progress.level);
   }
 
-  /** The palette the deal on the table wears (issue #67): the Daily's, the
-   *  decade milestone's (decision 0011's spike levels), else the default. */
+  /** The palette the deal on the table wears (issue #67): the decade
+   *  milestone's (decision 0011's spike levels), else the default. */
   function paletteInPlay(): BoardPalette {
-    if (daily !== null) return PALETTES.daily;
     return bandForLevel(progress.level).spike ? PALETTES.milestone : PALETTES.lantern;
   }
 
@@ -472,22 +459,18 @@ async function start(): Promise<void> {
       : reopen(
           layout,
           saved,
-          saved.daily !== null ? DAILY_CONCEAL_RATIO : concealRatioForLevel(savedLevel),
-          saved.daily !== null
-            ? BAND_SCORE_MULTIPLIER[DAILY_BAND]
-            : scoreMultiplierForLevel(savedLevel),
+          concealRatioForLevel(savedLevel),
+          scoreMultiplierForLevel(savedLevel),
         );
   // A failed resume can leave the save's layout loaded; the fresh deal is the
-  // current ladder level's, so re-point at its layout first — and it is a
-  // ladder deal, whatever the rejected save claimed to be.
-  if (resumed === null) daily = null;
+  // current ladder level's, so re-point at its layout first.
   if (resumed === null && layout.id !== entry.layoutId) layout = await fetchLayout(entry.layoutId);
   let game = resumed ?? dealCurrentLevel(entry.seed);
 
   const renderer = new BoardRenderer(app, layout.slots);
   const announcer = new Announcer(el<HTMLElement>('a11y-status'));
-  // The booted deal's palette (issue #67) — a resumed Daily or a milestone
-  // level boots into its own colours, not the default's.
+  // The booted deal's palette (issue #67) — a milestone level boots into its
+  // own colours, not the default's.
   applyPalette();
 
   const settings = new SettingsStore(storage);
@@ -497,6 +480,11 @@ async function start(): Promise<void> {
   // never needs a network or an account for either.
   const profile = new ProfileStore(storage);
   const record = new RecordStore(storage);
+
+  /** Today's progress against today's three challenges (issue #183). Fed by
+   *  play, not by a mode: there is nowhere else to play. */
+  const dailyProgress = new DailyStore(storage);
+  let dailyPanelVisible = false;
 
   // Match / mismatch animation (issue #44). Reduced motion is the OS preference
   // OR the in-app toggle, read per effect so either can be changed mid-session;
@@ -661,8 +649,7 @@ async function start(): Promise<void> {
     if (game.status() === 'stuck' && overlay.classList.contains('visible')) {
       renderer.setDesaturation(1);
     }
-    // The Level chip shows the date on a Daily board (issue #19).
-    levelEl.textContent = daily === null ? String(progress.level) : formatDateKey(daily, 'short');
+    levelEl.textContent = String(progress.level);
     syncHudIdentity();
     syncDailyChip();
     drawScore();
@@ -727,7 +714,6 @@ async function start(): Promise<void> {
           hints: 0,
           undos: 0,
           elapsedMs: elapsed.ms,
-          daily,
         }),
       );
   }
@@ -771,75 +757,58 @@ async function start(): Promise<void> {
     overlayShuffle.hidden = !canShuffle;
     overlayUndo.hidden = !canUndo;
     // Won overlays retitle these; every other dialog gets the defaults back.
-    // On a Daily board the secondary action leaves for the ladder (issue #19).
     overlayRestart.hidden = false;
-    overlayNew.textContent = daily === null ? 'New game' : 'Back to the ladder';
+    overlayNew.textContent = 'New game';
     overlayGrant.hidden = true;
     // The red-tinted card (issue #121) — only the holder-full loss gets it;
     // every other dialog (won, stuck) keeps the default green.
     overlay.classList.toggle('lost', status === 'lost');
     if (status === 'won') {
       overlayRestart.hidden = true;
-      if (daily === null) {
-        // Advance the ladder exactly once per win: this branch is inside the
-        // once-per-level transition (the overlayVisible guard above). The
-        // player's record counts the same moment (issue #69).
-        const cleared = progress.level;
-        const atEnd = progress.advance() === cleared;
-        // Booster grants (issue #51, #117) key off the record *before* this
-        // win is written: only a first clear can pay, a replay never does.
-        const firstClear = !hasCleared(record.value, cleared);
-        record.recordWin(game.score, { level: cleared }, Date.now());
-        // Issue #176: the weekly board ranks the ladder, so this is the win
-        // with somewhere to go. Every clear counts, replays included — the
-        // band score multiplier is what stops grinding an easy level from
-        // being the fastest way up, rather than a once-per-week rule.
-        submitRunResult(game.score, elapsed.ms);
-        overlayTitle.textContent = `Level ${cleared} complete!`;
-        overlayText.textContent = `Final score: ${game.score}`;
-        winScoreSuffix = '';
-        overlayNew.textContent = atEnd ? 'Play again' : 'Next level';
-        const grantLines: string[] = [];
-        if (firstClear) {
-          // Every third distinct level first-cleared pays one at random; the
-          // dialog says which (issue #117: no pick, no per-level grant).
-          const distinct = clearedLevelCount(record.value);
-          if (thirdClearDue(distinct)) {
-            const got = charges.grantSplit(THIRD_CLEAR_GRANT, Math.random);
-            grantLines.push(`${distinct} levels cleared: ${describeGrant(got)}.`);
-          }
-          // The decade spike (a milestone level, issue #67) pays one of each.
-          if (bandForLevel(cleared).spike) {
-            grantLines.push(`Milestone level: ${describeGrant(charges.grantEach(MILESTONE_LEVEL_GRANT))}.`);
-          }
-          syncBoosterButtons();
+      // Advance the ladder exactly once per win: this branch is inside the
+      // once-per-level transition (the overlayVisible guard above). The
+      // player's record counts the same moment (issue #69).
+      const cleared = progress.level;
+      const atEnd = progress.advance() === cleared;
+      // Booster grants (issue #51, #117) key off the record *before* this
+      // win is written: only a first clear can pay, a replay never does.
+      const firstClear = !hasCleared(record.value, cleared);
+      record.recordWin(game.score, { level: cleared }, Date.now());
+      // Issue #176: the weekly board ranks the ladder, so this is the win
+      // with somewhere to go. Every clear counts, replays included — the
+      // band score multiplier is what stops grinding an easy level from
+      // being the fastest way up, rather than a once-per-week rule.
+      submitRunResult(game.score, elapsed.ms);
+      overlayTitle.textContent = `Level ${cleared} complete!`;
+      overlayText.textContent = `Final score: ${game.score}`;
+      winScoreSuffix = '';
+      overlayNew.textContent = atEnd ? 'Play again' : 'Next level';
+      const grantLines: string[] = [];
+      if (firstClear) {
+        // Every third distinct level first-cleared pays one at random; the
+        // dialog says which (issue #117: no pick, no per-level grant).
+        const distinct = clearedLevelCount(record.value);
+        if (thirdClearDue(distinct)) {
+          const got = charges.grantSplit(THIRD_CLEAR_GRANT, Math.random);
+          grantLines.push(`${distinct} levels cleared: ${describeGrant(got)}.`);
         }
-        if (grantLines.length > 0) {
-          overlayGrant.textContent = grantLines.join(' ');
-          overlayGrant.hidden = false;
+        // The decade spike (a milestone level, issue #67) pays one of each.
+        if (bandForLevel(cleared).spike) {
+          grantLines.push(`Milestone level: ${describeGrant(charges.grantEach(MILESTONE_LEVEL_GRANT))}.`);
         }
-        announcer.say(
-          `Level ${cleared} complete. Final score ${game.score}. ${grantLines.join(' ')}`.trim(),
-        );
-      } else {
-        // A Daily clear pays trophies and the streak and nothing else (issue
-        // #176): no score banked, no level counted. Score belongs to the
-        // ladder and to the weekly board the ladder feeds, and the Daily
-        // contributes to neither. Still once per date — a replay of a cleared
-        // board earns nothing twice. The score HUD stays up during the run
-        // because it drives the Super Combo feedback; it is simply not banked.
-        const credit = record.recordDailyWin(daily);
-        const payout = credit.credited
-          ? `${credit.trophies === 1 ? 'Trophy earned' : `${credit.trophies} trophies earned`} — ${
-              credit.streak === 1 ? 'a 1-day streak' : `${credit.streak}-day streak`
-            }.`
-          : 'Already cleared — no extra trophy for a replay.';
-        overlayTitle.textContent = 'Daily Challenge complete!';
-        winScoreSuffix = `. ${payout}`;
-        overlayText.textContent = `Final score: ${game.score}${winScoreSuffix}`;
-        overlayNew.textContent = 'Back to the ladder';
-        announcer.say(`Daily Challenge complete. Final score ${game.score}. ${payout}`);
+        syncBoosterButtons();
       }
+      if (grantLines.length > 0) {
+        overlayGrant.textContent = grantLines.join(' ');
+        overlayGrant.hidden = false;
+      }
+      // Issue #183: a finished board may complete one of today's challenges.
+      // Paid before the announcement so the payout rides on that same line.
+      payDailyChallenges(dailyProgress.onBoardCleared(dailyDateKey()));
+      announcer.say(
+        `Level ${cleared} complete. Final score ${game.score}. ${grantLines.join(' ')}`.trim() +
+          takeDailyPayout(),
+      );
       // The record just moved; push it up if sync is on (issue #138). Nothing
       // here waits on it.
       syncAfterWin();
@@ -1163,38 +1132,134 @@ async function start(): Promise<void> {
     syncProfileRow();
   }
 
-  /** The HUD's Daily chip (issue #136, was a Settings row under #19): its
-   *  state — `active` while the Daily is on the table, `locked` once today's
-   *  board is credited (issue #166 — a clear locks it for the rest of the
-   *  local day; a loss never does), `pending` (pulsing) otherwise — and the
-   *  name that says where the player stands: today's date and the streak.
-   *  `locked` also disables the button outright: the chip's own click
-   *  handler is one replay route, but a native `disabled` closes it without
-   *  relying on that handler re-checking the record. */
+  /** The HUD's Daily chip (issue #136; issue #183 turned it from a board deal
+   *  into the challenge panel): how many of today's three are complete. It
+   *  pulses only while none are, and never disables — the panel stays
+   *  readable when the day is finished. */
   function syncDailyChip(): void {
-    const today = dailyDateKey();
-    const streak = liveStreak(record.value, today);
-    const date = formatDateKey(today, 'long');
-    let state: 'active' | 'locked' | 'pending';
-    let status: string;
-    if (daily === today) {
-      state = 'active';
-      status = 'on the table now';
-    } else if (dailyLockedFor(record.value, today)) {
-      state = 'locked';
-      status = 'cleared for today — a new board arrives tomorrow';
-    } else if (streak > 0) {
-      state = 'pending';
-      status = `${streak}-day streak, clear today’s board to keep it going`;
-    } else {
-      state = 'pending';
-      status = 'one board a day, the same for everyone';
-    }
-    dailyButton.dataset['state'] = state;
-    dailyButton.disabled = state === 'locked';
-    const name = `Daily Challenge, ${date}: ${status}`;
+    const done = dailyProgress.completedCount(dailyDateKey());
+    dailyButton.dataset['state'] = done === 0 ? 'pending' : done === DAILY_CHALLENGE_COUNT ? 'done' : 'partial';
+    dailyValue.textContent = `${done}/${DAILY_CHALLENGE_COUNT}`;
+    const name = `Daily challenges, ${done} of ${DAILY_CHALLENGE_COUNT} complete`;
     dailyButton.setAttribute('aria-label', name);
     dailyButton.title = name;
+  }
+
+  /** Paint the panel from the store. Called on open and after every
+   *  completion, so a challenge that lands while the panel is up updates in
+   *  place rather than going stale behind the player. */
+  function renderDailyPanel(): void {
+    const today = dailyDateKey();
+    const standing = dailyProgress.standing(today);
+    const done = dailyProgress.completedCount(today);
+    dailyPanelSummary.textContent = `${formatDateKey(today, 'long')} — ${done} of ${standing.length} complete`;
+    dailyPanelList.replaceChildren(
+      ...standing.map((slot) => {
+        const goal = describeChallenge(slot.challenge);
+        const row = document.createElement('li');
+        row.className = 'daily-row';
+        row.dataset['done'] = String(slot.done);
+        row.setAttribute('role', 'group');
+        // The check and the bold weight are visual; the word is what a screen
+        // reader has to hear.
+        row.setAttribute('aria-label', slot.done ? `${goal}, completed` : goal);
+
+        const line = document.createElement('div');
+        line.className = 'daily-goal';
+        const mark = document.createElement('span');
+        mark.className = 'daily-mark';
+        mark.setAttribute('aria-hidden', 'true');
+        mark.textContent = slot.done ? '✓' : '○';
+        const text = document.createElement('span');
+        text.className = 'daily-text';
+        text.textContent = goal;
+        const count = document.createElement('span');
+        count.className = 'daily-count';
+        count.textContent = `${slot.count} / ${slot.challenge.target}`;
+        line.append(mark, text, count);
+
+        const track = document.createElement('div');
+        track.className = 'daily-track';
+        track.setAttribute('role', 'progressbar');
+        track.setAttribute('aria-valuemin', '0');
+        track.setAttribute('aria-valuemax', String(slot.challenge.target));
+        track.setAttribute('aria-valuenow', String(slot.count));
+        track.setAttribute('aria-valuetext', `${slot.count} of ${slot.challenge.target}`);
+        const fill = document.createElement('div');
+        fill.className = 'daily-fill';
+        fill.style.width = `${Math.round((slot.count / slot.challenge.target) * 100)}%`;
+        track.append(fill);
+
+        row.append(line, track);
+        return row;
+      }),
+    );
+    dailyPanelStreak.textContent = String(liveStreak(record.value, today));
+    dailyPanelTrophies.textContent = String(record.value.trophies);
+  }
+
+  /** The chip's tap (issue #183): today's challenges, not a board. Opens the
+   *  way every other dialog does — the `visible` class, the background inert,
+   *  focus in and back to the chip on the way out. */
+  function openDailyPanel(): void {
+    // The chip lives in the HUD, which goes inert behind any dialog — but the
+    // guard is cheap and does not rely on that staying true.
+    if (dailyPanelVisible || settingsVisible || overlayVisible || profileVisible) return;
+    renderDailyPanel();
+    dailyPanelVisible = true;
+    dailyPanel.classList.add('visible');
+    setBackgroundInert(true);
+    dailyPanelClose.focus();
+    announcer.say(
+      `Daily challenges. ${dailyProgress.completedCount(dailyDateKey())} of ${DAILY_CHALLENGE_COUNT} complete.`,
+    );
+  }
+
+  function closeDailyPanel(): void {
+    if (!dailyPanelVisible) return;
+    dailyPanelVisible = false;
+    dailyPanel.classList.remove('visible');
+    setBackgroundInert(false);
+    dailyButton.focus();
+  }
+
+  /** What a completed challenge has to say, waiting for the next live-region
+   *  write to carry it. Never spoken on its own from inside a tap: two writes
+   *  in the same tick coalesce and the first is never heard (see finishTap),
+   *  and the match that completed the challenge is announced too. */
+  let pendingDailyPayout = '';
+
+  /** Take the waiting payout text, ready to append to another line. */
+  function takeDailyPayout(): string {
+    const line = pendingDailyPayout;
+    pendingDailyPayout = '';
+    return line === '' ? '' : ` ${line}`;
+  }
+
+  /** Pay for every challenge that just completed (issue #183): a trophy each,
+   *  a booster charge each, and the day's first completion also moving the
+   *  streak. The payout is queued for the announcer, not spoken here. */
+  function payDailyChallenges(completed: readonly number[]): void {
+    if (completed.length === 0) return;
+    const today = dailyDateKey();
+    const standing = dailyProgress.standing(today);
+    const lines: string[] = [];
+    for (const slot of completed) {
+      const credit = record.creditDailyChallenge(today);
+      const got = charges.grantSplit(1, Math.random);
+      const goal = describeChallenge(standing[slot]!.challenge);
+      lines.push(
+        `Daily challenge complete: ${goal.toLowerCase()}. ${
+          credit.trophies === 1 ? '1 trophy' : `${credit.trophies} trophies`
+        }, ${describeGrant(got)}.`,
+      );
+    }
+    pendingDailyPayout = [pendingDailyPayout, ...lines].filter((l) => l !== '').join(' ');
+    syncBoosterButtons();
+    syncDailyChip();
+    if (dailyPanelVisible) renderDailyPanel();
+    // The record just moved; push it up if sync is on (issue #138).
+    syncAfterWin();
   }
 
   /** The Settings row that opens the profile shows who the player is. */
@@ -1208,12 +1273,11 @@ async function start(): Promise<void> {
    *  named player on an ordinary level the visible label is the name alone —
    *  the big number under it is self-evidently the level, and the word cost
    *  the one-row phone header its width. A guest (no name) keeps "Level"; a
-   *  Daily or Milestone board keeps its word after the name, since that word
-   *  goes with the palette (colour never carries it alone). */
+   *  Milestone board keeps its word after the name, since that word goes with
+   *  the palette (colour never carries it alone). */
   function syncHudIdentity(): void {
-    // On a Daily board the chip is "Daily" over the date (issue #19); on a
-    // decade milestone it is "Milestone" over the number (issue #67).
-    const what = daily !== null ? 'Daily' : bandForLevel(progress.level).spike ? 'Milestone' : 'Level';
+    // On a decade milestone the chip is "Milestone" over the number (#67).
+    const what = bandForLevel(progress.level).spike ? 'Milestone' : 'Level';
     const named = profile.value.choice === 'named';
     const spoken = named ? `${profile.value.name} · ${what}` : what;
     const shown = named && what === 'Level' ? profile.value.name : spoken;
@@ -1297,7 +1361,8 @@ async function start(): Promise<void> {
       profileVisible ||
       feedbackVisible ||
       welcomeVisible ||
-      tutorialVisible
+      tutorialVisible ||
+      dailyPanelVisible
     )
       return;
     syncSettingsControls();
@@ -2257,13 +2322,15 @@ async function start(): Promise<void> {
 
   leaderboardClose.addEventListener('click', closeLeaderboard);
 
+  dailyPanelClose.addEventListener('click', closeDailyPanel);
+
   // --- feedback form (issue #118) ----------------------------------------------
 
-  /** The current level string sent as feedback context: the ladder level, or
-   *  the Daily's date — never the profile name (no player-identifying data
-   *  beyond what the player typed). */
+  /** The current level string sent as feedback context: the ladder level —
+   *  never the profile name (no player-identifying data beyond what the
+   *  player typed). */
   function currentLevelLabel(): string {
-    return daily === null ? `Level ${progress.level}` : `Daily ${daily}`;
+    return `Level ${progress.level}`;
   }
 
   /** Send is enabled once both fields have content, and only when nothing is
@@ -2673,8 +2740,8 @@ async function start(): Promise<void> {
     changelogPanel.addEventListener('click', (ev) => {
       if (ev.target === changelogPanel) closeChangelog();
     });
-    // The HUD's Daily chip (issue #136) deals today's board in one tap.
-    dailyButton.addEventListener('click', () => void startDaily());
+    // The HUD's Daily chip (issue #183) opens today's challenges in one tap.
+    dailyButton.addEventListener('click', () => openDailyPanel());
     // The Level chip opens the profile (issue #137); focus comes back to it.
     levelButton.addEventListener('click', () => openProfile(levelButton));
     // Escape is the expected way out of a modal, and the only one for a
@@ -2692,6 +2759,7 @@ async function start(): Promise<void> {
       else if (leaderboardVisible) closeLeaderboard();
       else if (feedbackVisible) closeFeedback();
       else if (changelogVisible) closeChangelog();
+      else if (dailyPanelVisible) closeDailyPanel();
       else if (profileVisible) closeProfile();
       else if (settingsVisible) closeSettings();
     });
@@ -2736,7 +2804,7 @@ async function start(): Promise<void> {
         // #124 is gone since #165). Naming the pair by `a` never leaks a
         // hidden face: `b` may have been face-down, but its face is `a`'s.
         announcer.say(
-          `${label(outcome.a)} pair matched in the holder. ${game.tilesLeft} tiles left. Score ${game.score}.`,
+          `${label(outcome.a)} pair matched in the holder. ${game.tilesLeft} tiles left. Score ${game.score}.${takeDailyPayout()}`,
         );
         break;
       case 'blocked':
@@ -2834,6 +2902,10 @@ async function start(): Promise<void> {
     const result = runBooster(kind);
     if (result.ok) {
       charges.spend(kind);
+      // Issue #183: a charged hint or shuffle starts the clean run again.
+      // Undo does not — it undoes a hold, never a match.
+      if (kind === 'hint' || kind === 'shuffle') dailyProgress.onAssist(dailyDateKey());
+      if (dailyPanelVisible) renderDailyPanel();
     }
     // A rescue attempt (Undo/Shuffle) that leaves the board still 'stuck'
     // (issue #122 follow-up): the "No moves left" dialog stays open, so the
@@ -2982,6 +3054,11 @@ async function start(): Promise<void> {
     // slot / drops the board tile — board.get() still resolves either, and
     // the pictures come from the renderer's own bake (issue #66).
     if (outcome.kind === 'matched') {
+      // Issue #183: the pair may finish one of today's challenges. `a` is the
+      // held half and both halves share a face, so either reads the suit.
+      payDailyChallenges(
+        dailyProgress.onMatch(dailyDateKey(), faceSuit(game.board.get(outcome.a).face)),
+      );
       // Sound answers the tap; the haptic waits for the pair clear (the same
       // split issue #44 used for the collision).
       feedback.sound('match');
@@ -3036,6 +3113,13 @@ async function start(): Promise<void> {
     // writes in the same tick coalesce and the first is never spoken.
     if (game.status() === 'playing') announce(outcome);
     showStatus();
+    // A level-ending tap skips `announce`, and showStatus has already written
+    // the live region; a payout still waiting goes out on its own beat rather
+    // than coalescing with that line and being lost.
+    if (pendingDailyPayout !== '') {
+      const payout = takeDailyPayout().trim();
+      window.setTimeout(() => announcer.say(payout), 1200);
+    }
   }
 
   /**
@@ -3068,21 +3152,6 @@ async function start(): Promise<void> {
    */
   async function startLevel(mode: 'replay' | 'reroll' | 'ladder'): Promise<void> {
     if (dealing) return;
-    // Issue #166: Restart is the other open replay route for a cleared
-    // Daily (the win screen already hides its own Restart on the way to
-    // this state) — refuse rather than re-deal a board that is locked.
-    if (mode === 'replay' && daily !== null && dailyLockedFor(record.value, daily)) {
-      announcer.say(`Daily Challenge for ${formatDateKey(daily, 'long')} already cleared. A new board arrives tomorrow.`);
-      return;
-    }
-    // On a Daily board (issue #19) Restart replays the Daily; the other two
-    // both mean "back to the ladder", which deals the ladder's own pinned
-    // level — a re-roll of a Daily would be a board nobody else has.
-    const leavingDaily = daily !== null && mode !== 'replay';
-    if (leavingDaily) {
-      daily = null;
-      mode = 'ladder';
-    }
     const next = ladder[progress.level - 1]!;
     const wantedLayoutId =
       mode === 'ladder'
@@ -3101,12 +3170,8 @@ async function start(): Promise<void> {
     );
     announcer.say(
       mode === 'replay'
-        ? daily === null
-          ? `Level ${progress.level} restarted. ${game.tilesLeft} tiles.`
-          : `Daily Challenge restarted. ${game.tilesLeft} tiles.`
-        : leavingDaily
-          ? `Back to the ladder. Level ${progress.level}${milestoneNote()}. ${game.tilesLeft} tiles.`
-          : `New game dealt. Level ${progress.level}${milestoneNote()}. ${game.tilesLeft} tiles.`,
+        ? `Level ${progress.level} restarted. ${game.tilesLeft} tiles.`
+        : `New game dealt. Level ${progress.level}${milestoneNote()}. ${game.tilesLeft} tiles.`,
     );
     startTutorialIfArmed();
   }
@@ -3115,37 +3180,6 @@ async function start(): Promise<void> {
    *  of the palette swap — and nothing otherwise. */
   function milestoneNote(): string {
     return bandForLevel(progress.level).spike ? ', a milestone level' : '';
-  }
-
-  /**
-   * Deal today's Daily Challenge (issue #19, spec §6): the board every player
-   * gets for this calendar date — layout and seed are both hashes of the
-   * date. The current ladder deal is dropped (its save is overwritten by the
-   * Daily's; the ladder position keeps), and Back to the ladder re-deals the
-   * ladder level from its pinned seed.
-   */
-  async function startDaily(): Promise<void> {
-    if (dealing) return;
-    const key = dailyDateKey();
-    if (daily === key) {
-      announcer.say(`Already on the Daily Challenge for ${formatDateKey(key, 'long')}.`);
-      return;
-    }
-    // Issue #166: a cleared Daily is locked for the rest of the local day —
-    // the chip is disabled for this, but the check is repeated here too,
-    // since the chip is not the only caller and a native `disabled` is not a
-    // substitute for the record actually being asked.
-    if (dailyLockedFor(record.value, key)) {
-      announcer.say(`Daily Challenge for ${formatDateKey(key, 'long')} already cleared. A new board arrives tomorrow.`);
-      return;
-    }
-    if (!(await switchLayout(dailyLayoutId(key)))) return;
-    daily = key;
-    beginDeal(dailySeed(key));
-    announcer.say(
-      `Daily Challenge for ${formatDateKey(key, 'long')}. ${game.tilesLeft} tiles. Everyone gets this board today.`,
-    );
-    startTutorialIfArmed();
   }
 
   /** Load `wantedLayoutId` if it is not on the table. False when the fetch
@@ -3350,9 +3384,9 @@ async function start(): Promise<void> {
     get ladderLevel() {
       return progress.level;
     },
-    /** The Daily Challenge on the table as its date key, or null (issue #19). */
-    get daily() {
-      return daily;
+    /** Today's challenge standing (issue #183 QA). */
+    get dailyStanding() {
+      return dailyProgress.standing(dailyDateKey());
     },
     /** The booster grant line on the win dialog, null while hidden (issue #51 QA). */
     grantText(): string | null {

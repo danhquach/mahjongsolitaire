@@ -1,7 +1,9 @@
 // The save format's v6 fields (issue #19): the assist counts (hints/undos,
-// unused since the star rating they fed was removed by issue #119) and the
-// Daily Challenge date ride with the deal, and are validated like every other
-// field.
+// unused since the star rating they fed was removed by issue #119) ride with
+// the deal and are validated like every other field. The `daily` date that
+// rode with them is gone with the Daily board (issue #183) — a record still
+// carrying one parses, ignoring it, so an in-flight board is not thrown away
+// on upgrade.
 //
 // The version itself is v7 since issue #176. The record's *shape* did not
 // change — these fields are all still here — but every pair is now scored at
@@ -14,13 +16,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import {
-  CONCEAL_RATIO,
-  dailyLayoutId,
-  dailySeed,
-  generateValidatedLevel,
-  parseLayout,
-} from '@mahjongsolitaire/core';
+import { CONCEAL_RATIO, generateValidatedLevel, parseLayout } from '@mahjongsolitaire/core';
 import type { LayoutFile } from '@mahjongsolitaire/core';
 import { Game } from '../src/game.js';
 import { SAVE_VERSION, captureSave, parseSave, reopen } from '../src/save.js';
@@ -31,42 +27,49 @@ function loadLayout(id: string) {
   return parseLayout(JSON.parse(readFileSync(new URL(`${id}.json`, LAYOUT_DIR), 'utf8')) as LayoutFile);
 }
 
+/** A date key a stale record might still carry. */
 const KEY = '2026-09-01';
-const layout = loadLayout(dailyLayoutId(KEY));
+const layout = loadLayout('pyramid');
 
-function dailyGame(): Game {
-  return new Game(generateValidatedLevel(layout, dailySeed(KEY)), undefined, []);
+function dealtGame(): Game {
+  return new Game(generateValidatedLevel(layout, 476086030), undefined, []);
 }
 
-test('v6 carries hints, undos and the daily date, and round-trips them', () => {
-  const save = captureSave(dailyGame(), {
+test('v6 carries hints and undos, and round-trips them', () => {
+  const save = captureSave(dealtGame(), {
     shuffles: 1,
     hints: 2,
     undos: 3,
     elapsedMs: 4000,
-    daily: KEY,
   });
   assert.equal(SAVE_VERSION, 7);
   assert.equal(save.hints, 2);
   assert.equal(save.undos, 3);
-  assert.equal(save.daily, KEY);
   const parsed = parseSave(JSON.parse(JSON.stringify(save)));
   assert.ok(parsed);
   assert.equal(parsed.hints, 2);
   assert.equal(parsed.undos, 3);
-  assert.equal(parsed.daily, KEY);
-  // …and the Daily deal reopens on its own layout.
   assert.ok(reopen(layout, parsed, CONCEAL_RATIO.medium));
 });
 
-test('a ladder deal says daily: null outright', () => {
-  const save = captureSave(dailyGame(), { shuffles: 0, hints: 0, undos: 0, elapsedMs: 0, daily: null });
-  assert.equal(parseSave(JSON.parse(JSON.stringify(save)))?.daily, null);
+test('a record written with a daily field resumes as an ordinary board', () => {
+  // Issue #183 retired the Daily board. A board captured mid-Daily is still a
+  // real deal, so the field is ignored rather than rejected — the deal resumes
+  // as a ladder board instead of being thrown away on upgrade.
+  const good = JSON.parse(
+    JSON.stringify(captureSave(dealtGame(), { shuffles: 0, hints: 0, undos: 0, elapsedMs: 0 })),
+  ) as Record<string, unknown>;
+  for (const stale of [KEY, null, 'today', 20260901]) {
+    const parsed = parseSave({ ...good, daily: stale });
+    assert.ok(parsed, `daily: ${String(stale)} still parses`);
+    assert.equal((parsed as unknown as Record<string, unknown>)['daily'], undefined);
+    assert.ok(reopen(layout, parsed, CONCEAL_RATIO.medium));
+  }
 });
 
-test('bad assist counts or a bad date reject the record', () => {
+test('bad assist counts reject the record', () => {
   const good = JSON.parse(
-    JSON.stringify(captureSave(dailyGame(), { shuffles: 0, hints: 0, undos: 0, elapsedMs: 0, daily: KEY })),
+    JSON.stringify(captureSave(dealtGame(), { shuffles: 0, hints: 0, undos: 0, elapsedMs: 0 })),
   ) as Record<string, unknown>;
   assert.ok(parseSave(good));
   const cases: Record<string, unknown> = {
@@ -76,13 +79,6 @@ test('bad assist counts or a bad date reject the record', () => {
       const { hints: _h, ...rest } = good;
       return rest;
     })(),
-    'missing daily': (() => {
-      const { daily: _d, ...rest } = good;
-      return rest;
-    })(),
-    'daily not a date': { ...good, daily: 'today' },
-    'daily impossible date': { ...good, daily: '2026-02-30' },
-    'daily a number': { ...good, daily: 20260901 },
   };
   for (const [name, record] of Object.entries(cases)) {
     assert.equal(parseSave(record), null, name);
@@ -91,7 +87,7 @@ test('bad assist counts or a bad date reject the record', () => {
 
 test('an older record reads as absent — the in-flight deal restarts, progress keeps', () => {
   const current = JSON.parse(
-    JSON.stringify(captureSave(dailyGame(), { shuffles: 0, hints: 0, undos: 0, elapsedMs: 0, daily: null })),
+    JSON.stringify(captureSave(dealtGame(), { shuffles: 0, hints: 0, undos: 0, elapsedMs: 0 })),
   ) as Record<string, unknown>;
   const v5: Record<string, unknown> = { ...current, version: 5 };
   delete v5['hints'];
