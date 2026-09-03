@@ -40,6 +40,11 @@ export interface A11yTile {
    *  for a hidden face (issue #165): a face-down tile whose match is held does
    *  clear on activation, but saying so would leak the face. */
   readonly pairsWithHeld?: boolean;
+  /** This tile's face matches the current peek (issue #169, amending decision
+   *  0025 point 2): activating it clears the pair through the holder rather
+   *  than parking it — same label as `pairsWithHeld`, and the same reason it
+   *  is never true for a hidden face. */
+  readonly pairsWithPeek?: boolean;
 }
 
 /**
@@ -81,7 +86,7 @@ export function tileAriaLabel(tile: A11yTile, parkEndsLevel = false): string {
   const { label } = faceStyle(tile.face);
   const action = !tile.free
     ? ''
-    : tile.pairsWithHeld
+    : tile.pairsWithHeld || tile.pairsWithPeek
       ? ', activate to clear it with its match in the holder'
       : parkEndsLevel
         ? ', activate to send it to the last holder slot, which ends the level'

@@ -76,16 +76,31 @@ test('the reveal tap never matches with an empty holder — the first tile alone
   assert.equal(game.tilesLeft, 4, 'nothing matched on the reveal');
 });
 
-test('peeking, then tapping a second concealed tile with the SAME face peeks it — no board match (issue #165)', () => {
-  // Decision 0018's board-side pair is gone: the second tile is just the new
-  // peek. Two concealed partners are cleared by holding one and tapping the
-  // other from memory (see game-facedown-holder.test.ts).
+test('peeking, then tapping a second concealed tile with a DIFFERENT face peeks it — no board match (issue #165)', () => {
+  // Decision 0018's board-side pair is gone: a non-matching second tile is
+  // just the new peek.
+  const game = new Game(ROW, undefined, [0, 1]);
+  game.tap(free(0), 1); // peek dots-1
+  const outcome = game.tap(free(1), 2); // bamboo-2: does not match the peek
+  assert.deepEqual(outcome, { kind: 'peeked', id: 1 });
+  assert.equal(game.tilesLeft, 4);
+  assert.equal(game.isFaceHidden(0), true);
+});
+
+test('peeking, then tapping a second concealed tile with the SAME face clears both (issue #169, amending decision 0025)', () => {
+  // The narrow amendment: a tap matching the current peek clears through the
+  // holder, even blind (both tiles are still concealed here) — the flight
+  // shows both flips landing in the strip, not a board-side vanish (decision
+  // 0018 stays retired; decision 0013 still resolves pairs in the holder).
   const game = new Game(ROW, undefined, [0, 2]);
   game.tap(free(0), 1); // peek dots-1
   const outcome = game.tap(free(2), 2);
-  assert.deepEqual(outcome, { kind: 'peeked', id: 2 });
-  assert.equal(game.tilesLeft, 4);
-  assert.equal(game.isFaceHidden(0), true);
+  assert.equal(outcome.kind, 'matched');
+  assert.equal((outcome as { a: number }).a, 0);
+  assert.equal((outcome as { b: number }).b, 2);
+  assert.equal((outcome as { revealed?: boolean }).revealed, true, 'b was never shown on the board');
+  assert.equal(game.tilesLeft, 2);
+  assert.equal(game.peeked, null);
 });
 
 test('the holder IS consulted for a hidden tile (issue #165, amending decision 0010)', () => {

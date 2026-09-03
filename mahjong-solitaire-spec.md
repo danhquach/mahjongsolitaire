@@ -102,7 +102,8 @@ The holder is **one-way** (decision 0009, superseding 0008):
 ### 3.3 Matching
 *(reworked by issue #93 / decision 0013 — pairs assemble and clear in the
 holder; selection is no longer a concept. Face-down rules per issue #165 /
-decision 0025, which superseded issue #124 / decision 0018.)*
+decision 0025, which superseded issue #124 / decision 0018, narrowed by issue
+#169.)*
 - **One tap on a revealed free tile sends it to the holder.** No select-first
   step, no deselect, no mismatch: every tap on a playable tile is a move.
 - **If the tapped tile's face matches a tile already in the holder, the pair
@@ -126,12 +127,21 @@ decision 0025, which superseded issue #124 / decision 0018.)*
   has no timeout. Only one peek shows at a time; peeking another face-down
   tile flips the first back in the same frame. The second tap on the peeked
   tile sends it to the holder like any visible tile.
-- **A peek is passive (issue #165):** while a peek is showing, a tap on any
-  *other* free tile does exactly what it would with no peek showing — parks,
-  or clears against the holder — and the peek flips back face down. Undo
-  returns the newest parked tile and leaves the peek showing; Shuffle drops
-  it. A face-down tile's accessible name never says more than "peek", even
-  when the activation would clear it.
+- **A peek is passive for a non-matching tap (issue #165, narrowed by issue
+  #169):** while a peek is showing, a tap on a free tile whose real face does
+  *not* match the peek does exactly what it would with no peek showing —
+  parks, or clears against the holder — and the peek flips back face down.
+  **A tap on a free tile whose real face *does* match the peek clears the
+  pair instead** — same score, feedback and undo entry as any other match,
+  hidden or not — and the clear still goes through the holder (decision
+  0013): both tiles travel to and clear in the strip, the face-down half
+  flipping on the way in, exactly like a match against an already-held tile.
+  It never occupies the holder past its limit or trips the full-holder loss
+  (§3.5) as a side effect. A tap matching a tile already in the holder takes
+  priority over a tap matching the peek. Undo returns the newest parked tile
+  and leaves the peek showing; Shuffle drops it. A face-down tile's
+  accessible name never says more than "peek", even when the activation would
+  clear it — against the holder or against the peek.
 - Note for §7: nothing here is a double-tap gesture. A concealed tile's two
   taps are two ordinary activations with no timing window, and every free
   tile's accessible name spells out what activating it does.
