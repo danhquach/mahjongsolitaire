@@ -621,6 +621,15 @@ async function start(): Promise<void> {
       hint: hintPair,
       dimBlocked: settings.value.highlightFree,
     });
+    // draw() resets the board-wide desaturation. While the "No moves left"
+    // dialog is up the board is at its resting grey (issue #159) — the
+    // grey-out's fade is over by the time the dialog reveals, and a redraw
+    // underneath it (a resize, a still-stuck rescue) must not hand the
+    // board back in colour. Before the reveal the live GreyOutEffect owns
+    // the amount and reapplies it on its next tick.
+    if (game.status() === 'stuck' && overlay.classList.contains('visible')) {
+      renderer.setDesaturation(1);
+    }
     // The Level chip shows the date on a Daily board (issue #19).
     levelEl.textContent = daily === null ? String(progress.level) : formatDateKey(daily, 'short');
     syncHudIdentity();
@@ -983,6 +992,10 @@ async function start(): Promise<void> {
     const reveal = (): void => {
       pendingDialogTimer = null;
       overlay.classList.add('visible');
+      // From here redraw() holds the resting grey itself (issue #159); pin
+      // it now too, in case a redraw between the fade's end and this reveal
+      // (a rotation mid-theatre) reset it with no live effect left to reapply.
+      renderer.setDesaturation(1);
       focusWayOut(wayOut);
     };
     const { dialogAtMs } = stuckSchedule(skipTheatre);
@@ -2656,8 +2669,8 @@ async function start(): Promise<void> {
     // full end-of-level teardown (which would drop the grey wash and reveal
     // the board back in full colour underneath it) must not run. Only the
     // pulses are dropped — the near-pairs they pointed at may no longer be
-    // accurate — and the instant wash/grey-out is reapplied below, after
-    // redraw() (which resets desaturation on every call).
+    // accurate — and the instant wash is reapplied below; redraw() itself
+    // restores the grey-out under an open stuck dialog (issue #159).
     const stillStuck = fromDialog && (kind === 'undo' || kind === 'shuffle') && game.status() === 'stuck';
     // Undo puts a parked tile back on the board and Shuffle repaints every
     // face: a copy still flying from the old board would paint over the new
@@ -2675,9 +2688,9 @@ async function start(): Promise<void> {
     if (result.ok) persist();
     if (stillStuck) {
       // No cue, no re-announcement: the dialog never closed, this only
-      // restores the grey-out and wash that redraw() just erased. wash()
-      // replaces its own node rather than stacking, so this does not
-      // re-fade anything — it lands straight on the same final opacity.
+      // restores the wash the rescue's teardown dropped. wash() replaces
+      // its own node rather than stacking, so this does not re-fade
+      // anything — it lands straight on the same final opacity.
       const reduced = settings.value.reducedMotion || prefersReducedMotion();
       lossFx.wash({
         reduced,
@@ -2688,7 +2701,6 @@ async function start(): Promise<void> {
         durationMs: STUCK_WASH_MS,
         sweep: true,
       });
-      animator.greyOut(true);
     }
     // Undo and Shuffle can lift a deadlock: showStatus closes the dialog once
     // the board is playable again.

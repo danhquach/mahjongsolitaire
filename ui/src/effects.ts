@@ -211,9 +211,16 @@ class SlumpEffect implements Effect {
  * an `instant` jump straight to fully grey) — the wash. rather than motion,
  * is the point of the effect, so reduced motion collapses it rather than
  * skipping it. `instant` also covers a reload of an already-stuck save.
+ *
+ * Unlike the other effects, finishing is not the end of what it shows: the
+ * board stays grey for as long as it is stuck (issue #159), so a finished
+ * grey-out leaves its filter in place and only a cancel — `Animator.clear()`
+ * from a rescue or a new deal, whose redraw() resets the filter anyway —
+ * takes it down mid-fade.
  */
 class GreyOutEffect implements Effect {
   private t: number;
+  private finished = false;
 
   constructor(
     private readonly setDesaturation: (amount: number) => void,
@@ -226,11 +233,12 @@ class GreyOutEffect implements Effect {
   advance(dtMs: number): boolean {
     this.t += dtMs;
     this.setDesaturation(stuckGreyOut(this.t));
-    return this.t < STUCK_WASH_MS;
+    this.finished = this.t >= STUCK_WASH_MS;
+    return !this.finished;
   }
 
   dispose(): void {
-    this.setDesaturation(0);
+    if (!this.finished) this.setDesaturation(0);
   }
 }
 
