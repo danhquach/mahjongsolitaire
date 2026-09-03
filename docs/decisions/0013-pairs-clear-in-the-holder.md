@@ -30,11 +30,12 @@ feel bolted on and matches never involved it visually (#73).
    first tap reveals in place and does nothing else (issue #77's
    peek-auto-match is retired — the reveal must not also move the tile); the
    second tap sends the tile to the holder like any other.
-   *Amended by decision 0018 (issue #124, 2026-09-02):* while that reveal is
-   showing, a tap on any **other** free tile matches directly against it on
-   the board instead of parking — restoring issue #77's shortcut for two
-   concealed tiles — or fails the attempt on a mismatch. The peeked tile's own
-   second tap is unchanged.
+   *Amended by decision 0018 (issue #124, 2026-09-02), then superseded by
+   decision 0025 (issue #165, 2026-09-02):* the holder **is** consulted for a
+   hidden face — a face-down tile whose match is held clears on its first
+   tap, flipping in flight — and only otherwise does the first tap peek. A
+   peek is passive: a tap on any other free tile is an ordinary park or clear
+   and drops the peek. The peeked tile's own second tap is unchanged.
 5. **The match feedback moves to the tray** (subsumes #73): a DOM flight from
    board to slot, a side-by-side dwell, a +score popup and a particle burst at
    the strip (tray-fx.ts). Reduced motion degrades to the instant state swap,

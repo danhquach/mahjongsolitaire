@@ -577,12 +577,23 @@ export class BoardRenderer {
    * its own geometry.
    */
   tileImage(face: string): string {
-    const cached = this.tileImages.get(face);
+    return this.bakeTile(face, face, false);
+  }
+
+  /** The face-down back, baked the same way (issue #165): the flight of a
+   *  face-down tile tapped from memory starts as this and turns over on the
+   *  way to the holder. One entry, keyed apart from every real face. */
+  tileBackImage(): string {
+    return this.bakeTile(' back', 'dots-1', true);
+  }
+
+  private bakeTile(key: string, face: string, hidden: boolean): string {
+    const cached = this.tileImages.get(key);
     if (cached) return cached;
     const slot = { x: 0, y: 0, z: this.topZ };
     const node = this.buildTile(
       { id: -1, slot, face, removed: false },
-      { flashed: false, hinted: false, dimmed: false },
+      { flashed: false, hinted: false, dimmed: false, hidden },
     );
     const r = tileRect(slot);
     const canvas = this.app.renderer.extract.canvas({
@@ -594,7 +605,7 @@ export class BoardRenderer {
     });
     node.destroy({ children: true });
     const url = canvas.toDataURL?.('image/png') ?? '';
-    this.tileImages.set(face, url);
+    this.tileImages.set(key, url);
     return url;
   }
 

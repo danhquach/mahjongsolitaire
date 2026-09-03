@@ -585,12 +585,9 @@ async function start(): Promise<void> {
       concealed: game.isFaceHidden(t.id),
       // The game's own match rule (issue #93): a tile whose match is in the
       // holder announces "clear the pair" rather than "send to the holder".
+      // Never true for a hidden face (issue #165): the tap would clear it,
+      // but the label must not say so — that names the face by implication.
       pairsWithHeld: game.pairsWithHeld(t.id),
-      // Issue #124: while a peek is showing, every *other* free tile is in
-      // "matching against the peek" mode — parking is off the table. The
-      // peeked tile itself keeps its ordinary label, so it is excluded here.
-      peekShowing: game.peeked !== null && game.peeked !== t.id,
-      pairsWithPeek: game.pairsWithPeek(t.id),
     }));
   }
 
@@ -2551,16 +2548,16 @@ async function start(): Promise<void> {
   }
 
   /** Speak what a tap did — the canvas shows it, but only visually. */
-  function announce(outcome: TapOutcome, heldBefore: readonly (TileId | null)[]): void {
+  function announce(outcome: TapOutcome): void {
     switch (outcome.kind) {
-      case 'matched': {
-        // A peek-pair (issue #124) clears on the board — neither tile was held.
-        const where = heldBefore.includes(outcome.a) ? 'in the holder' : 'on the board';
+      case 'matched':
+        // `a` is always the held half (issue #93; the board-side peek-pair of
+        // #124 is gone since #165). Naming the pair by `a` never leaks a
+        // hidden face: `b` may have been face-down, but its face is `a`'s.
         announcer.say(
-          `${label(outcome.a)} pair matched ${where}. ${game.tilesLeft} tiles left. Score ${game.score}.`,
+          `${label(outcome.a)} pair matched in the holder. ${game.tilesLeft} tiles left. Score ${game.score}.`,
         );
         break;
-      }
       case 'blocked':
         announcer.say(`${label(outcome.id)} is blocked by another tile.`);
         break;
@@ -2586,13 +2583,6 @@ async function start(): Promise<void> {
         // the face flip up, so the face name is exactly what is spoken.
         announcer.say(`${label(outcome.id)} revealed.`);
         break;
-      case 'peek-mismatch': {
-        // Issue #124: a failed match attempt against the peek — not a move.
-        // A still-hidden tapped tile is never named by face (decision 0010).
-        const who = game.isFaceHidden(outcome.id) ? 'That tile' : label(outcome.id);
-        announcer.say(`${who} does not match the revealed tile. Revealed tile hidden again.`);
-        break;
-      }
       default:
         break;
     }
@@ -2740,7 +2730,6 @@ async function start(): Promise<void> {
     switch (outcome.kind) {
       case 'blocked':
       case 'holder-full':
-      case 'peek-mismatch':
         return 'mismatch';
       case 'held':
       case 'peeked':
@@ -2808,7 +2797,7 @@ async function start(): Promise<void> {
     // A match or a park changes the board, so the highlighted hint is stale.
     // Any other tap keeps it: peeking near one hinted tile must not hide it.
     if (outcome.kind === 'matched' || outcome.kind === 'held') hintPair = [];
-    if (outcome.kind === 'blocked' || outcome.kind === 'peek-mismatch') {
+    if (outcome.kind === 'blocked') {
       flashTiles([outcome.id]);
       animator.shake([outcome.id]);
     }
@@ -2819,24 +2808,18 @@ async function start(): Promise<void> {
       // Sound answers the tap; the haptic waits for the pair clear (the same
       // split issue #44 used for the collision).
       feedback.sound('match');
-      const slotIndex = heldBefore.indexOf(outcome.a);
-      const slotNode = slotIndex === -1 ? undefined : holder.slotNode(slotIndex);
+      // `a` is always a held tile (issue #93; issue #165 retired the
+      // board-side peek-pair), so the slot it left is where the pair shows.
+      const slotNode = holder.slotNode(heldBefore.indexOf(outcome.a));
       if (slotNode) {
+        // Issue #165: a face-down tile tapped from memory flips in flight —
+        // the board never showed its face, so the copy starts as the back
+        // and turns over on the way to the slot.
+        const pictures = { incoming: tilePicture(outcome.b), parked: tilePicture(outcome.a) };
         trayFx.pairClear(
-          { incoming: tilePicture(outcome.b), parked: tilePicture(outcome.a) },
+          outcome.revealed ? { ...pictures, incomingBack: renderer.tileBackImage() } : pictures,
           tileFlightBox(outcome.b),
           slotNode,
-          outcome.score.points,
-          () => feedback.haptic('match'),
-        );
-      } else {
-        // Issue #124: a peek-pair — neither tile was ever held, so there is
-        // no slot to anchor on. Both pictures clear where they sat on the
-        // board instead (board.get() still resolves the just-removed tiles).
-        trayFx.pairClearOnBoard(
-          { a: tilePicture(outcome.a), b: tilePicture(outcome.b) },
-          tileFlightBox(outcome.a),
-          tileFlightBox(outcome.b),
           outcome.score.points,
           () => feedback.haptic('match'),
         );
@@ -2865,15 +2848,13 @@ async function start(): Promise<void> {
     // Spec §7: auto-save on every move. A tap that changed nothing (a miss, a
     // buried tile) has nothing to save.
     // A refused park (issue #43 rule 5) changed nothing either, and a peek is
-    // deliberately not saved (issue #64): a reload re-conceals. A failed match
-    // attempt against the peek (issue #124) is not a move either — same
-    // reasoning, nothing to save.
-    if (!['none', 'blocked', 'holder-full', 'peeked', 'peek-mismatch'].includes(outcome.kind)) {
+    // deliberately not saved (issue #64): a reload re-conceals.
+    if (!['none', 'blocked', 'holder-full', 'peeked'].includes(outcome.kind)) {
       persist();
     }
     // A level-ending move is announced once, by showStatus: two live-region
     // writes in the same tick coalesce and the first is never spoken.
-    if (game.status() === 'playing') announce(outcome, heldBefore);
+    if (game.status() === 'playing') announce(outcome);
     showStatus();
   }
 

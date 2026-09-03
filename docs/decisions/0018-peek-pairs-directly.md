@@ -1,6 +1,6 @@
 # 0018 — A peek matches directly on the board
 
-**Date:** 2026-09-02 · **Status:** accepted · **Ticket:** issue #124 · **Amends:** 0013 point 4
+**Date:** 2026-09-02 · **Status:** superseded by 0025 (issue #165, 2026-09-02) · **Ticket:** issue #124 · **Amends:** 0013 point 4
 
 ## Context
 

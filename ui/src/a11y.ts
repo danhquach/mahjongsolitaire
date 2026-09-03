@@ -36,16 +36,10 @@ export interface A11yTile {
    *  face, so it announces it too. */
   readonly concealed?: boolean;
   /** This tile's face matches a held tile (issue #93): activating it clears
-   *  the pair rather than parking it, and the label says which. */
+   *  the pair rather than parking it, and the label says which. Never true
+   *  for a hidden face (issue #165): a face-down tile whose match is held does
+   *  clear on activation, but saying so would leak the face. */
   readonly pairsWithHeld?: boolean;
-  /** A peek is showing, and this is not the peeked tile itself (issue #124):
-   *  activating this tile matches it against the peek — for better or worse —
-   *  rather than parking or peeking. */
-  readonly peekShowing?: boolean;
-  /** This tile's face matches the showing peek (issue #124): activating it
-   *  clears the pair directly on the board. Only meaningful alongside
-   *  `peekShowing`. */
-  readonly pairsWithPeek?: boolean;
 }
 
 /**
@@ -77,33 +71,21 @@ export function tileAriaLabel(tile: A11yTile, parkEndsLevel = false): string {
   const { row, col } = slotPosition(tile.slot);
   // A face-down tile must announce as face-down, not by its face (issue #64) —
   // reading the glyph out would hand a screen-reader player what a sighted one
-  // cannot see. The first activation only peeks (issue #93), so that is the
-  // whole action on offer.
-  // Issue #124: with a peek showing, every other free tile is briefly in
-  // "matching against the peek" mode — parking is not on offer, whether or
-  // not this tile's own face is visible.
+  // cannot see. "Peek" is the only action ever offered on a hidden face
+  // (issue #165): when its match is already held the activation clears the
+  // pair instead, but announcing that would name the face by implication.
   if (tile.concealed) {
-    const action = !tile.free
-      ? ''
-      : tile.peekShowing
-        ? tile.pairsWithPeek
-          ? ', activate to match it with the revealed tile'
-          : ', activate to try it against the revealed tile'
-        : ', activate to peek at it';
+    const action = tile.free ? ', activate to peek at it' : '';
     return `Face-down tile, ${state}, row ${row}, column ${col}${action}`;
   }
   const { label } = faceStyle(tile.face);
   const action = !tile.free
     ? ''
-    : tile.peekShowing
-      ? tile.pairsWithPeek
-        ? ', activate to match it with the revealed tile'
-        : ', activate to try it against the revealed tile'
-      : tile.pairsWithHeld
-        ? ', activate to clear it with its match in the holder'
-        : parkEndsLevel
-          ? ', activate to send it to the last holder slot, which ends the level'
-          : ', activate to send it to the holder';
+    : tile.pairsWithHeld
+      ? ', activate to clear it with its match in the holder'
+      : parkEndsLevel
+        ? ', activate to send it to the last holder slot, which ends the level'
+        : ', activate to send it to the holder';
   return `${label}, ${state}, row ${row}, column ${col}${action}`;
 }
 
