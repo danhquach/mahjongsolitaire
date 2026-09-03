@@ -6,7 +6,13 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { dailyLayoutId, dailySeed, generateValidatedLevel, parseLayout } from '@mahjongsolitaire/core';
+import {
+  CONCEAL_RATIO,
+  dailyLayoutId,
+  dailySeed,
+  generateValidatedLevel,
+  parseLayout,
+} from '@mahjongsolitaire/core';
 import type { LayoutFile } from '@mahjongsolitaire/core';
 import { Game } from '../src/game.js';
 import { SAVE_VERSION, captureSave, parseSave, reopen } from '../src/save.js';
@@ -42,7 +48,7 @@ test('v6 carries hints, undos and the daily date, and round-trips them', () => {
   assert.equal(parsed.undos, 3);
   assert.equal(parsed.daily, KEY);
   // …and the Daily deal reopens on its own layout.
-  assert.ok(reopen(layout, parsed, 'medium'));
+  assert.ok(reopen(layout, parsed, CONCEAL_RATIO.medium));
 });
 
 test('a ladder deal says daily: null outright', () => {

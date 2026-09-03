@@ -54,7 +54,6 @@ import {
   isDateKey,
 } from '@mahjongsolitaire/core';
 import type {
-  DifficultyBucket,
   Layout,
   MoveRecord,
   ScoreSnapshot,
@@ -365,7 +364,7 @@ export function parseSave(record: unknown): SaveState | null {
 export function reopen(
   layout: Layout,
   save: SaveState,
-  concealBucket?: DifficultyBucket,
+  concealRatio?: number,
 ): Game | null {
   if (layout.id !== save.layoutId) return null;
   try {
@@ -373,11 +372,13 @@ export function reopen(
     // A reseeded deal is a different deal: the save's tile ids and faces belong
     // to the seed that validated when it was written.
     if (level.seed !== save.seed) return null;
-    // A ladder deal conceals by its ladder band (issue #79), which the save
-    // does not record — the caller re-derives it from (layoutId, seed), the
-    // same way the deal itself is re-derived.
+    // A ladder deal conceals at its level's own ratio (issues #79, #175),
+    // which the save does not record — the caller re-derives it from
+    // (layoutId, seed), the same way the deal itself is re-derived. Compared
+    // against undefined, not for truthiness: 0 is a real ratio (levels 1–4)
+    // and must conceal nothing rather than fall back to the deal's default.
     const concealed =
-      concealBucket === undefined ? undefined : concealedTileIds(level, concealBucket);
+      concealRatio === undefined ? undefined : concealedTileIds(level, concealRatio);
     return new Game(level, save.snapshot, concealed);
   } catch {
     return null;

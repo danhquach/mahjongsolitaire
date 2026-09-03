@@ -48,7 +48,9 @@ import { Application } from 'pixi.js';
 import {
   HOLDER_SLOTS,
   bandForLevel,
+  CONCEAL_RATIO,
   concealBucketForBand,
+  concealRatioForLevel,
   dailyDateKey,
   dailyLayoutId,
   dailySeed,
@@ -59,7 +61,6 @@ import {
   parseLayout,
 } from '@mahjongsolitaire/core';
 import type {
-  DifficultyBucket,
   HoldMove,
   LadderBand,
   LadderEntry,
@@ -199,6 +200,10 @@ const BOOSTER_PLURAL: Record<BoosterKind, string> = {
  *  included, so it sits one band up from the ladder's middle rather than at
  *  easy. */
 const DAILY_BAND: LadderBand = 'medium-plus';
+
+/** The Daily's concealment ratio. Unaffected by the easy-band ramp (issue
+ *  #175): the Daily has its own fixed band and no ladder level. */
+const DAILY_CONCEAL_RATIO = CONCEAL_RATIO[concealBucketForBand(DAILY_BAND)];
 
 /** A date key as the HUD chip shows it ("Sep 1") and as it is read out
  *  ("September 1, 2026"). Formatted in UTC from the key's own digits so the
@@ -350,11 +355,6 @@ async function start(): Promise<void> {
     return ladder.find((e) => e.layoutId === layoutId && e.seed === seed);
   }
 
-  /** The concealment bucket a ladder level deals at (decision 0011). */
-  function concealBucketFor(level: number): DifficultyBucket {
-    return concealBucketForBand(bandForLevel(level).band);
-  }
-
   // Boot into the saved game's layout when there is a save, else the current
   // ladder level's. A save whose layout cannot be fetched (renamed id, older
   // build) reads as absent, like every other untrusted record.
@@ -393,13 +393,14 @@ async function start(): Promise<void> {
    *  one (issue #94). Concealment follows the ladder band (decision 0011). */
   function dealCurrentLevel(seed: number): Game {
     const level = generateValidatedLevel(layout, seed);
-    return new Game(level, undefined, concealedTileIds(level, concealBucketForBand(bandInPlay())));
+    return new Game(level, undefined, concealedTileIds(level, concealRatioInPlay()));
   }
 
-  /** The band the deal on the table plays at: the ladder level's, or the
-   *  Daily's fixed band (issue #19). Drives concealment. */
-  function bandInPlay(): LadderBand {
-    return daily === null ? bandForLevel(progress.level).band : DAILY_BAND;
+  /** The concealment ratio the deal on the table plays at. The Daily has a
+   *  fixed band and no level number, so it stays on the bucket table; a ladder
+   *  deal goes through the level ramp (issue #175). */
+  function concealRatioInPlay(): number {
+    return daily === null ? concealRatioForLevel(progress.level) : DAILY_CONCEAL_RATIO;
   }
 
   /** The palette the deal on the table wears (issue #67): the Daily's, the
@@ -431,13 +432,15 @@ async function start(): Promise<void> {
 
   // Spec §7: resume mid-level after a force-quit. A save that cannot be
   // trusted (older build, changed layout, hand-edited record) reads as absent
-  // and the player gets a fresh deal instead of an error. A ladder save's
-  // concealment band is re-derived from its (layoutId, seed); a save from
-  // outside the ladder (an older build's random deal) falls back to the
-  // difficulty-derived default, as before.
-  // A save's (layoutId, seed) normally names a ladder entry; a re-rolled deal
-  // (issue #94) does not, but it is always the *current* level's, so its band
-  // — and with it the concealment bucket — comes from the ladder position.
+  // and the player gets a fresh deal instead of an error.
+  //
+  // A ladder save's concealment ratio is re-derived from its (layoutId, seed),
+  // which normally names a ladder entry. A re-rolled deal (issue #94) does not
+  // name one, but it is always the *current* level's, so the ladder position
+  // answers for it either way — which is why this never passes undefined and
+  // so never takes reopen's difficulty-derived fallback. Since issue #175 the
+  // ratio comes from the level, not the band, so a teaching level resumes at 0
+  // and must stay face-up.
   const savedEntry = saved === null ? undefined : ladderEntryFor(saved.layoutId, saved.seed);
   const resumed =
     saved === null
@@ -446,8 +449,8 @@ async function start(): Promise<void> {
           layout,
           saved,
           saved.daily !== null
-            ? concealBucketForBand(DAILY_BAND)
-            : concealBucketFor(savedEntry?.level ?? progress.level),
+            ? DAILY_CONCEAL_RATIO
+            : concealRatioForLevel(savedEntry?.level ?? progress.level),
         );
   // A failed resume can leave the save's layout loaded; the fresh deal is the
   // current ladder level's, so re-point at its layout first — and it is a

@@ -6,6 +6,14 @@ commit and build time of the running bundle.
 
 ## 2026-09-03
 
+- Face-down tiles now arrive at level 5 instead of level 10. Levels 1–4 stay
+  fully face-up as the teaching levels; from level 5 every level deals a few
+  tiles face-down, ramping from 5 tiles a board through level 9 to 8 tiles
+  from level 11 on. The decade milestones are unchanged — level 10 and level
+  20 still deal 11 — so a milestone is still a step up from the levels around
+  it. Matching, peeking, undo and the holder all behave exactly as before, and
+  the Daily Challenge is unaffected (#175).
+
 - The Leaderboard button on a cleared Daily Challenge works again. It used to
   open the daily board *behind* the win dialog, and because opening it also
   puts everything behind it out of reach, nothing on screen responded — the
