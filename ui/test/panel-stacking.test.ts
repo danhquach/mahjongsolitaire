@@ -2,12 +2,18 @@
 //
 // The panels all live in the same stacking context (siblings inside #board),
 // so paint order is decided by z-index, not by which one opened last. The
-// leaderboard is the one panel that opens *over* another dialog — the Daily
-// win screen offers a Leaderboard button — and the JS already assumes it
-// wins: opening it marks #overlay inert, and Escape closes it before anything
-// underneath. If it does not also paint above #overlay, the player is left
-// staring at an inert win dialog with the leaderboard hidden behind it, which
-// reads as a frozen game.
+// leaderboard used to be the one panel that opened *over* another dialog: the
+// Daily win screen offered a Leaderboard button, and because opening the board
+// also marked #overlay inert, a board painted underneath left the player
+// staring at an inert win dialog with nothing on screen able to respond — a
+// frozen game (issue #174).
+//
+// Issue #176 removed that route. The Daily pays nothing into the board and its
+// own board is gone, so the header button is the only way in and no dialog can
+// be up behind the leaderboard today. The rule is kept anyway: it is one line
+// of CSS, it is still correct, and it means a future route over a dialog
+// starts right instead of reintroducing #174. Nothing else in the page stacks
+// above #overlay, so this is the invariant that would silently break.
 //
 // Asserted against the stylesheet itself rather than a rendered page: the CSS
 // is inline in index.html, and this invariant is the whole bug.

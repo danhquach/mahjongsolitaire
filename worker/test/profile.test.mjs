@@ -6,6 +6,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+/** The Sunday opening the week these fixtures score into. */
+const WEEK = '2026-08-30';
+
 import { createRateLimitStore } from '../http.mjs';
 import { createDb } from './d1.mjs';
 import {
@@ -118,8 +121,8 @@ test('a name that merely contains a blocked word as a run is not refused', () =>
 test('a client record is sanitized field by field, not rejected', () => {
   const record = validateRecord({
     levelsCleared: 4,
-    bestScore: -1,
-    totalScore: 'nope',
+    weekScore: 'nope',
+    weekStart: WEEK,
     cleared: [3, 3, 1, 0, 99999, 'x'],
     dailyStreak: 9,
     lastDaily: '2026-09-01',
@@ -127,13 +130,26 @@ test('a client record is sanitized field by field, not rejected', () => {
   });
   assert.deepEqual(record, {
     levelsCleared: 4,
-    bestScore: 0,
-    totalScore: 0,
+    weekScore: 0,
+    weekStart: WEEK,
     cleared: [1, 3],
     dailyStreak: 9,
     lastDaily: '2026-09-01',
     trophies: 2,
   });
+});
+
+test('a week score with no week it belongs to is not a score', () => {
+  // Issue #176. This is also the migration: a pre-#176 record carries a
+  // lifetime `totalScore` and no `weekStart`, so it starts the first weekly
+  // board at zero instead of at a lifetime total nobody earned this week.
+  assert.equal(validateRecord({ weekScore: 5000 }).weekScore, 0);
+  assert.equal(validateRecord({ weekScore: 5000, weekStart: 'someday' }).weekScore, 0);
+  assert.equal(validateRecord({ weekScore: 5000, weekStart: WEEK }).weekScore, 5000);
+  const legacy = validateRecord({ levelsCleared: 400, bestScore: 20970, totalScore: 1250000 });
+  assert.equal(legacy.weekScore, 0);
+  assert.equal(legacy.weekStart, null);
+  assert.equal(legacy.levelsCleared, 400, 'a clear count is not a score and survives');
 });
 
 test('a streak with no anchoring date is dropped, and a non-object is not a record', () => {
@@ -144,14 +160,30 @@ test('a streak with no anchoring date is dropped, and a non-object is not a reco
 
 test('merging takes the max of every counter and the union of cleared levels', () => {
   const merged = mergeRecords(
-    { ...EMPTY_RECORD, levelsCleared: 10, bestScore: 900, totalScore: 5000, cleared: [1, 2], trophies: 7 },
-    { ...EMPTY_RECORD, levelsCleared: 3, bestScore: 1200, totalScore: 400, cleared: [2, 5], trophies: 1 },
+    { ...EMPTY_RECORD, levelsCleared: 10, weekScore: 5000, weekStart: WEEK, cleared: [1, 2], trophies: 7 },
+    { ...EMPTY_RECORD, levelsCleared: 3, weekScore: 400, weekStart: WEEK, cleared: [2, 5], trophies: 1 },
   );
   assert.equal(merged.levelsCleared, 10);
-  assert.equal(merged.bestScore, 1200);
-  assert.equal(merged.totalScore, 5000);
+  assert.equal(merged.weekScore, 5000);
+  assert.equal(merged.weekStart, WEEK);
   assert.deepEqual(merged.cleared, [1, 2, 5]);
   assert.equal(merged.trophies, 7);
+});
+
+test('the week score is the one field a merge may lower', () => {
+  // Every other counter here only grows, so "take max, never regress" is the
+  // whole rule. A weekly score resets (issue #176): taking the larger of two
+  // weeks would resurrect last week's total at the rollover and then keep
+  // winning every merge after it, so the reset could never stick.
+  const lastWeek = { ...EMPTY_RECORD, weekScore: 90000, weekStart: '2026-08-30' };
+  const thisWeek = { ...EMPTY_RECORD, weekScore: 120, weekStart: '2026-09-06' };
+  assert.equal(mergeRecords(lastWeek, thisWeek).weekScore, 120);
+  assert.equal(mergeRecords(lastWeek, thisWeek).weekStart, '2026-09-06');
+  assert.deepEqual(mergeRecords(thisWeek, lastWeek), mergeRecords(lastWeek, thisWeek));
+  // A side that has never scored contributes no week.
+  const scored = { ...EMPTY_RECORD, weekScore: 700, weekStart: WEEK };
+  assert.deepEqual(mergeRecords(scored, EMPTY_RECORD), scored);
+  assert.deepEqual(mergeRecords(EMPTY_RECORD, scored), scored);
 });
 
 test('a fresh install that clears today continues the long streak it never saw', () => {
@@ -173,8 +205,8 @@ test('a streak broken by a gap does not resurrect the older, longer one', () => 
 });
 
 test('merging is symmetric — neither side is privileged', () => {
-  const a = { ...EMPTY_RECORD, bestScore: 10, cleared: [1], dailyStreak: 4, lastDaily: '2026-09-01' };
-  const b = { ...EMPTY_RECORD, bestScore: 20, cleared: [2], dailyStreak: 1, lastDaily: '2026-09-02' };
+  const a = { ...EMPTY_RECORD, weekScore: 10, weekStart: WEEK, cleared: [1], dailyStreak: 4, lastDaily: '2026-09-01' };
+  const b = { ...EMPTY_RECORD, weekScore: 20, weekStart: WEEK, cleared: [2], dailyStreak: 1, lastDaily: '2026-09-02' };
   assert.deepEqual(mergeRecords(a, b), mergeRecords(b, a));
 });
 
@@ -238,14 +270,14 @@ test('a wrong, malformed or missing code is the same 401', async () => {
 test('sync merges the device into the server and persists the result', async () => {
   const env = { DB: createDb() };
   const { json: created } = await registerPlayer(env, makeDeps(), {
-    record: { ...EMPTY_RECORD, bestScore: 900, cleared: [1, 2], trophies: 4 },
+    record: { ...EMPTY_RECORD, weekScore: 900, weekStart: WEEK, cleared: [1, 2], trophies: 4 },
   });
   const response = await handleProfile(
     request('POST', '/api/profile/sync', {
       headers: bearer(created.code),
       body: {
         avatar: 'crane',
-        record: { ...EMPTY_RECORD, bestScore: 400, totalScore: 50, cleared: [2, 7], trophies: 1 },
+        record: { ...EMPTY_RECORD, weekScore: 400, weekStart: WEEK, cleared: [2, 7], trophies: 1 },
       },
     }),
     env,
@@ -254,8 +286,8 @@ test('sync merges the device into the server and persists the result', async () 
   assert.equal(response.status, 200);
   const { profile } = await response.json();
   assert.equal(profile.avatar, 'crane');
-  assert.equal(profile.record.bestScore, 900);
-  assert.equal(profile.record.totalScore, 50);
+  assert.equal(profile.record.weekScore, 900, 'same week: the larger score wins');
+  assert.equal(profile.record.weekStart, WEEK);
   assert.deepEqual(profile.record.cleared, [1, 2, 7]);
   assert.equal(profile.record.trophies, 4);
 

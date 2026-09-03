@@ -323,10 +323,39 @@ export function mergeRecords(local: PlayerRecord, remote: PlayerRecord): PlayerR
       lastDaily: later.lastDaily,
     };
   })();
+  // The week score is the one field here that can legitimately go *down*, so
+  // it is the one field Math.max would break (issue #176). Taking the larger
+  // of two weeks' scores would resurrect last week's total at the rollover and
+  // then keep winning every merge after it, so the reset could never stick.
+  // The later week wins outright; only within one shared week is the larger
+  // score the better record of what was earned.
+  const week = ((): { weekScore: number; weekStart: string | null } => {
+    if (local.weekStart === remote.weekStart) {
+    // Same week, so the larger score is the better record of what was earned.
+    //
+    // It is not a *sum*, and deliberately not: sync runs repeatedly, and
+    // merging two already-merged records would double the total every time.
+    // Without a per-run identity to deduplicate on, summing is unsafe in a way
+    // under-counting is not. The cost is that two devices playing disjoint
+    // levels in one week keep only the higher of the two, so the profile can
+    // read lower than the server's standing — which accumulates each
+    // submission independently and stays correct. Merge-by-max has always
+    // under-counted multi-device play; issue #176 does not change that, it
+    // only makes the gap visible next to a board. Flagged for the PM.
+      return {
+        weekScore: Math.max(local.weekScore, remote.weekScore),
+        weekStart: local.weekStart,
+      };
+    }
+    if (local.weekStart === null) return { weekScore: remote.weekScore, weekStart: remote.weekStart };
+    if (remote.weekStart === null) return { weekScore: local.weekScore, weekStart: local.weekStart };
+    return local.weekStart > remote.weekStart
+      ? { weekScore: local.weekScore, weekStart: local.weekStart }
+      : { weekScore: remote.weekScore, weekStart: remote.weekStart };
+  })();
   return {
     levelsCleared: Math.max(local.levelsCleared, remote.levelsCleared),
-    bestScore: Math.max(local.bestScore, remote.bestScore),
-    totalScore: Math.max(local.totalScore, remote.totalScore),
+    ...week,
     cleared: Array.from(new Set([...local.cleared, ...remote.cleared])).sort((a, b) => a - b),
     ...streak,
     trophies: Math.max(local.trophies, remote.trophies),

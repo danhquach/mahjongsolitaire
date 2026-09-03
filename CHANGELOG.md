@@ -6,6 +6,40 @@ commit and build time of the running bundle.
 
 ## 2026-09-03
 
+- The leaderboard is now a **weekly** board, and it ranks the ladder. Every
+  level you clear adds its score to your standing for the week; the week starts
+  Sunday 00:00 UTC so everyone is ranked over the same seven days, and the
+  board shows a countdown to the reset that ticks while it is open. Only the
+  live week is browsable — when it rolls over the board is empty and everyone
+  starts level. The Daily Challenge board is gone (#176).
+
+- **Score now scales with difficulty.** A pair is worth more on a harder level:
+  ×1 through the easy band, ×1.5 on medium, ×2 on medium-plus and ×2.5 on the
+  hard milestone spikes. It shows in the score as you play, so replaying an
+  easy level is the slowest way to climb the board rather than the fastest
+  (#176).
+
+- **The Daily Challenge no longer pays score.** Clearing it earns its trophy
+  and keeps your streak, exactly as before, and nothing else — it does not add
+  to your score, does not count as a level cleared, and still grants no
+  boosters. The score still shows while you play it, because the Super Combo
+  needs it (#176).
+
+- **One score instead of three.** The profile used to show a best score and a
+  lifetime total alongside the board's own ranking. It now shows a single
+  number: the score you have earned this week, the same one the leaderboard
+  ranks. Existing lifetime totals are not carried over — everyone starts the
+  first week at zero (#176).
+
+- The Leaderboard button has moved off the win screen; the button in the bottom
+  bar is now the way in. It was only ever offered after a Daily, and a Daily no
+  longer has anything to do with the board (#176).
+
+- A level in progress will not survive this update. Scores are calculated
+  differently now, so a game saved by the previous build restarts rather than
+  finishing at two different rates. Your level progress, boosters, trophies and
+  streak are untouched (#176).
+
 - Face-down tiles now arrive at level 5 instead of level 10. Levels 1–4 stay
   fully face-up as the teaching levels; from level 5 every level deals a few
   tiles face-down, ramping from 5 tiles a board through level 9 to 8 tiles

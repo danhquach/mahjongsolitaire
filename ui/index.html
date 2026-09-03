@@ -1201,7 +1201,7 @@
         margin-top: 4px;
       }
 
-      /* --- Daily leaderboard (issue #70) -------------------------------------
+      /* --- Weekly leaderboard (issues #70, #176) -----------------------------
          One row per entry: rank, avatar, name, score. The name is the only
          part that may be long, so it is the part that truncates. */
       #leaderboard ol {
@@ -1253,7 +1253,7 @@
         font-size: 15px;
         font-variant-numeric: tabular-nums;
       }
-      #leaderboard #leaderboard-date,
+      #leaderboard #leaderboard-resets,
       #leaderboard #leaderboard-status:not(:empty) {
         margin: 4px 0 0;
         font-size: 15px;
@@ -1621,8 +1621,8 @@
               id="btn-leaderboard"
               type="button"
               data-action="Leaderboard"
-              title="Daily leaderboard"
-              aria-label="Daily leaderboard"
+              title="Weekly leaderboard"
+              aria-label="Weekly leaderboard"
             >
               <!-- A trophy: cup, handles, stem, base. -->
               <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -1672,7 +1672,6 @@
               <button id="overlay-undo" type="button" data-action="Undo" hidden>Undo</button>
               <!-- Issue #70: only on a Daily win. Reading a board needs no
                    account, so this shows whether or not sync is on. -->
-              <button id="overlay-leaderboard" type="button" class="secondary" hidden>Leaderboard</button>
               <button id="overlay-restart" type="button">Restart level</button>
               <button id="overlay-new" type="button">New game</button>
             </div>
@@ -1704,8 +1703,11 @@
                 <legend>Your record</legend>
                 <div class="record-row"><span>Current level</span><strong id="record-level">1</strong></div>
                 <div class="record-row"><span>Levels cleared</span><strong id="record-cleared">0</strong></div>
-                <div class="record-row"><span>Best score</span><strong id="record-best">0</strong></div>
-                <div class="record-row"><span>Total score</span><strong id="record-total">0</strong></div>
+                <!-- One score, and it is this week's (issue #176). Best score
+                     and the lifetime total are gone: the weekly leaderboard
+                     ranks score earned this week, and the profile shows that
+                     same number rather than a second, separate tally. -->
+                <div class="record-row"><span>Score this week</span><strong id="record-week">0</strong></div>
                 <!-- Issue #19: the Daily streak as it stands today, and the
                      trophies Daily clears have paid. -->
                 <div class="record-row"><span>Daily Challenge streak</span><strong id="record-streak">0</strong></div>
@@ -1765,18 +1767,18 @@
                 </div>
                 <span id="sync-status" aria-live="polite"></span>
               </fieldset>
-              <!-- Daily leaderboard (issue #70). A second consent, not a
+              <!-- Weekly leaderboard (issues #70, #176). A second consent, not a
                    second copy of the first: sync gives the profile a home,
                    this puts the name in front of strangers. Off by default,
                    and turning it off withdraws every entry. -->
               <fieldset id="board-section">
-                <legend>Daily leaderboard</legend>
+                <legend>Weekly leaderboard</legend>
                 <label class="row" for="board-opt-in">
                   <input type="checkbox" id="board-opt-in" />
                   <span>
                     Show me on the leaderboard
                     <span class="hint" id="board-opt-in-hint"
-                      >Your name and avatar appear next to your Daily score. Turning this
+                      >Your name and avatar appear next to your score for the week. Turning this
                       off removes every score you have posted.</span
                     >
                   </span>
@@ -1789,16 +1791,21 @@
               <button id="profile-close" type="button">Done</button>
             </div>
           </div>
-          <!-- Daily leaderboard (issue #70). Its own dialog rather than a
-               section of the profile: it is a list that can be long, and it
-               is opened from the Daily win screen as well as from Settings. -->
+          <!-- Weekly leaderboard (issues #70, #176). Its own dialog rather than a
+               section of the profile: it is a list that can be long. -->
           <div id="leaderboard" role="dialog" aria-modal="true" aria-labelledby="leaderboard-title">
             <div class="card">
-              <h2 id="leaderboard-title">Daily leaderboard</h2>
-              <p id="leaderboard-date"></p>
+              <h2 id="leaderboard-title">Weekly leaderboard</h2>
+              <!-- The countdown to the reset (issue #176). Beside the heading
+                   rather than in the list, because it is true of the board as a
+                   whole and stays put while the list scrolls. aria-live is off:
+                   it ticks every second while the panel is open, and announcing
+                   each tick would talk over the board itself — it is read once
+                   with the board, from openLeaderboard. -->
+              <p id="leaderboard-resets"></p>
               <ol id="leaderboard-list" aria-labelledby="leaderboard-title"></ol>
               <p id="leaderboard-empty" hidden>
-                No scores posted for this board yet — clear the Daily Challenge to be first.
+                No scores this week yet — clear a level to be first.
               </p>
               <span id="leaderboard-status" aria-live="polite"></span>
               <button id="leaderboard-close" type="button">Done</button>

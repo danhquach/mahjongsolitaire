@@ -16,7 +16,14 @@
 // blocklist, so shipping a better one is a Worker deploy, not an app update).
 // sync.ts is the opt-in bridge between these two stores and that server.
 
-import { LADDER_LENGTH, dailyTrophies, daysBetween, isDateKey } from '@mahjongsolitaire/core';
+import {
+  LADDER_LENGTH,
+  dailyTrophies,
+  daysBetween,
+  isDateKey,
+  isWeekKey,
+  weekStartKey,
+} from '@mahjongsolitaire/core';
 import { readRecord, writeRecord } from './storage.js';
 import type { KeyValueStorage } from './storage.js';
 
@@ -148,13 +155,25 @@ export class ProfileStore {
 // --- the record ---------------------------------------------------------------
 
 export interface PlayerRecord {
-  /** Wins, lifetime — counts replays and Daily clears too, unlike the ladder
-   *  position. */
+  /** Ladder wins, lifetime — counts replays, unlike the ladder position. A
+   *  Daily clear is not a level and no longer counts here (issue #176). */
   readonly levelsCleared: number;
-  /** Highest final score of any won level. */
-  readonly bestScore: number;
-  /** Every won level's final score, summed (spec §6 "total score"). */
-  readonly totalScore: number;
+  /**
+   * Score earned this week. The one score the game records (issue #176): the
+   * lifetime total is gone, and this is both what the profile shows and what
+   * the weekly leaderboard ranks. Reset when `weekStart` is not the current
+   * week — see `currentWeek`.
+   *
+   * Deliberately renamed from `totalScore` rather than repurposed. An older
+   * record's lifetime total must not become a week-one score: it would put
+   * every established player at the top of the first board. Under the new name
+   * an old record simply has no week score, which parses to 0 — the migration
+   * is the rename.
+   */
+  readonly weekScore: number;
+  /** The week `weekScore` belongs to (`weekStartKey`), or null when nothing
+   *  has been scored yet. */
+  readonly weekStart: string | null;
   /** Ladder levels that have been cleared at least once (issue #119: a clear
    *  is a clear, no rating attached). */
   readonly cleared: readonly number[];
@@ -170,8 +189,8 @@ export interface PlayerRecord {
 
 export const EMPTY_RECORD: PlayerRecord = {
   levelsCleared: 0,
-  bestScore: 0,
-  totalScore: 0,
+  weekScore: 0,
+  weekStart: null,
   cleared: [],
   dailyStreak: 0,
   lastDaily: null,
@@ -183,8 +202,10 @@ export const RECORD_STORAGE_KEY = 'mahjong.record.v1';
 /** Per-field tolerance, like parseProfile: counters are non-negative integers
  *  or zero, the cleared set keeps only well-formed (1..LADDER_LENGTH) levels,
  *  and the last Daily date must be a real date key or it is forgotten (with
- *  the streak it vouched for). A record from before issue #19 has no
- *  totalScore, cleared or lastDaily and simply starts those at empty.
+ *  the streak it vouched for). A record from before issue #19 has no cleared
+ *  or lastDaily and simply starts those at empty; one from before issue #176
+ *  has a lifetime `totalScore` and no `weekStart`, which is exactly why it
+ *  reads as no week score at all rather than as this week's.
  *
  *  A record written before issue #119 stored a `stars` map (level → 1-3
  *  rating) instead of a `cleared` list. Any level key present in that old map
@@ -213,15 +234,33 @@ export function parsePlayerRecord(record: unknown): PlayerRecord {
     for (const key of Object.keys(rawStars as Record<string, unknown>)) addLevel(Number(key));
   }
   const lastDaily = isDateKey(raw['lastDaily']) ? raw['lastDaily'] : null;
+  // A week score is only meaningful next to the week it was earned in; without
+  // one it is not a score, it is a number of unknown age. This is what stops a
+  // pre-#176 record's lifetime total from being read as this week's.
+  const weekStart = isWeekKey(raw['weekStart']) ? raw['weekStart'] : null;
   return {
     levelsCleared: count('levelsCleared'),
-    bestScore: count('bestScore'),
-    totalScore: count('totalScore'),
+    weekScore: weekStart === null ? 0 : count('weekScore'),
+    weekStart,
     cleared: Array.from(cleared).sort((a, b) => a - b),
     dailyStreak: lastDaily === null ? 0 : count('dailyStreak'),
     lastDaily,
     trophies: count('trophies'),
   };
+}
+
+/**
+ * The score to *show* for this record right now (issue #176).
+ *
+ * Not simply `record.weekScore`: a record written last week still carries last
+ * week's number, and the board it is ranked on has already emptied. The stored
+ * value only counts while its week is the current one — otherwise the week has
+ * rolled over and the player starts from zero, whether or not they have played
+ * since. Reading it this way means no timer has to fire at the boundary for
+ * the profile to be right.
+ */
+export function weekScoreNow(record: PlayerRecord, nowMs: number): number {
+  return record.weekStart === weekStartKey(nowMs) ? record.weekScore : 0;
 }
 
 /** Has this ladder level ever been cleared (issue #51 keys first-clear grants
@@ -278,21 +317,31 @@ export class RecordStore {
     return this.current;
   }
 
-  /** A level was won at `score`: one more clear, the score banked into the
-   *  total, a new best if it is one — and, for a ladder level, marked cleared
-   *  (a Daily clear passes no level: ladder levels track clears, the Daily
-   *  pays in trophies). */
-  recordWin(score: number, rated?: { readonly level: number }): PlayerRecord {
-    const banked = Math.max(0, Math.floor(score));
-    const cleared =
-      rated !== undefined && !this.current.cleared.includes(rated.level)
-        ? [...this.current.cleared, rated.level].sort((a, b) => a - b)
-        : this.current.cleared;
+  /**
+   * A ladder level was won at `score`: one more clear, the score added to this
+   * week's, and the level marked cleared.
+   *
+   * Ladder only (issue #176). A Daily clear pays trophies and the streak and
+   * nothing else — it does not bank score and is not a level cleared — so it
+   * calls `recordDailyWin` alone and never comes through here.
+   *
+   * `nowMs` decides the week. When the stored week is not the current one the
+   * score starts again from this win rather than adding to a standing that has
+   * already been ranked and reset: the board and the profile show one number,
+   * so they have to roll over together.
+   */
+  recordWin(score: number, rated: { readonly level: number }, nowMs: number): PlayerRecord {
+    const earned = Math.max(0, Math.floor(score));
+    const week = weekStartKey(nowMs);
+    const carried = this.current.weekStart === week ? this.current.weekScore : 0;
+    const cleared = this.current.cleared.includes(rated.level)
+      ? this.current.cleared
+      : [...this.current.cleared, rated.level].sort((a, b) => a - b);
     this.current = {
       ...this.current,
       levelsCleared: this.current.levelsCleared + 1,
-      bestScore: Math.max(this.current.bestScore, banked),
-      totalScore: this.current.totalScore + banked,
+      weekScore: carried + earned,
+      weekStart: week,
       cleared,
     };
     writeRecord(this.storage, this.key, this.current);

@@ -51,6 +51,8 @@ import {
   CONCEAL_RATIO,
   concealBucketForBand,
   concealRatioForLevel,
+  scoreMultiplierForLevel,
+  BAND_SCORE_MULTIPLIER,
   dailyDateKey,
   dailyLayoutId,
   dailySeed,
@@ -134,6 +136,7 @@ import {
   dailyLockedFor,
   hasCleared,
   liveStreak,
+  weekScoreNow,
 } from './profile.js';
 import { SaveStore, captureSave, reopen } from './save.js';
 import {
@@ -153,14 +156,15 @@ import type { RemoteProfile, SyncCredentials, SyncFailure } from './sync.js';
 import {
   boardRows,
   compactHistory,
-  fetchDailyBoard,
-  formatBoardTime,
+  fetchWeeklyBoard,
+  formatResetCountdown,
   readOptIn,
-  submitDailyScore,
+  speakResetCountdown,
+  submitRunScore,
   withdrawFromBoard,
   writeOptIn,
 } from './leaderboard.js';
-import type { DailyBoard } from './leaderboard.js';
+import type { WeeklyBoard } from './leaderboard.js';
 import { DEFAULT_SETTINGS, SettingsStore, TILE_SIZE_FACTOR, TILE_SIZE_LABEL, TILE_SIZES } from './settings.js';
 import type { BooleanSetting, TileSize } from './settings.js';
 import { localKeyValueStorage } from './storage.js';
@@ -305,11 +309,10 @@ async function start(): Promise<void> {
   const boardOptInHint = el<HTMLElement>('board-opt-in-hint');
   const boardOpenButton = el<HTMLButtonElement>('board-open');
   const boardStatus = el<HTMLElement>('board-status');
-  const overlayLeaderboard = el<HTMLButtonElement>('overlay-leaderboard');
   const leaderboardButton = el<HTMLButtonElement>('btn-leaderboard');
   const leaderboardPanel = el<HTMLDivElement>('leaderboard');
   const leaderboardList = el<HTMLOListElement>('leaderboard-list');
-  const leaderboardDateLine = el<HTMLElement>('leaderboard-date');
+  const leaderboardResetLine = el<HTMLElement>('leaderboard-resets');
   const leaderboardEmpty = el<HTMLElement>('leaderboard-empty');
   const leaderboardStatus = el<HTMLElement>('leaderboard-status');
   const leaderboardClose = el<HTMLButtonElement>('leaderboard-close');
@@ -393,7 +396,22 @@ async function start(): Promise<void> {
    *  one (issue #94). Concealment follows the ladder band (decision 0011). */
   function dealCurrentLevel(seed: number): Game {
     const level = generateValidatedLevel(layout, seed);
-    return new Game(level, undefined, concealedTileIds(level, concealRatioInPlay()));
+    return new Game(
+      level,
+      undefined,
+      concealedTileIds(level, concealRatioInPlay()),
+      scoreMultiplierInPlay(),
+    );
+  }
+
+  /** The score multiplier the deal on the table plays at (issue #176): the
+   *  ladder level's band, or the Daily's own. The Daily banks nothing, but its
+   *  HUD still shows a score — it drives the Super Combo feedback — so it is
+   *  scored at its band like any other deal rather than at a bare ×1. */
+  function scoreMultiplierInPlay(): number {
+    return daily === null
+      ? scoreMultiplierForLevel(progress.level)
+      : BAND_SCORE_MULTIPLIER[DAILY_BAND];
   }
 
   /** The concealment ratio the deal on the table plays at. The Daily has a
@@ -441,16 +459,23 @@ async function start(): Promise<void> {
   // so never takes reopen's difficulty-derived fallback. Since issue #175 the
   // ratio comes from the level, not the band, so a teaching level resumes at 0
   // and must stay face-up.
+  //
+  // The score multiplier (issue #176) is re-derived the same way and for the
+  // same reason. It is not stored either, and getting it wrong here would be
+  // silent: the resumed deal would keep the points already earned and then pay
+  // a different rate for every match after the reload.
   const savedEntry = saved === null ? undefined : ladderEntryFor(saved.layoutId, saved.seed);
+  const savedLevel = savedEntry?.level ?? progress.level;
   const resumed =
     saved === null
       ? null
       : reopen(
           layout,
           saved,
+          saved.daily !== null ? DAILY_CONCEAL_RATIO : concealRatioForLevel(savedLevel),
           saved.daily !== null
-            ? DAILY_CONCEAL_RATIO
-            : concealRatioForLevel(savedEntry?.level ?? progress.level),
+            ? BAND_SCORE_MULTIPLIER[DAILY_BAND]
+            : scoreMultiplierForLevel(savedLevel),
         );
   // A failed resume can leave the save's layout loaded; the fresh deal is the
   // current ladder level's, so re-point at its layout first — and it is a
@@ -753,8 +778,6 @@ async function start(): Promise<void> {
     // The red-tinted card (issue #121) — only the holder-full loss gets it;
     // every other dialog (won, stuck) keeps the default green.
     overlay.classList.toggle('lost', status === 'lost');
-    // Shown again only by the Daily-win branch below.
-    overlayLeaderboard.hidden = true;
     if (status === 'won') {
       overlayRestart.hidden = true;
       if (daily === null) {
@@ -766,7 +789,12 @@ async function start(): Promise<void> {
         // Booster grants (issue #51, #117) key off the record *before* this
         // win is written: only a first clear can pay, a replay never does.
         const firstClear = !hasCleared(record.value, cleared);
-        record.recordWin(game.score, { level: cleared });
+        record.recordWin(game.score, { level: cleared }, Date.now());
+        // Issue #176: the weekly board ranks the ladder, so this is the win
+        // with somewhere to go. Every clear counts, replays included — the
+        // band score multiplier is what stops grinding an easy level from
+        // being the fastest way up, rather than a once-per-week rule.
+        submitRunResult(game.score, elapsed.ms);
         overlayTitle.textContent = `Level ${cleared} complete!`;
         overlayText.textContent = `Final score: ${game.score}`;
         winScoreSuffix = '';
@@ -794,9 +822,12 @@ async function start(): Promise<void> {
           `Level ${cleared} complete. Final score ${game.score}. ${grantLines.join(' ')}`.trim(),
         );
       } else {
-        // A Daily clear banks the score like any win and pays in trophies,
-        // once per date — a replay of a cleared board earns nothing twice.
-        record.recordWin(game.score);
+        // A Daily clear pays trophies and the streak and nothing else (issue
+        // #176): no score banked, no level counted. Score belongs to the
+        // ladder and to the weekly board the ladder feeds, and the Daily
+        // contributes to neither. Still once per date — a replay of a cleared
+        // board earns nothing twice. The score HUD stays up during the run
+        // because it drives the Super Combo feedback; it is simply not banked.
         const credit = record.recordDailyWin(daily);
         const payout = credit.credited
           ? `${credit.trophies === 1 ? 'Trophy earned' : `${credit.trophies} trophies earned`} — ${
@@ -808,10 +839,6 @@ async function start(): Promise<void> {
         overlayText.textContent = `Final score: ${game.score}${winScoreSuffix}`;
         overlayNew.textContent = 'Back to the ladder';
         announcer.say(`Daily Challenge complete. Final score ${game.score}. ${payout}`);
-        // Issue #70: the Daily is the one board where every player played the
-        // same tiles, so this is the only win that has somewhere to go.
-        overlayLeaderboard.hidden = false;
-        submitDailyResult(daily, game.score, elapsed.ms);
       }
       // The record just moved; push it up if sync is on (issue #138). Nothing
       // here waits on it.
@@ -1630,8 +1657,10 @@ async function start(): Promise<void> {
     }
     el<HTMLElement>('record-level').textContent = String(progress.level);
     el<HTMLElement>('record-cleared').textContent = String(record.value.levelsCleared);
-    el<HTMLElement>('record-best').textContent = String(record.value.bestScore);
-    el<HTMLElement>('record-total').textContent = String(record.value.totalScore);
+    // One score, and it is this week's (issue #176). Read through
+    // weekScoreNow so a record left over from last week shows 0 rather than a
+    // number the board it is ranked on has already forgotten.
+    el<HTMLElement>('record-week').textContent = String(weekScoreNow(record.value, Date.now()));
     // The streak as it stands today, not as it was last written: a missed
     // day has already ended it (issue #19).
     el<HTMLElement>('record-streak').textContent = String(liveStreak(record.value, dailyDateKey()));
@@ -1907,7 +1936,7 @@ async function start(): Promise<void> {
     syncEnableButton.focus();
   });
 
-  // --- Daily leaderboard (issue #70) -------------------------------------------
+  // --- Weekly leaderboard (issues #70, #176) -----------------------------------
 
   /** A second consent, separate from sync: syncing gives the profile a home,
    *  this puts the player's name in front of strangers. Off by default. */
@@ -1939,13 +1968,13 @@ async function start(): Promise<void> {
     boardOptInInput.checked = boardOptIn && synced;
     boardOptInInput.disabled = !synced;
     boardOptInHint.textContent = synced
-      ? 'Your name and avatar appear next to your Daily score. Turning this off removes every score you have posted.'
+      ? 'Your name and avatar appear next to your score for the week. Turning this off removes every score you have posted.'
       : 'Turn on Cloud sync first — a score on the board needs a profile to belong to.';
   }
 
   /** One row per entry, plus the break marker when the player's neighbourhood
    *  does not touch the top of the board. */
-  function renderLeaderboard(board: DailyBoard): void {
+  function renderLeaderboard(board: WeeklyBoard): void {
     const rows = boardRows(board);
     leaderboardList.replaceChildren();
     leaderboardEmpty.hidden = rows.length > 0;
@@ -1975,16 +2004,21 @@ async function start(): Promise<void> {
       const score = document.createElement('span');
       score.className = 'score';
       score.textContent = String(entry.score);
-      const time = document.createElement('span');
-      time.className = 'time';
-      time.textContent = formatBoardTime(entry.elapsedMs);
+      // A weekly standing is a sum of runs, so there is no single elapsed time
+      // to put here; how many clears went into it is the number that explains
+      // the score next to it (issue #176).
+      const runs = document.createElement('span');
+      runs.className = 'time';
+      runs.textContent = entry.runs === 1 ? '1 level' : `${entry.runs} levels`;
       // One label per row: a screen reader reading five loose spans in a list
       // gives no sense of a table.
       li.setAttribute(
         'aria-label',
-        `${mine ? 'You, ' : ''}rank ${entry.rank}, ${entry.name}, ${entry.score} points, ${formatBoardTime(entry.elapsedMs)}`,
+        `${mine ? 'You, ' : ''}rank ${entry.rank}, ${entry.name}, ${entry.score} points from ${
+          entry.runs === 1 ? '1 level' : `${entry.runs} levels`
+        }`,
       );
-      li.append(rank, glyph, who, score, time);
+      li.append(rank, glyph, who, score, runs);
       leaderboardList.append(li);
     }
     // The player's own rank is the reason they opened this, and on a phone a
@@ -1993,62 +2027,187 @@ async function start(): Promise<void> {
     leaderboardList.querySelector('.you')?.scrollIntoView({ block: 'center' });
   }
 
+  /** The ticking countdown by the heading, and the reload it triggers at zero
+   *  (issue #176). Cleared whenever the panel closes: a timer that outlives
+   *  the panel would keep waking a backgrounded tab to write to a hidden node. */
+  let resetTicker: ReturnType<typeof setInterval> | null = null;
+  /** The instant the open board resets, from the server. Null when no board is
+   *  loaded — the countdown has nothing to count to until one arrives. */
+  let boardResetsAt: number | null = null;
+  /** The week the open board is for. The rollover reload compares against it:
+   *  a reload that comes back on the *same* week has not rolled over yet. */
+  let boardWeekStart: string | null = null;
+  /** Bumped on every open and every load. A response whose generation is stale
+   *  belongs to a panel that has since been closed or reloaded, and must not
+   *  render or start a ticker — otherwise a close-and-reopen during an
+   *  in-flight fetch leaves two tickers, and `stopResetTicker` then clears the
+   *  live one while the orphan keeps painting. */
+  let loadGeneration = 0;
+  /** Retries of the rollover reload, so a client clock that runs ahead of the
+   *  server cannot spin `loadBoard` as fast as the network allows. */
+  let rolloverRetries = 0;
+  const MAX_ROLLOVER_RETRIES = 10;
+  const ROLLOVER_RETRY_MS = 2000;
+  let rolloverTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function stopResetTicker(): void {
+    if (resetTicker !== null) {
+      clearInterval(resetTicker);
+      resetTicker = null;
+    }
+    if (rolloverTimer !== null) {
+      clearTimeout(rolloverTimer);
+      rolloverTimer = null;
+    }
+  }
+
+  /** Paint the countdown once. Returns false when the week is over, which is
+   *  the caller's cue to reload rather than keep counting. */
+  function paintCountdown(): boolean {
+    if (boardResetsAt === null) return true;
+    const left = boardResetsAt - Date.now();
+    if (left <= 0) return false;
+    leaderboardResetLine.textContent = `Resets in ${formatResetCountdown(left)}`;
+    return true;
+  }
+
   function closeLeaderboard(): void {
     if (!leaderboardVisible) return;
     leaderboardVisible = false;
+    loadGeneration += 1;
+    stopResetTicker();
+    boardResetsAt = null;
+    boardWeekStart = null;
+    rolloverRetries = 0;
     leaderboardPanel.classList.remove('visible');
-    overlay.removeAttribute('inert');
-    // The win screen may still be up behind it, and it wants the board inert.
     setBackgroundInert(overlayVisible);
     leaderboardOpener.focus();
   }
 
-  async function openLeaderboard(date: string, opener: HTMLElement): Promise<void> {
+  async function openLeaderboard(opener: HTMLElement): Promise<void> {
     if (leaderboardVisible) return;
     leaderboardOpener = opener;
     leaderboardVisible = true;
+    rolloverRetries = 0;
     leaderboardPanel.classList.add('visible');
     setBackgroundInert(true);
-    // Opened from the win screen: that dialog is behind this one, so its
-    // buttons must not stay reachable by Tab.
-    overlay.setAttribute('inert', '');
-    leaderboardDateLine.textContent = `Daily Challenge · ${date}`;
+    leaderboardClose.focus();
+    await loadBoard(true);
+  }
+
+  /**
+   * Fetch and render the live week. `announce` is false on the reload that
+   * follows a rollover: the panel is already open and the player is already
+   * looking at it, so it re-reads only the new state, not the whole board.
+   */
+  async function loadBoard(announce: boolean): Promise<void> {
+    const generation = (loadGeneration += 1);
+    stopResetTicker();
+    boardResetsAt = null;
+    leaderboardResetLine.textContent = '';
     leaderboardList.replaceChildren();
     leaderboardEmpty.hidden = true;
     leaderboardStatus.textContent = 'Loading the board…';
-    leaderboardClose.focus();
-    announcer.say('Daily leaderboard.');
+    if (announce) announcer.say('Weekly leaderboard.');
     // Reading a board needs no profile — an entry does. A player with sync
     // off still sees the top of the board, just not a rank of their own.
-    const result = await fetchDailyBoard(date, syncCredentials);
-    // Closed while the request was in flight: whatever came back is stale.
-    if (!leaderboardVisible) return;
+    const result = await fetchWeeklyBoard(syncCredentials);
+    // Stale response: the panel was closed, or reloaded, while this was in
+    // flight. Checking the generation rather than only `leaderboardVisible`
+    // matters because close-then-reopen makes that flag true again — this
+    // response would then render over the newer one and start a second ticker
+    // whose handle immediately overwrites the live one.
+    if (!leaderboardVisible || generation !== loadGeneration) return;
     if (!result.ok) {
       leaderboardStatus.textContent = BOARD_FAILURE_TEXT[result.reason];
       return;
     }
     leaderboardStatus.textContent =
       result.value.you === null && boardOptIn
-        ? 'Clear the Daily Challenge to take a place on this board.'
+        ? 'Clear a level to take a place on this board.'
         : '';
     renderLeaderboard(result.value);
+
+    // The countdown runs off the server's boundary, not a locally computed
+    // one, so every player watches the same instant tick down.
+    const expiredWeek = boardWeekStart;
+    boardResetsAt = result.value.resetsAt;
+    boardWeekStart = result.value.weekStart;
+    if (!paintCountdown()) {
+      // Already expired on arrival. This is normal for a second or two around
+      // the boundary — the device's clock crosses before the server's, and the
+      // round trip adds to it — so retry on a timer instead of re-entering
+      // immediately. Re-entering would spin as fast as the network allows and
+      // burn the signed-read allowance in ten requests, breaking the panel for
+      // ten minutes at exactly the moment this feature exists to serve.
+      scheduleRolloverRetry(expiredWeek);
+      return;
+    }
+    rolloverRetries = 0;
+    // Said once, with the board. The line itself is not aria-live: announcing
+    // every tick would talk over the entries the player opened this to read.
+    announcer.say(
+      `Weekly leaderboard. Resets in ${speakResetCountdown(boardResetsAt - Date.now())}.`,
+    );
+    resetTicker = setInterval(() => {
+      if (!leaderboardVisible || generation !== loadGeneration) {
+        stopResetTicker();
+        return;
+      }
+      // Reaching zero with the panel open reloads it into the fresh, empty
+      // week rather than leaving stale standings on screen.
+      if (!paintCountdown()) {
+        stopResetTicker();
+        void loadBoard(false);
+      }
+    }, 1000);
   }
 
-  /** Post a finished Daily, if the player asked to be on the board. Silent
-   *  and fire-and-forget like the profile push: the win screen never waits on
-   *  the network, and a failed post is the next Daily's problem.
+  /**
+   * Re-fetch after the countdown has run out, on a delay and a bounded number
+   * of times.
+   *
+   * The server decides when the week turns over, so a client whose clock runs
+   * ahead can reach zero while the server is still serving the old week. The
+   * board that comes back then carries the *same* `weekStart`, which is the
+   * signal to wait rather than to keep asking. A device minutes fast would
+   * otherwise loop on every open.
+   */
+  function scheduleRolloverRetry(expiredWeek: string | null): void {
+    const sameWeek = expiredWeek !== null && expiredWeek === boardWeekStart;
+    if (sameWeek && rolloverRetries >= MAX_ROLLOVER_RETRIES) {
+      // Given up: the clock difference is bigger than a rollover lag, so show
+      // the board that exists rather than a countdown that cannot finish.
+      leaderboardResetLine.textContent = 'Resetting…';
+      return;
+    }
+    rolloverRetries = sameWeek ? rolloverRetries + 1 : 0;
+    leaderboardResetLine.textContent = 'Resetting…';
+    rolloverTimer = setTimeout(() => {
+      rolloverTimer = null;
+      if (!leaderboardVisible) return;
+      void loadBoard(false);
+    }, ROLLOVER_RETRY_MS);
+  }
+
+  /** Post a finished ladder level, if the player asked to be on the board.
+   *  Silent and fire-and-forget like the profile push: the win screen never
+   *  waits on the network, and a failed post is the next level's problem.
+   *
+   *  No week goes with it — the server decides which one the run lands in,
+   *  from the moment it arrives, so a device with a wrong clock cannot post
+   *  into a week that is not open.
    *
    *  The move history goes with it. Nothing reads it yet — the server stores
-   *  it against the day a later build can verify a score by replaying it
-   *  (decision 0022). Sending it from the first day the board is open is the
-   *  whole point: a history that only starts when the verifier ships leaves
-   *  every earlier entry uncheckable. It is deliberately the *whole* deal —
-   *  layout, seed, shuffle count and the move records — so a replay has
-   *  everything the client knows. */
-  function submitDailyResult(date: string, score: number, elapsedMs: number): void {
+   *  it so a later build can verify a score by replaying it (decision 0027).
+   *  Sending it from the first day the board is open is the whole point: a
+   *  history that only starts when the verifier ships leaves every earlier
+   *  entry uncheckable. It is deliberately the *whole* deal — layout, seed,
+   *  shuffle count and the move records — so a replay has everything the
+   *  client knows. */
+  function submitRunResult(score: number, elapsedMs: number): void {
     if (syncCredentials === null || !boardOptIn) return;
-    void submitDailyScore(syncCredentials, {
-      date,
+    void submitRunScore(syncCredentials, {
       score,
       elapsedMs,
       history: {
@@ -2064,7 +2223,7 @@ async function start(): Promise<void> {
     boardOptIn = boardOptInInput.checked;
     writeOptIn(storage, boardOptIn);
     if (boardOptIn) {
-      setBoardStatus('You will appear on the board next time you clear a Daily Challenge.');
+      setBoardStatus('You will appear on the board next time you clear a level.');
       announcer.say('Leaderboard on.');
       return;
     }
@@ -2086,18 +2245,13 @@ async function start(): Promise<void> {
   });
 
   boardOpenButton.addEventListener('click', () => {
-    void openLeaderboard(dailyDateKey(), boardOpenButton);
+    void openLeaderboard(boardOpenButton);
   });
 
   leaderboardButton.addEventListener('click', () => {
-    // Always today's board, whatever is on the table: the header button is the
-    // route to the Daily board, not to the current game's.
-    void openLeaderboard(dailyDateKey(), leaderboardButton);
-  });
-
-  overlayLeaderboard.addEventListener('click', () => {
-    // Only ever shown on a Daily win, so `daily` is the board just finished.
-    if (daily !== null) void openLeaderboard(daily, overlayLeaderboard);
+    // There is one board and one live week, so there is nothing to choose:
+    // since issue #176 this is the only route in.
+    void openLeaderboard(leaderboardButton);
   });
 
   leaderboardClose.addEventListener('click', closeLeaderboard);

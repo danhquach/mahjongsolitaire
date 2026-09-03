@@ -1,9 +1,14 @@
-// Daily Challenge leaderboard, device side (issue #70).
+// The weekly leaderboard, device side (issue #176, superseding #70's Daily
+// board — see docs/decisions/0027-one-weekly-score.md).
 //
-// The Daily is the same layout and seed for everyone on a given date, which
-// is the only reason comparing scores is fair — see
-// docs/decisions/0022-daily-leaderboard-first.md for why the ladder and an
-// all-time board are not here.
+// One board, and it ranks the ladder: every ladder clear adds its final score
+// to the player's standing for the current week. The Daily Challenge pays
+// trophies and a streak and contributes nothing here.
+//
+// The week is the server's — Sunday 00:00 UTC — and the server decides which
+// week a submitted run lands in, so nothing here sends one. `resetsAt` comes
+// back with every board and is what the panel counts down to, rather than the
+// device's own idea of when the week ends.
 //
 // Two consents, not one. Sync (issue #138) gives the profile a server-side
 // home; appearing on a public board is a *further* step, because it puts a
@@ -23,7 +28,7 @@ import type { KeyValueStorage } from './storage.js';
 
 export const LEADERBOARD_STORAGE_KEY = 'mahjong.leaderboard.v1';
 
-const BASE = '/api/leaderboard/daily';
+const BASE = '/api/leaderboard/weekly';
 
 /** One row on the board. `rank` is the server's, never recomputed here: two
  *  players on the same score are separated by who got there first, which the
@@ -33,18 +38,25 @@ export interface BoardEntry {
   readonly playerId: string;
   readonly name: string;
   readonly avatar: string;
+  /** Score accumulated across the week, not a single run's. */
   readonly score: number;
-  readonly elapsedMs: number;
+  /** How many clears went into it. */
+  readonly runs: number;
 }
 
-export interface DailyBoard {
-  readonly date: string;
+export interface WeeklyBoard {
+  /** The Sunday that opened this week, `YYYY-MM-DD` UTC. */
+  readonly weekStart: string;
+  /** When the week ends and the board empties, in epoch ms on the server's
+   *  clock. The panel counts down to this rather than to a locally computed
+   *  boundary, so every player watches the same instant. */
+  readonly resetsAt: number;
   /** The leading entries, best first. */
   readonly top: readonly BoardEntry[];
-  /** This player's own entry, or null when they have not posted for the date. */
+  /** This player's own standing, or null when they have not scored this week. */
   readonly you: BoardEntry | null;
   /** The entries around this player, including their own — empty when they
-   *  are already visible in `top`, or have no entry. */
+   *  are already visible in `top`, or have no standing. */
   readonly around: readonly BoardEntry[];
 }
 
@@ -74,7 +86,7 @@ function isEntry(value: unknown): value is BoardEntry {
     typeof raw['name'] === 'string' &&
     typeof raw['avatar'] === 'string' &&
     typeof raw['score'] === 'number' &&
-    typeof raw['elapsedMs'] === 'number'
+    typeof raw['runs'] === 'number'
   );
 }
 
@@ -85,19 +97,29 @@ function entries(value: unknown): readonly BoardEntry[] | null {
 
 /** A board out of a response body, field by field — a server that answers
  *  something unexpected must not reach the renderer. */
-function toBoard(value: unknown): DailyBoard | null {
+function toBoard(value: unknown): WeeklyBoard | null {
   if (typeof value !== 'object' || value === null) return null;
   const raw = value as Record<string, unknown>;
-  if (typeof raw['date'] !== 'string') return null;
+  if (typeof raw['weekStart'] !== 'string') return null;
+  // A countdown is the one thing on this panel that keeps moving, so a missing
+  // or nonsense reset instant has to fail the whole board rather than render as
+  // NaN or as a week that has already ended.
+  if (typeof raw['resetsAt'] !== 'number' || !Number.isFinite(raw['resetsAt'])) return null;
   const top = entries(raw['top']);
   const around = entries(raw['around']);
   if (top === null || around === null) return null;
   const you = raw['you'];
   if (you !== null && you !== undefined && !isEntry(you)) return null;
-  return { date: raw['date'], top, you: isEntry(you) ? you : null, around };
+  return {
+    weekStart: raw['weekStart'],
+    resetsAt: raw['resetsAt'],
+    top,
+    you: isEntry(you) ? you : null,
+    around,
+  };
 }
 
-function boardResult(result: SyncResult<unknown>): SyncResult<DailyBoard> {
+function boardResult(result: SyncResult<unknown>): SyncResult<WeeklyBoard> {
   if (!result.ok) return result;
   const board = toBoard(result.value);
   return board === null ? { ok: false, reason: 'unavailable' } : { ok: true, value: board };
@@ -108,7 +130,7 @@ function boardResult(result: SyncResult<unknown>): SyncResult<DailyBoard> {
  *
  * A `MoveRecord` also carries `prevSelection` and `prevScores` — undo
  * bookkeeping that nothing replays (see core's moves.ts). Sending them makes
- * a finished Daily's history about 23 KB; without them it is a fraction of
+ * a finished run's history about 23 KB; without them it is a fraction of
  * that, and it is stored on every row of every board, so the difference is
  * the storage bill rather than a nicety.
  */
@@ -121,9 +143,9 @@ export function compactHistory(moves: readonly Record<string, unknown>[]): unkno
   });
 }
 
-/** What a finished Daily has to say about itself. */
-export interface DailyResult {
-  readonly date: string;
+/** What a finished ladder level has to say about itself. No week: the server
+ *  decides which one the run lands in, from the moment it arrives. */
+export interface RunResult {
   readonly score: number;
   readonly elapsedMs: number;
   /** The move history, sent so a later build can verify the score by
@@ -131,12 +153,12 @@ export interface DailyResult {
   readonly history?: unknown;
 }
 
-/** Post a Daily result and take back the board it landed on. */
-export async function submitDailyScore(
+/** Post a finished ladder level and take back the standing it added to. */
+export async function submitRunScore(
   credentials: SyncCredentials,
-  result: DailyResult,
+  result: RunResult,
   deps: SyncDeps = {},
-): Promise<SyncResult<DailyBoard>> {
+): Promise<SyncResult<WeeklyBoard>> {
   return boardResult(
     await apiRequest({
       fetchImpl: deps.fetchImpl ?? defaultFetch,
@@ -148,25 +170,25 @@ export async function submitDailyScore(
   );
 }
 
-/** Read a date's board. Credentials are optional — without them the board
- *  comes back without a "you" row, which is what a player who has not turned
- *  sync on should see. */
-export async function fetchDailyBoard(
-  date: string,
+/** Read the live week's board. There is no parameter and no archive: only the
+ *  current week exists to ask for. Credentials are optional — without them the
+ *  board comes back without a "you" row, which is what a player who has not
+ *  turned sync on should see. */
+export async function fetchWeeklyBoard(
   credentials: SyncCredentials | null,
   deps: SyncDeps = {},
-): Promise<SyncResult<DailyBoard>> {
+): Promise<SyncResult<WeeklyBoard>> {
   return boardResult(
     await apiRequest({
       fetchImpl: deps.fetchImpl ?? defaultFetch,
-      path: `${BASE}?date=${encodeURIComponent(date)}`,
+      path: BASE,
       method: 'GET',
       ...(credentials === null ? {} : { code: credentials.code }),
     }),
   );
 }
 
-/** Take the player off the board — every date, not just today's. */
+/** Take the player off the board — every week and every stored run. */
 export async function withdrawFromBoard(
   credentials: SyncCredentials,
   deps: SyncDeps = {},
@@ -182,10 +204,38 @@ export async function withdrawFromBoard(
 
 // --- rendering helpers ----------------------------------------------------------
 
-/** `4:07` — the same shape as the in-game clock, for the board's time column. */
-export function formatBoardTime(elapsedMs: number): string {
-  const seconds = Math.max(0, Math.floor(elapsedMs / 1000));
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+/**
+ * "Resets in 2d 14h", tightening as the boundary approaches (issue #176).
+ *
+ * Two units at most, and never a unit that is always zero next to a bigger
+ * one: days and hours far out, hours and minutes inside a day, minutes and
+ * seconds in the last hour, seconds alone at the end. A countdown that reads
+ * "2d 14h 03m 11s" invites watching the seconds tick on something a week away.
+ */
+export function formatResetCountdown(msLeft: number): string {
+  const total = Math.max(0, Math.floor(msLeft / 1000));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+/** The same countdown said in full, for a screen reader: "2 days, 14 hours". */
+export function speakResetCountdown(msLeft: number): string {
+  const total = Math.max(0, Math.floor(msLeft / 1000));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  const unit = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
+  if (days > 0) return `${unit(days, 'day')}, ${unit(hours, 'hour')}`;
+  if (hours > 0) return `${unit(hours, 'hour')}, ${unit(minutes, 'minute')}`;
+  if (minutes > 0) return `${unit(minutes, 'minute')}, ${unit(seconds, 'second')}`;
+  return unit(seconds, 'second');
 }
 
 /**
@@ -196,7 +246,7 @@ export function formatBoardTime(elapsedMs: number): string {
  */
 export type BoardRow = { readonly kind: 'entry'; readonly entry: BoardEntry } | { readonly kind: 'gap' };
 
-export function boardRows(board: DailyBoard): readonly BoardRow[] {
+export function boardRows(board: WeeklyBoard): readonly BoardRow[] {
   const rows: BoardRow[] = board.top.map((entry) => ({ kind: 'entry', entry }) as const);
   if (board.around.length === 0) return rows;
   const lastTopRank = board.top.length === 0 ? 0 : board.top[board.top.length - 1]!.rank;

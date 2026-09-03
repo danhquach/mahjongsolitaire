@@ -32,7 +32,19 @@ import { extname, join } from 'node:path';
 import { chromium } from 'playwright-core';
 // Core's own Daily Challenge hashes (issue #19), so the harness checks the
 // page against the same function every device runs — not a re-derivation.
-import { dailyDateKey, dailyLayoutId, dailySeed } from '../../core/dist/src/index.js';
+import {
+  BASE_PAIR_POINTS,
+  dailyDateKey,
+  dailyLayoutId,
+  dailySeed,
+  scoreMultiplierForLevel,
+} from '../../core/dist/src/index.js';
+
+/** What a first pair pays on the level this harness pins (47, medium band).
+ *  Derived rather than hard-coded: issue #176 scales every pair by the level's
+ *  band, so a literal here would have to be re-guessed whenever the multipliers
+ *  move — and would quietly stop testing the rule it is named after. */
+const FIRST_PAIR_POINTS = Math.round(BASE_PAIR_POINTS * scoreMultiplierForLevel(47));
 
 const CHROMIUM = process.env.CHROMIUM_PATH ?? '/opt/pw-browsers/chromium';
 const DIST = new URL('../dist-web', import.meta.url).pathname;
@@ -1207,7 +1219,11 @@ for (const vp of VIEWPORTS) {
       }));
       check(matched.holder.slots[0] === null, 'one tap frees the slot', matched);
       check(matched.tilesLeft === tilesBefore - 2, 'and clears both tiles', matched);
-      check(matched.score === 100, 'and scores like any other pair', matched);
+      check(
+        matched.score === FIRST_PAIR_POINTS,
+        'and scores like any other pair, at this level’s band multiplier',
+        { ...matched, expected: FIRST_PAIR_POINTS },
+      );
       check(matched.selection === null, 'and leaves nothing selected', matched);
       check(matched.filled === 0, 'and the strip empties', matched);
       check(/pair matched/i.test(matched.said ?? ''), 'and is announced as a match', matched);

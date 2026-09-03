@@ -19,8 +19,14 @@ import {
   parsePlayerRecord,
   parseProfile,
   sanitizeName,
+  weekScoreNow,
 } from '../src/profile.js';
+import { weekStartKey } from '@mahjongsolitaire/core';
 import type { KeyValueStorage } from '../src/storage.js';
+
+/** A fixed Thursday, so a run that straddles a Sunday cannot flake. */
+const NOW = Date.parse('2026-09-03T12:00:00Z');
+const WEEK = weekStartKey(NOW);
 
 function fakeStorage(seed: Record<string, string> = {}): KeyValueStorage & {
   data: Map<string, string>;
@@ -182,29 +188,80 @@ test('parsePlayerRecord: counters are non-negative integers or zero; a pre-#19 r
   assert.deepEqual(parsePlayerRecord({ levelsCleared: 7, bestScore: 1200, dailyStreak: 3, trophies: 2 }), {
     ...EMPTY_RECORD,
     levelsCleared: 7,
-    bestScore: 1200,
     trophies: 2,
   });
 });
 
-test('recordWin counts the clear, banks the total and keeps the best score', () => {
+test('recordWin counts the clear and adds to this week’s score', () => {
   const storage = fakeStorage();
   const record = new RecordStore(storage);
-  assert.deepEqual(record.recordWin(900), {
+  assert.deepEqual(record.recordWin(900, { level: 1 }, NOW), {
     ...EMPTY_RECORD,
     levelsCleared: 1,
-    bestScore: 900,
-    totalScore: 900,
+    weekScore: 900,
+    weekStart: WEEK,
+    cleared: [1],
   });
-  record.recordWin(450); // a worse score still counts the clear, and the total
-  assert.deepEqual(record.value, { ...EMPTY_RECORD, levelsCleared: 2, bestScore: 900, totalScore: 1350 });
-  record.recordWin(1500);
+  // A worse score still counts the clear and still adds: the week is a sum of
+  // what was earned, not a high-water mark. There is no "best score" any more.
+  record.recordWin(450, { level: 2 }, NOW);
+  assert.equal(record.value.weekScore, 1350);
+  record.recordWin(1500, { level: 3 }, NOW);
   assert.deepEqual(new RecordStore(storage).value, {
     ...EMPTY_RECORD,
     levelsCleared: 3,
-    bestScore: 1500,
-    totalScore: 2850,
+    weekScore: 2850,
+    weekStart: WEEK,
+    cleared: [1, 2, 3],
   });
+});
+
+test('a win in a new week starts the score again rather than adding to it', () => {
+  // The profile and the board show one number, so they roll over together: a
+  // standing that has already been ranked and emptied must not be added to.
+  const storage = fakeStorage();
+  const record = new RecordStore(storage);
+  record.recordWin(900, { level: 1 }, NOW);
+  assert.equal(record.value.weekScore, 900);
+  const nextWeek = NOW + 7 * 24 * 60 * 60 * 1000;
+  record.recordWin(400, { level: 2 }, nextWeek);
+  assert.equal(record.value.weekScore, 400, 'last week’s 900 must not carry');
+  assert.equal(record.value.weekStart, weekStartKey(nextWeek));
+  // Levels cleared is a lifetime counter and does not roll over.
+  assert.equal(record.value.levelsCleared, 2);
+  assert.deepEqual(record.value.cleared, [1, 2]);
+});
+
+test('weekScoreNow shows 0 for a record left over from an earlier week', () => {
+  // Read-side, so no timer has to fire at the boundary for the profile to be
+  // right: a player who does not play for a week opens it to 0, not to a stale
+  // number the board has already forgotten.
+  const record = new RecordStore(fakeStorage());
+  record.recordWin(900, { level: 1 }, NOW);
+  assert.equal(weekScoreNow(record.value, NOW), 900);
+  assert.equal(weekScoreNow(record.value, NOW + 7 * 24 * 60 * 60 * 1000), 0);
+});
+
+test('a pre-#176 record does not carry its lifetime total into week one', () => {
+  // The whole reason the field was renamed rather than repurposed: an
+  // established player must not start the first weekly board at their lifetime
+  // total, which would put them on top of it for a week they did not play.
+  const parsed = parsePlayerRecord({
+    levelsCleared: 400,
+    bestScore: 20970,
+    totalScore: 1_250_000,
+    trophies: 9,
+  });
+  assert.equal(parsed.weekScore, 0);
+  assert.equal(parsed.weekStart, null);
+  assert.equal(parsed.levelsCleared, 400, 'the clear count is not a score and survives');
+  assert.equal(parsed.trophies, 9);
+});
+
+test('a week score without a week it belongs to is not a score', () => {
+  assert.equal(parsePlayerRecord({ weekScore: 5000 }).weekScore, 0);
+  assert.equal(parsePlayerRecord({ weekScore: 5000, weekStart: 'someday' }).weekScore, 0);
+  assert.equal(parsePlayerRecord({ weekScore: 5000, weekStart: WEEK }).weekScore, 5000);
 });
 
 test('recordWin leaves the Daily fields alone', () => {
@@ -212,11 +269,12 @@ test('recordWin leaves the Daily fields alone', () => {
     [RECORD_STORAGE_KEY]: JSON.stringify({ dailyStreak: 4, lastDaily: '2026-09-01', trophies: 1 }),
   });
   const record = new RecordStore(storage);
-  assert.deepEqual(record.recordWin(100), {
+  assert.deepEqual(record.recordWin(100, { level: 1 }, NOW), {
     ...EMPTY_RECORD,
     levelsCleared: 1,
-    bestScore: 100,
-    totalScore: 100,
+    weekScore: 100,
+    weekStart: WEEK,
+    cleared: [1],
     dailyStreak: 4,
     lastDaily: '2026-09-01',
     trophies: 1,
