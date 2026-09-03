@@ -591,6 +591,9 @@ async function start(): Promise<void> {
       // Never true for a hidden face (issue #165): the tap would clear it,
       // but the label must not say so — that names the face by implication.
       pairsWithHeld: game.pairsWithHeld(t.id),
+      // Issue #169: a tile matching the current peek clears too — same label,
+      // same hidden-face guard as pairsWithHeld.
+      pairsWithPeek: game.pairsWithPeek(t.id),
     }));
   }
 
@@ -2799,17 +2802,13 @@ async function start(): Promise<void> {
     // goes backwards. Elapsed time is saved with the game, so it is the one
     // clock that stays monotonic across a force-quit (core's own contract:
     // "monotonic within a game — e.g. elapsed game time").
-    const before = game.holderSlots();
     const shownBefore = shownConcealed();
-    finishTap(game.tap(hit, elapsed.ms), before, shownBefore);
+    finishTap(game.tap(hit, elapsed.ms), shownBefore);
   }
 
-  /** Everything a resolved tap owes the player: feedback, save, announcement.
-   *  `heldBefore` is the holder as it was when the tap landed — a match empties
-   *  the partner's slot, and the pair-clear effect has to know which one. */
+  /** Everything a resolved tap owes the player: feedback, save, announcement. */
   function finishTap(
     outcome: TapOutcome,
-    heldBefore: readonly (TileId | null)[],
     shownBefore: ReadonlySet<TileId>,
   ): void {
     // Reveal / re-conceal flips (issue #64).
@@ -2830,7 +2829,10 @@ async function start(): Promise<void> {
       feedback.sound('match');
       // `a` is always a held tile (issue #93; issue #165 retired the
       // board-side peek-pair), so the slot it left is where the pair shows.
-      const slotNode = holder.slotNode(heldBefore.indexOf(outcome.a));
+      // `outcome.slot` (issue #169), not a before/after holder diff: a
+      // peek-match gives `a` that slot in this same tap, so it never shows up
+      // in a snapshot taken before the tap landed.
+      const slotNode = holder.slotNode(outcome.slot);
       if (slotNode) {
         // Issue #165: a face-down tile tapped from memory flips in flight —
         // the board never showed its face, so the copy starts as the back

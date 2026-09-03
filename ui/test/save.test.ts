@@ -230,7 +230,13 @@ test('resume restores a mid-pair holder, and the undo stack behind it', () => {
 
 test('resume reproduces shuffled faces, including undo across a shuffle', () => {
   const level = generateValidatedLevel(TURTLE, SAMPLE_SEED);
-  const game = new Game(level);
+  // No concealment (issue #169): this test is about shuffle/undo fidelity,
+  // not face-down tiles, and a default-concealed tile among the first 8
+  // solution pairs can turn one pair's second tap into a peek-match clear
+  // (its own partner, not a cross-pair collision) instead of a plain park —
+  // legitimate per decision 0025's amendment, but it would leave a
+  // different tile parked than the "before the shuffle" tap below expects.
+  const game = new Game(level, undefined, []);
   for (const [a, b] of level.solution.slice(0, 8)) {
     game.tap(free(a), 0);
     game.tap(free(b), 0);

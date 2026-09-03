@@ -6,6 +6,12 @@ commit and build time of the running bundle.
 
 ## 2026-09-02
 
+- Spotting a match while peeking at a face-down tile now clears it. Tapping a
+  free tile whose face matches the one you just peeked at sends both to the
+  holder and clears them there, scored like any other pair — instead of
+  parking the tile you tapped and quietly flipping the peeked one back down.
+  Tapping a tile that doesn't match still parks it and drops the peek as
+  before (#169).
 - Face-down tiles now play like the reference game. A face-down tile whose
   match is already in the holder goes straight there on one tap, turning over
   in flight — so remembering a peeked face pays off in one tap instead of

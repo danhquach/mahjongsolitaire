@@ -56,6 +56,18 @@
 // left the board, Shuffle re-faced it) drops it. This supersedes decision
 // 0018's "matching against the peek" mode (issue #124) and amends decision
 // 0010 point 1.
+//
+// Issue #169 narrows the "peek is passive" half of that rule (decision 0025
+// point 2, amended): a tap on a free tile whose real face matches the tile
+// currently peeked — not merely a held tile — also clears, rather than
+// parking the tap and dropping the peek. Precedence when both could apply:
+// rule 1 (a held partner) wins, exactly as it already did over a peek — see
+// tapBoard. The clear still goes through the holder (decision 0013): the
+// peeked tile is given a real, if momentary, slot (playPeekMatch) and then
+// cleared through the ordinary held-partner path, so it is scored, animated
+// and undone exactly like any other holder match, and the momentary slot
+// never survives long enough for status() to see it as a park (decision
+// 0009's full-holder loss). A non-matching tap keeps the passive rule.
 
 import {
   Board,
@@ -86,13 +98,18 @@ export type GameStatus = 'playing' | 'won' | 'stuck' | 'lost';
 
 export type TapOutcome =
   /** The tapped board tile paired with `a` — always a held tile (issue #93:
-   *  every pair resolves in the holder). `b` is the tile just tapped.
-   *  `revealed` (issue #165): `b` was face-down when tapped — the flight
-   *  shows the flip; the board never did. */
+   *  every pair resolves in the holder). `b` is the tile just tapped. `slot`
+   *  is the holder slot `a` matched out of, at the moment of the match — read
+   *  this instead of diffing the holder before/after the tap, because issue
+   *  #169's peek-match gives `a` that slot in the same tap that clears it, so
+   *  it never shows up in a "before" snapshot. `revealed` (issue #165): `b`
+   *  was face-down when tapped — the flight shows the flip; the board never
+   *  did. */
   | {
       readonly kind: 'matched';
       readonly a: TileId;
       readonly b: TileId;
+      readonly slot: number;
       readonly score: MatchScore;
       readonly revealed?: true;
     }
@@ -423,6 +440,16 @@ export class Game {
     return !this.isFaceHidden(id) && this.holderPartner(id) !== null;
   }
 
+  /** Does tapping this *visible* board tile clear against the current peek
+   *  (issue #169)? Same shape as `pairsWithHeld` and for the same reason: the
+   *  a11y label (and `parkEndsLevel`'s warning) must say "clears" rather than
+   *  "parks, ending the level" for a tile a peek-match would clear instead —
+   *  and, deliberately, must stay false for a hidden face, so a face-down
+   *  tile that would clear against the peek never leaks that by wording. */
+  pairsWithPeek(id: TileId): boolean {
+    return !this.isFaceHidden(id) && this.peekMatchPartner(id) !== null;
+  }
+
   /**
    * The held tile a board tile would clear against (issue #93), or null.
    * Slot order rather than id order: with two identical faces parked (only a
@@ -505,29 +532,42 @@ export class Game {
   }
 
   /**
-   * Tap on a free board tile. In order (issue #165, the reference game's
-   * rule):
+   * Tap on a free board tile. In order (issue #165/#169, the reference
+   * game's rule plus its narrow amendment):
    *
    * 1. its real face matches a held tile → the pair clears (issue #93: pairs
    *    assemble and resolve in the holder), *hidden or not*. A face-down tile
    *    the player remembers goes straight in — the flight shows the flip —
    *    which is the memory payoff; a face-down tile they guess wrong at is
-   *    caught by rule 2 and merely peeks, so a blind tap never mis-parks. The
+   *    caught by rule 3 and merely peeks, so a blind tap never mis-parks. The
    *    tapped tile never takes a slot, so completing a pair cannot trip the
-   *    full-holder loss in passing;
-   * 2. its face is hidden → peek at it (issue #64), and nothing else. One peek
+   *    full-holder loss in passing. This beats rule 2 below: a tile that
+   *    matches both a held tile and the peek clears against the *holder*:
+   * 2. otherwise, a peek is showing and this tile's real face matches it
+   *    (issue #169, amending decision 0025 point 2) → the pair clears, same
+   *    as rule 1 but routed through `playPeekMatch` — the peeked tile gets
+   *    the holder slot first, so both tiles still travel to and clear in the
+   *    holder rather than vanishing off the board in place (decision 0013);
+   * 3. its face is hidden → peek at it (issue #64), and nothing else. One peek
    *    at a time: a second peek re-conceals the first in the same frame;
-   * 3. otherwise it goes to the holder — one tap, no select-first step.
+   * 4. otherwise it goes to the holder — one tap, no select-first step.
    *
-   * A peek is passive: whatever a tap on another tile does, it is what that
-   * tap would do with no peek showing, and it drops the peek (rules 1/3 via
-   * playPair/park). The peeked tile's own second tap is a visible tile's tap.
+   * A peek is passive for every other case: a tap on a non-matching tile is
+   * what it would do with no peek showing, and it drops the peek (rules 1/4
+   * via playPair/park). The peeked tile's own second tap is a visible tile's
+   * tap (rule 2 excludes tapping the peeked tile itself).
    */
   private tapBoard(id: TileId, nowMs: number): TapOutcome {
     const partner = this.holderPartner(id);
     if (partner !== null) {
       const revealed = this.isFaceHidden(id);
       const outcome = this.playPair(partner, id, nowMs);
+      return revealed ? { ...outcome, revealed: true } : outcome;
+    }
+    const peeked = this.peekMatchPartner(id);
+    if (peeked !== null) {
+      const revealed = this.isFaceHidden(id);
+      const outcome = this.playPeekMatch(peeked, id, nowMs);
       return revealed ? { ...outcome, revealed: true } : outcome;
     }
     if (this.isFaceHidden(id)) {
@@ -539,10 +579,47 @@ export class Game {
     return this.park(id, nowMs);
   }
 
+  /**
+   * The peeked tile, if it is a match for `id` (issue #169) — a free board
+   * tile, still holding its own layout slot, whose real face equals the
+   * peek's real face. Excludes `id` itself (the peeked tile's own second tap
+   * is rule 4, unaffected) and requires a spare holder slot: the match is
+   * played by parking the peeked tile and immediately clearing it against
+   * `id` (playPeekMatch), and a holder with no room for that momentary park
+   * is unreachable in real play anyway — a full holder already ended the
+   * level (decision 0009) before another tap could land.
+   */
+  private peekMatchPartner(id: TileId): TileId | null {
+    const peeked = this.peekedId;
+    if (peeked === null || peeked === id) return null;
+    if (this.board.holderFull() || !this.board.isFree(peeked)) return null;
+    return this.board.get(id).face === this.board.get(peeked).face ? peeked : null;
+  }
+
   private playPair(a: TileId, b: TileId, nowMs: number): TapOutcome & { kind: 'matched' } {
+    const slot = this.board.holderSlots().indexOf(a); // a is held until matchPair removes it
     const score = this.stack.play(a, b, nowMs);
     this.forgetHints(); // the board changed: the cycled pairs are stale
     this.forgetPeek(); // a move on another tile, or the peeked tile leaving
-    return { kind: 'matched', a, b, score };
+    return { kind: 'matched', a, b, slot, score };
+  }
+
+  /**
+   * The issue #169 clear: `peeked` is still a free board tile, so give it a
+   * real holder slot first — same booking as an ordinary park (`stack.hold`,
+   * no `forgetPeek`/`forgetHints` yet, since `playPair` right after does both
+   * and the peek must survive up to that point in case anything reads it
+   * mid-call) — then clear `tapped` against it exactly like rule 1's
+   * already-held case. The hold and the match share `nowMs`: both are the
+   * same tap, so ScoreKeeper's monotonic-time check never sees them as two
+   * ticks. Precondition (peekMatchPartner): the holder has a slot free.
+   */
+  private playPeekMatch(
+    peeked: TileId,
+    tapped: TileId,
+    nowMs: number,
+  ): TapOutcome & { kind: 'matched' } {
+    this.stack.hold(peeked, nowMs);
+    return this.playPair(peeked, tapped, nowMs);
   }
 }

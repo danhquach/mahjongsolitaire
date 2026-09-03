@@ -36,6 +36,9 @@ feel bolted on and matches never involved it visually (#73).
    tap, flipping in flight — and only otherwise does the first tap peek. A
    peek is passive: a tap on any other free tile is an ordinary park or clear
    and drops the peek. The peeked tile's own second tap is unchanged.
+   *Narrowed by issue #169, 2026-09-03: a tap matching the peek itself also
+   clears, still through the holder — see decision 0025's amendment. Every
+   other tap keeps the passive rule stated above.*
 5. **The match feedback moves to the tray** (subsumes #73): a DOM flight from
    board to slot, a side-by-side dwell, a +score popup and a particle burst at
    the strip (tray-fx.ts). Reduced motion degrades to the instant state swap,

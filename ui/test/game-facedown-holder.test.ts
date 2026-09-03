@@ -96,19 +96,106 @@ test('AC3: with a peek showing, tapping a tile that matches the holder clears ag
   assert.equal(game.isFaceHidden(0), true);
 });
 
-test('with a peek showing, a same-face tile is NOT matched against the peek on the board', () => {
-  // Decision 0018's board-matching mode is retired: the tapped partner parks.
+// Issue #169 (amending decision 0025 point 2): a tap on a free tile whose
+// real face matches the peek clears the pair through the holder, rather than
+// parking the tap and dropping the peek. Decision 0018's board-anchored
+// pair-clear effect stays retired — the pair still resolves in the holder
+// (decision 0013), not in place on the board.
+test('AC #169: with a peek showing, tapping a same-face free tile clears the pair through the holder', () => {
   const game = new Game(ROW, undefined, [0]);
   game.tap(free(0), 1); // peek dots-1
+  const before = game.score;
   const outcome = game.tap(free(2), 2); // the other dots-1, face-up
-  assert.deepEqual(outcome, { kind: 'held', id: 2, slot: 0 });
-  assert.equal(game.tilesLeft, 4);
-  assert.equal(game.peeked, null);
-  // …and the peeked tile, now hidden again, clears against it on the next tap
-  // (AC1), from memory.
-  assert.equal(game.isFaceHidden(0), true);
-  assert.equal(game.tap(free(0), 3).kind, 'matched');
+  assert.equal(outcome.kind, 'matched');
+  assert.equal((outcome as { a: number }).a, 0, 'the peeked tile is `a`, the held half');
+  assert.equal((outcome as { b: number }).b, 2);
+  assert.equal((outcome as { slot: number }).slot, 0, 'a real holder slot, even if only for this tap');
+  assert.equal((outcome as { revealed?: boolean }).revealed, undefined, 'the tapped tile was already face-up');
+  assert.ok(game.score > before, 'scored like any other match');
   assert.equal(game.tilesLeft, 2);
+  assert.deepEqual(game.holderSlots(), [null, null, null, null], 'the slot does not stay occupied');
+  assert.equal(game.peeked, null);
+});
+
+test('AC #169: the peek-match clear flips a still-hidden tapped tile in flight', () => {
+  // 2 is concealed too: tapping it while 0 is peeked matches on real face
+  // alone, exactly like rule 1's already-held case (issue #165) — the player
+  // taps blind and it still clears.
+  const game = new Game(ROW, undefined, [0, 2]);
+  game.tap(free(0), 1); // peek dots-1
+  const outcome = game.tap(free(2), 2); // still concealed, same real face
+  assert.equal(outcome.kind, 'matched');
+  assert.equal((outcome as { revealed?: boolean }).revealed, true);
+});
+
+test('AC #169: a held-tile match beats a peek match when both apply', () => {
+  // 0 is peeked (dots-1) and bamboo-2 (1) is already held; tapping the other
+  // bamboo-2 (3) matches the holder, not the (irrelevant, different-face)
+  // peek — rule 1 first, unaffected by the peek at all.
+  const game = new Game(ROW, undefined, [0]);
+  game.tap(free(1), 1); // bamboo-2 parks
+  game.tap(free(0), 2); // peek dots-1
+  const outcome = game.tap(free(3), 3);
+  assert.equal(outcome.kind, 'matched');
+  assert.equal((outcome as { a: number }).a, 1, 'clears against the held bamboo-2, not the peek');
+  assert.equal((outcome as { b: number }).b, 3);
+});
+
+test('AC #169: the peeked tile is excluded from matching itself', () => {
+  const game = new Game(ROW, undefined, [0]);
+  game.tap(free(0), 1); // peek dots-1
+  const outcome = game.tap(free(0), 2); // its own second tap: parks, unchanged
+  assert.deepEqual(outcome, { kind: 'held', id: 0, slot: 0 });
+});
+
+test('AC #169: a non-matching tap with a peek showing still parks and drops the peek', () => {
+  const game = new Game(ROW, undefined, [0]);
+  game.tap(free(0), 1); // peek dots-1
+  const outcome = game.tap(free(1), 2); // bamboo-2: does not match the peek
+  assert.deepEqual(outcome, { kind: 'held', id: 1, slot: 0 });
+  assert.equal(game.peeked, null, 'the peek still drops on a non-matching tap');
+  assert.equal(game.isFaceHidden(0), true);
+});
+
+test('AC #169: a peek-match with one holder vacancy left does not lose the level', () => {
+  const WITH_FILLERS: GeneratedLevel = {
+    layoutId: 'facedown-holder-peek-fill-fixture',
+    seed: 0,
+    tiles: [...ROW.tiles, tile(4, 16, 0, 0, 'char-9'), tile(5, 20, 0, 0, 'char-8')],
+    solution: ROW.solution,
+  };
+  const game = new Game(WITH_FILLERS, undefined, [0]);
+  game.tap(free(4), 1);
+  game.tap(free(5), 2);
+  game.tap(free(1), 3); // bamboo-2 fills the third slot — one vacancy left
+  game.tap(free(0), 4); // peek dots-1
+  assert.equal(game.holderVacancies, 1);
+  const outcome = game.tap(free(2), 5); // the other dots-1: peek-match clears
+  assert.equal(outcome.kind, 'matched');
+  // The peeked tile takes the last slot and clears out of it in the same
+  // tap, so occupancy nets to exactly what it was before the tap (not one
+  // slot fuller, which is what an ordinary park there would have left).
+  assert.equal(game.holderVacancies, 1, 'the momentary slot never sticks');
+  assert.notEqual(game.status(), 'lost');
+});
+
+test('AC #169: a peek-match leaves no undo entry — the pair is permanent like any other match', () => {
+  const game = new Game(ROW, undefined, [0]);
+  game.tap(free(0), 1); // peek dots-1
+  const depthBefore = game.undoDepth;
+  game.tap(free(2), 2); // peek-match clears
+  assert.equal(game.undoDepth, depthBefore, 'nothing left in the holder to undo');
+  assert.equal(game.undo(), null);
+});
+
+test('AC #169: pairsWithHeld and the a11y label do not leak a peek match', () => {
+  const game = new Game(ROW, undefined, [0]);
+  game.tap(free(0), 1); // peek dots-1
+  // pairsWithHeld only ever answers for the holder (issue #93/#165); a peek
+  // match is a different mechanism entirely, so tile 2 must not read as
+  // "pairs with the holder" even though tapping it now clears a pair.
+  assert.equal(game.pairsWithHeld(2), false);
+  assert.equal(game.isFaceHidden(0), false, 'the peek itself still shows — this is not a hidden face');
 });
 
 // AC 4: peek showing, tap a second face-down tile — it peeks (or clears per
