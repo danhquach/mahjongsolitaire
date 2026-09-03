@@ -130,6 +130,7 @@ import {
   RecordStore,
   avatarGlyph,
   clearedLevelCount,
+  dailyLockedFor,
   hasCleared,
   liveStreak,
 } from './profile.js';
@@ -1130,21 +1131,25 @@ async function start(): Promise<void> {
   }
 
   /** The HUD's Daily chip (issue #136, was a Settings row under #19): its
-   *  state — `active` while the Daily is on the table, `done` once today's
-   *  board is credited, `pending` (pulsing) otherwise — and the name that
-   *  says where the player stands: today's date and the streak. */
+   *  state — `active` while the Daily is on the table, `locked` once today's
+   *  board is credited (issue #166 — a clear locks it for the rest of the
+   *  local day; a loss never does), `pending` (pulsing) otherwise — and the
+   *  name that says where the player stands: today's date and the streak.
+   *  `locked` also disables the button outright: the chip's own click
+   *  handler is one replay route, but a native `disabled` closes it without
+   *  relying on that handler re-checking the record. */
   function syncDailyChip(): void {
     const today = dailyDateKey();
     const streak = liveStreak(record.value, today);
     const date = formatDateKey(today, 'long');
-    let state: 'active' | 'done' | 'pending';
+    let state: 'active' | 'locked' | 'pending';
     let status: string;
     if (daily === today) {
       state = 'active';
       status = 'on the table now';
-    } else if (record.value.lastDaily === today) {
-      state = 'done';
-      status = `cleared today, ${streak}-day streak, tap to play it again`;
+    } else if (dailyLockedFor(record.value, today)) {
+      state = 'locked';
+      status = 'cleared for today — a new board arrives tomorrow';
     } else if (streak > 0) {
       state = 'pending';
       status = `${streak}-day streak, clear today’s board to keep it going`;
@@ -1153,6 +1158,7 @@ async function start(): Promise<void> {
       status = 'one board a day, the same for everyone';
     }
     dailyButton.dataset['state'] = state;
+    dailyButton.disabled = state === 'locked';
     const name = `Daily Challenge, ${date}: ${status}`;
     dailyButton.setAttribute('aria-label', name);
     dailyButton.title = name;
@@ -2902,6 +2908,13 @@ async function start(): Promise<void> {
    */
   async function startLevel(mode: 'replay' | 'reroll' | 'ladder'): Promise<void> {
     if (dealing) return;
+    // Issue #166: Restart is the other open replay route for a cleared
+    // Daily (the win screen already hides its own Restart on the way to
+    // this state) — refuse rather than re-deal a board that is locked.
+    if (mode === 'replay' && daily !== null && dailyLockedFor(record.value, daily)) {
+      announcer.say(`Daily Challenge for ${formatDateKey(daily, 'long')} already cleared. A new board arrives tomorrow.`);
+      return;
+    }
     // On a Daily board (issue #19) Restart replays the Daily; the other two
     // both mean "back to the ladder", which deals the ladder's own pinned
     // level — a re-roll of a Daily would be a board nobody else has.
@@ -2956,6 +2969,14 @@ async function start(): Promise<void> {
     const key = dailyDateKey();
     if (daily === key) {
       announcer.say(`Already on the Daily Challenge for ${formatDateKey(key, 'long')}.`);
+      return;
+    }
+    // Issue #166: a cleared Daily is locked for the rest of the local day —
+    // the chip is disabled for this, but the check is repeated here too,
+    // since the chip is not the only caller and a native `disabled` is not a
+    // substitute for the record actually being asked.
+    if (dailyLockedFor(record.value, key)) {
+      announcer.say(`Daily Challenge for ${formatDateKey(key, 'long')} already cleared. A new board arrives tomorrow.`);
       return;
     }
     if (!(await switchLayout(dailyLayoutId(key)))) return;
@@ -3098,8 +3119,14 @@ async function start(): Promise<void> {
       persist();
     } else {
       elapsed.resume();
+      // Issue #166: the Daily's lock (and its pending/streak wording) keys
+      // off the local calendar date — a page left open across midnight, or
+      // reopened the next day, must not keep showing yesterday's chip until
+      // the next move re-draws the board.
+      syncDailyChip();
     }
   });
+  window.addEventListener('focus', () => syncDailyChip());
   window.addEventListener('pagehide', () => {
     persist();
   });

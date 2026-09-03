@@ -9,6 +9,7 @@ import {
   EMPTY_RECORD,
   RECORD_STORAGE_KEY,
   RecordStore,
+  dailyLockedFor,
   hasCleared,
   liveStreak,
   parsePlayerRecord,
@@ -174,3 +175,30 @@ test('a throwing storage still yields a working in-memory record', () => {
 function storageKeyIsStable(): boolean {
   return RECORD_STORAGE_KEY === 'mahjong.record.v1';
 }
+
+// --- dailyLockedFor (issue #166) ---------------------------------------------------
+
+test('dailyLockedFor: locked only once today itself is the last credited date', () => {
+  assert.equal(dailyLockedFor(EMPTY_RECORD, '2026-09-02'), false); // never cleared
+  const clearedToday = { ...EMPTY_RECORD, lastDaily: '2026-09-02' };
+  assert.equal(dailyLockedFor(clearedToday, '2026-09-02'), true);
+  const clearedYesterday = { ...EMPTY_RECORD, lastDaily: '2026-09-01' };
+  assert.equal(dailyLockedFor(clearedYesterday, '2026-09-02'), false); // rolled over
+});
+
+test('dailyLockedFor: a loss never sets lastDaily, so it never locks', () => {
+  const storage = fakeStorage();
+  const record = new RecordStore(storage);
+  // A loss (holder full) records no Daily credit at all — recordDailyWin is
+  // simply never called on that path — so the record stays exactly as a
+  // fresh install left it: unlocked.
+  assert.equal(dailyLockedFor(record.value, '2026-09-02'), false);
+});
+
+test('dailyLockedFor: credited today locks; the same credit stops locking once the date moves on', () => {
+  const storage = fakeStorage();
+  const record = new RecordStore(storage);
+  record.recordDailyWin('2026-09-02');
+  assert.equal(dailyLockedFor(record.value, '2026-09-02'), true);
+  assert.equal(dailyLockedFor(record.value, '2026-09-03'), false);
+});

@@ -199,7 +199,7 @@ Starting grant: 5 of each of the three charged boosters; the holder has no balan
 - No star rating: a clear is a clear. (Issue #19 shipped a 1–3 star rating from assists used and completion time against a per-band baseline; issue #119 removed it as unnecessary complexity — nothing else in v1 read it.)
 - Persistent: level index, cleared levels, total score, streak, trophies. (Issue #19: all on the local player record, `mahjong.record.v1`, except cleared levels which issue #119 keeps as a plain set rather than per-level ratings; the level index keeps its own key.)
 
-**Daily Challenge:** one deterministic board per calendar date (seed = date hash), shared across all users. Completion grants a trophy; consecutive days build a streak with escalating rewards. (Decision 0016: the date is the player's local calendar date; layout and seed are hashes of the "YYYY-MM-DD" key; 1 trophy per clear, 2 from a 7-day streak, 3 from 30; credited once per date.)
+**Daily Challenge:** one deterministic board per calendar date (seed = date hash), shared across all users. Completion grants a trophy; consecutive days build a streak with escalating rewards. (Decision 0016: the date is the player's local calendar date; layout and seed are hashes of the "YYYY-MM-DD" key; 1 trophy per clear, 2 from a 7-day streak, 3 from 30; credited once per date.) A cleared Daily locks against replay — chip and Restart both — until the next local calendar date; a loss stays replayable without limit (decision 0026, issue #166).
 
 ---
 

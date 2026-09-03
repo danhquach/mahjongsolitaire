@@ -202,9 +202,11 @@
         fill: currentColor;
       }
       /* Pending (today's board not yet cleared): a slow gold pulse, so the
-         chip is the one live thing in the HUD. Cleared today: static. Active
-         (the Daily is on the table): a filled gold edge, no pulse — the Level
-         chip already shows the date. */
+         chip is the one live thing in the HUD. Locked (issue #166: cleared
+         today, disabled until the next local date): dimmed and static, like
+         every other disabled control (`#feedback .card > button:disabled`).
+         Active (the Daily is on the table): a filled gold edge, no pulse —
+         the Level chip already shows the date. */
       @keyframes daily-pulse {
         50% {
           box-shadow: 0 0 14px 3px rgba(252, 211, 77, 0.55);
@@ -217,6 +219,10 @@
         border-width: 2px;
         padding: 2px 11px 4px; /* absorb the thicker edge */
         box-shadow: 0 0 10px rgba(252, 211, 77, 0.45);
+      }
+      #app header .stat.daily:disabled {
+        opacity: 0.5;
+        cursor: default;
       }
       @media (prefers-reduced-motion: reduce) {
         #app header .stat.daily[data-state='pending'] {
@@ -1468,7 +1474,8 @@
         <!-- Daily Challenge (issue #136): one tap from the board, in the
              Daily's own palette (depth.ts: night indigo, gold edge). main.ts
              owns data-state — pending (pulses until today's board is cleared),
-             done, or active while the Daily is on the table — and the
+             locked (issue #166: cleared today, disabled until the next local
+             date), or active while the Daily is on the table — and the
              aria-label/title that say where the player stands. -->
         <button
           id="btn-daily"

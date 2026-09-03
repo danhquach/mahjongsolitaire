@@ -3,6 +3,11 @@
 > **Superseded in part, 2026-09-01 (issue #119, PM):** the star rating this
 > decision specifies was removed — a clear is a clear. The Daily Challenge
 > and progression-record parts of this decision stand.
+>
+> **Amended, 2026-09-02 (issue #166, decision 0026):** point 7's "Restart
+> replays the Daily" no longer holds unconditionally — once cleared, the
+> Daily locks against replay (chip and Restart both) until the next local
+> calendar date. A loss stays replayable without limit, as before.
 
 **Date:** 2026-09-01 · **Status:** accepted · **Ticket:** issue #19 · **Amends:** spec §6 (fills in what it left open)
 
