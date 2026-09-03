@@ -29,7 +29,7 @@
 | When | What's playable |
 |---|---|
 | **End of wk 5** (Phase 2 exit) | First hands-on playtest: one full level, boosters, save/resume — any browser (mobile or desktop) |
-| **End of wk 9** (Phase 4 exit) | Feature-complete MVP per spec §2.1: 150 levels (decision 0011), Daily Challenge, ads behind opt-in toggle (default OFF) — broad playtest |
+| **End of wk 9** (Phase 4 exit) | Feature-complete MVP per spec §2.1: 150 levels (decision 0011), daily challenges, ads behind opt-in toggle (default OFF) — broad playtest |
 | **Wk 12** (Phase 5 exit) | Release-quality build → soft launch |
 
 ## 3. Phases
@@ -54,7 +54,7 @@
 **Dependency:** final tile art lands mid-phase; ship slice on placeholders if late.
 
 ### Phase 3 — Content & progression (M3) · 2 wks
-**Deliverables:** 10 layouts as JSON data; 150-level plateau ladder (curated + generated; decision 0011: three flat bands — 1–20 Easy, 21–60 Medium, 61–150 Medium+ — every 10th level spiking one band up; no rising curve or separate relief levels); scoring + Super Combo; ~~star ratings~~ removed by issue #119 — a clear is a clear; Daily Challenge (date-hash seed, DST/timezone-safe); local progression persistence.
+**Deliverables:** 10 layouts as JSON data; 150-level plateau ladder (curated + generated; decision 0011: three flat bands — 1–20 Easy, 21–60 Medium, 61–150 Medium+ — every 10th level spiking one band up; no rising curve or separate relief levels); scoring + Super Combo; ~~star ratings~~ removed by issue #119 — a clear is a clear; daily challenges (three a date, dealt by a date hash, DST/timezone-safe; the date-seeded Daily board they replaced is decision 0028); local progression persistence.
 **Game feel lands here, not in Phase 5** (added 2026-08-31 from the wk-5 playtest): the wk-9 broad playtest is the first real read on retention, and it is worthless if the board is unreadable and matching feels like nothing. Two items:
 - **Tile depth readability (issue #45):** stacked layers currently read as one flat sheet — you cannot see which tiles are free without tapping. Drop shadows + side shading + per-layer value shift. Ships with the 10 layouts because every layout stacks differently.
 - **Match feedback animation (issue #44):** matched tiles fly together and collide instead of vanishing; mismatch shake; reduced-motion alternative. Pairs with Super Combo — a 5s-window scoring mechanic with no visible feedback will not read.
@@ -64,7 +64,7 @@
   - **Reworked by decision 0013 (issue #93, per the Vita reference recording):** one tap sends any revealed free tile to the holder and **pairs assemble and clear in the holder** — selection is no longer an input concept, a held tile is not tappable, and the match feedback (fly-in, side-by-side beat, score popup, particle burst) anchors at the strip.
 **Exit criteria:**
 - CI job validates all 150 shipped seeds solvable AND runs 10,000 random seeds × all 10 layouts (spec §11.1) — becomes a permanent release gate.
-- Daily Challenge determinism verified across device/timezone/DST fixtures.
+- Daily challenge determinism verified across device/timezone/DST fixtures.
 - Ladder ordering (decision 0011, replaces the rising-curve criterion): `assessDifficulty` produces no misordered pair among the bands in use — a spike level never scores below its decade's base levels, and no Medium+ level scores below the Medium median. PM signs off against a per-level report of band, score, and spike positions, not by feel. Full holder-aware bucket calibration (decisions 0008/0009) and concealment re-balance (decision 0010) are deferred to a follow-up ticket.
 - Depth readability: on each of the 10 layouts a first-time player identifies top-layer tiles without tapping; the cue survives greyscale and holds contrast ≥ 4.5:1 (issue #45).
 - Match animation plays at 60fps on the reference low-end device, never blocks input, and honours reduced-motion (issue #44).

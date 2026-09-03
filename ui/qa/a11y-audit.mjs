@@ -313,7 +313,7 @@ for (const vp of VIEWPORTS) {
         // Leaderboard sits last among the board actions, beside Settings, since
         // issue #153 moved it out of the header into the bottom bar; the
         // expectation here still read the old header order.
-        'Profile|Daily Challenge|New game|Restart|Hint|Undo|Shuffle|Leaderboard|Settings',
+        'Profile|Daily challenges|New game|Restart|Hint|Undo|Shuffle|Leaderboard|Settings',
       'board screen exposes the complete slice action set',
       controls,
     );
@@ -866,6 +866,90 @@ for (const vp of VIEWPORTS) {
     check(!closed.boardInert, 'and the board is live again', closed);
   }
 
+  // --- 5c. Daily challenges (issue #183): the chip opens a labelled modal ---
+  //         whose rows carry their progress as text, not as a bar's colour,
+  //         and whose completed rows say so in their name.
+  {
+    await page.click('#btn-daily');
+    const open = await page.evaluate(() => {
+      const panel = document.getElementById('daily-panel');
+      const chip = document.getElementById('btn-daily');
+      return {
+        visible: panel.classList.contains('visible'),
+        role: panel.getAttribute('role'),
+        modal: panel.getAttribute('aria-modal'),
+        named: document.getElementById(panel.getAttribute('aria-labelledby'))?.textContent,
+        focus: document.activeElement?.id,
+        boardInert: document.getElementById('a11y-layer').hasAttribute('inert'),
+        announced: document.getElementById('a11y-status').textContent,
+        chipName: chip.getAttribute('aria-label'),
+        chipDisabled: chip.disabled,
+        rows: [...panel.querySelectorAll('.daily-row')].map((row) => {
+          const track = row.querySelector('.daily-track');
+          return {
+            name: row.getAttribute('aria-label'),
+            role: row.getAttribute('role'),
+            done: row.dataset.done,
+            barRole: track.getAttribute('role'),
+            now: track.getAttribute('aria-valuenow'),
+            max: track.getAttribute('aria-valuemax'),
+            text: track.getAttribute('aria-valuetext'),
+            count: row.querySelector('.daily-count').textContent,
+          };
+        }),
+      };
+    });
+    check(open.visible, 'the Daily chip opens the challenge panel', open);
+    check(
+      open.role === 'dialog' && open.modal === 'true' && /daily challenges/i.test(open.named ?? ''),
+      'the panel is a named, modal dialog',
+      open,
+    );
+    check(open.focus === 'daily-panel-close', 'focus moves into the panel', open);
+    check(open.boardInert, 'the board behind it is inert while it is open', open);
+    check(
+      /^Daily challenges\. \d of 3 complete\.$/.test(open.announced ?? ''),
+      'opening announces how many are done',
+      open,
+    );
+    check(
+      /^Daily challenges, \d of 3 complete$/.test(open.chipName ?? '') && open.chipDisabled === false,
+      'the chip names the same standing and is never disabled',
+      open,
+    );
+    check(open.rows.length === 3, 'all three challenges are listed', open);
+    check(
+      open.rows.every((r) => r.role === 'group' && (r.name ?? '').length > 0),
+      'each challenge is a named group',
+      open.rows,
+    );
+    check(
+      open.rows.every(
+        (r) =>
+          r.barRole === 'progressbar' &&
+          r.text === `${r.now} of ${r.max}` &&
+          r.count.replace(/\s/g, '') === `${r.now}/${r.max}`,
+      ),
+      'each bar reports its progress in words, matching the visible count',
+      open.rows,
+    );
+    check(
+      open.rows.every((r) => (r.done === 'true') === / completed$/.test(r.name ?? '')),
+      'a completed challenge says completed in its name, not only in its colour',
+      open.rows,
+    );
+
+    await page.keyboard.press('Escape');
+    const closed = await page.evaluate(() => ({
+      visible: document.getElementById('daily-panel').classList.contains('visible'),
+      focus: document.activeElement?.id,
+      boardInert: document.getElementById('a11y-layer').hasAttribute('inert'),
+    }));
+    check(!closed.visible, 'Escape closes the panel', closed);
+    check(closed.focus === 'btn-daily', 'focus returns to the chip', closed);
+    check(!closed.boardInert, 'and the board is live again', closed);
+  }
+
   // --- 6. Settings screen is a modal, named, 48dp, and keyboard-escapable. --
   {
     await page.click('#btn-settings');
@@ -920,7 +1004,8 @@ for (const vp of VIEWPORTS) {
     // added Show tutorial; the timer toggle was retired 2026-09-01), the
     // tile-size slider row (issue #139 replaced four radios), the Send
     // feedback row (issue #118), the version row (issue #81), and Done. The
-    // Daily Challenge row moved to the HUD (issue #136).
+    // Daily row moved to the HUD (issue #136; issue #183 made it the
+    // challenge panel).
     check(settingsControls.length === 11, 'settings screen exposes all eleven controls', {
       count: settingsControls.length,
     });

@@ -30,13 +30,12 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright-core';
-// Core's own Daily Challenge hashes (issue #19), so the harness checks the
+// Core's own daily-challenge deal (issue #183), so the harness checks the
 // page against the same function every device runs — not a re-derivation.
 import {
   BASE_PAIR_POINTS,
+  dailyChallenges,
   dailyDateKey,
-  dailyLayoutId,
-  dailySeed,
   scoreMultiplierForLevel,
 } from '../../core/dist/src/index.js';
 
@@ -126,6 +125,26 @@ function measureFit() {
     canvasW: canvas.clientWidth,
     canvasH: canvas.clientHeight,
   };
+}
+
+/**
+ * Put back the stores a section borrowed and re-deal the level, so the next
+ * section sees the balances and the fresh board it expects. The daily
+ * challenges (issue #183) pay booster charges as they complete, so a section
+ * that plays real pairs moves more than its own state.
+ */
+async function restoreStores(page, entries) {
+  await page.evaluate((pairs) => {
+    for (const [key, value] of pairs) {
+      if (value === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, value);
+    }
+  }, entries);
+  await page.reload();
+  await page.waitForFunction(() => window.__slice !== undefined);
+  // A reload resumes the save, which is mid-board; Restart re-deals the level.
+  await page.click('#btn-restart');
+  await page.waitForFunction(() => !window.__slice.dealing);
 }
 
 /** Deals one deadlock hunt will play through before giving up (see huntDeadlock). */
@@ -914,31 +933,24 @@ for (const vp of VIEWPORTS) {
     console.log(`${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: New game re-rolls, Restart replays`);
   }
 
-  // 2b. Daily Challenge (issue #19): the HUD's Daily chip deals the board every
-  //     player gets today — layout and seed are core's own hashes of the local
-  //     date — the chip says so, it survives a force-quit as a Daily, Restart
-  //     replays it, and New game returns to the ladder's own deal.
+  // 2b. Daily challenges (issue #183): the HUD's Daily chip opens today's three
+  //     goals instead of dealing a board. The panel lists them with live
+  //     progress, play ticks them off, a completion pays, and the chip counts
+  //     how many are done.
   {
     const before = failures;
-    const state = () =>
-      page.evaluate(() => ({
-        seed: window.__slice.game.level.seed,
-        layoutId: window.__slice.layoutId,
-        daily: window.__slice.daily,
-        level: window.__slice.ladderLevel,
-        label: document.getElementById('level-label').textContent,
-        chip: document.getElementById('level').textContent,
-        saveDaily: window.__slice.savedState()?.daily ?? null,
-      }));
-    const ladderBefore = await state();
-    // Expected values from core, for the page's own local date (the harness
-    // and the browser share the machine clock and zone).
     const key = dailyDateKey();
-    const want = { seed: dailySeed(key), layoutId: dailyLayoutId(key) };
+    const want = dailyChallenges(key);
+    // Sections below expect the balances and the fresh deal they were left;
+    // this one plays real pairs and completions pay charges, so it puts both
+    // back before it returns.
+    const priorStores = await page.evaluate(() =>
+      ['mahjong.daily.v1', 'mahjong.record.v1', 'mahjong.boosters.v1'].map((k) => [
+        k,
+        localStorage.getItem(k),
+      ]),
+    );
 
-    // The Daily chip lives in the HUD (issue #136): one tap from the board,
-    // named for today and the player's standing, pulsing until today's board
-    // is cleared and reading as active once it is on the table.
     const chip = () =>
       page.evaluate(() => {
         const b = document.getElementById('btn-daily');
@@ -950,103 +962,227 @@ for (const vp of VIEWPORTS) {
           state: b.dataset.state,
           animated: cs.animationName !== 'none',
           height: b.getBoundingClientRect().height,
+          value: document.getElementById('daily-value').textContent,
+          disabled: b.disabled,
         };
       });
     const idle = await chip();
     check(idle.inHeader && !idle.inSettings, 'the Daily chip is in the HUD, not Settings', idle);
-    check(/^Daily Challenge, .+: /.test(idle.name), 'the chip names today and a status', idle);
-    check(idle.state === 'pending' && idle.animated, 'the chip pulses while today is uncleared', idle);
+    check(/^Daily challenges, \d of 3 complete$/.test(idle.name), 'the chip names how many are done', idle);
+    check(idle.state === 'pending' && idle.animated, 'the chip pulses while none are done', idle);
     check(idle.height >= 48, 'the chip is a 48dp touch target', idle);
+    check(idle.value === '0/3', 'the chip reads 0/3 on a fresh day', idle);
+    check(idle.disabled === false, 'the chip is never disabled — the panel stays readable', idle);
+
+    const ladderBefore = await page.evaluate(() => ({
+      level: window.__slice.ladderLevel,
+      seed: window.__slice.game.level.seed,
+      layoutId: window.__slice.layoutId,
+    }));
+
     await page.click('#btn-daily');
-    await page.waitForFunction(() => !window.__slice.dealing);
-    const active = await chip();
-    check(active.state === 'active' && !active.animated, 'on the table, the chip reads active and stops pulsing', active);
-    const dealt = await state();
-    check(dealt.daily === key, 'the Daily is on the table for today\'s date key', { want: key, got: dealt.daily });
-    check(dealt.layoutId === want.layoutId, 'on the layout core hashes for the date', { want: want.layoutId, got: dealt.layoutId });
-    // generateValidatedLevel may step the seed (seed+1, seed+2, … up to its
-    // MAX_RESEEDS of 64 in core/src/generator.ts); a stepped seed is still a
-    // deterministic function of the date, so allow exactly that window.
+    const panel = await page.evaluate(() => ({
+      visible: document.getElementById('daily-panel').classList.contains('visible'),
+      rows: [...document.querySelectorAll('#daily-panel .daily-row')].map((row) => ({
+        goal: row.querySelector('.daily-text').textContent,
+        count: row.querySelector('.daily-count').textContent,
+        done: row.dataset.done,
+        name: row.getAttribute('aria-label'),
+        valuemax: row.querySelector('.daily-track').getAttribute('aria-valuemax'),
+        valuetext: row.querySelector('.daily-track').getAttribute('aria-valuetext'),
+      })),
+      summary: document.getElementById('daily-panel-summary').textContent,
+    }));
+    check(panel.visible, 'the chip opens the challenge panel', panel);
+    check(panel.rows.length === 3, 'the panel lists all three of today\'s challenges', panel);
     check(
-      dealt.seed >= want.seed && dealt.seed - want.seed < 64,
-      'from the seed core hashes for the date',
-      { want: want.seed, got: dealt.seed },
+      panel.rows.every((r, i) => r.valuemax === String(want[i].target)),
+      'each row targets what core deals for the date',
+      { want: want.map((c) => c.target), got: panel.rows.map((r) => r.valuemax) },
     );
-    check(/Daily$/.test(dealt.label) && dealt.chip.length > 0 && !/^\d+$/.test(dealt.chip), 'the HUD chip reads Daily over the date', dealt);
-    check(dealt.saveDaily === key, 'the save records the deal as a Daily', dealt);
-    check(dealt.level === ladderBefore.level, 'the ladder position is untouched', dealt);
-
-    await page.reload();
-    await page.waitForFunction(() => window.__slice !== undefined);
-    const resumed = await state();
     check(
-      resumed.daily === key && resumed.seed === dealt.seed && resumed.layoutId === dealt.layoutId,
-      'a Daily survives a force-quit as a Daily',
-      resumed,
+      panel.rows.every((r) => r.valuetext === `${r.count.split(' / ')[0]} of ${r.valuemax}`),
+      'each row says its own progress the same way in text and to a screen reader',
+      panel,
     );
 
-    await page.click('#btn-restart');
-    await page.waitForFunction(() => !window.__slice.dealing);
-    const restarted = await state();
-    check(restarted.daily === key && restarted.seed === dealt.seed, 'Restart replays the Daily', restarted);
-
-    await page.click('#btn-new');
-    await page.waitForFunction(() => !window.__slice.dealing);
-    const back = await state();
+    // The ladder is untouched: the panel starts nothing.
+    const afterOpen = await page.evaluate(() => ({
+      level: window.__slice.ladderLevel,
+      seed: window.__slice.game.level.seed,
+      layoutId: window.__slice.layoutId,
+    }));
     check(
-      back.daily === null && back.level === ladderBefore.level && /Level$/.test(back.label) && back.saveDaily === null,
-      'New game returns to the ladder level, save and chip included',
-      back,
+      afterOpen.level === ladderBefore.level &&
+        afterOpen.seed === ladderBefore.seed &&
+        afterOpen.layoutId === ladderBefore.layoutId,
+      'opening the challenges deals nothing — the ladder board stays on the table',
+      { ladderBefore, afterOpen },
     );
-    console.log(`${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: Daily Challenge deals, resumes, returns`);
+
+    // Escape closes it, like every other dialog.
+    await page.keyboard.press('Escape');
+    const closed = await page.evaluate(() =>
+      document.getElementById('daily-panel').classList.contains('visible'),
+    );
+    check(closed === false, 'Escape closes the challenge panel', { closed });
+
+    // Play real pairs: the counters move, and a suit challenge counts only its
+    // own suit.
+    const played = await page.evaluate(() => {
+      const slice = window.__slice;
+      // Earlier sections have already played pairs today, so this measures
+      // what *these* matches add rather than assuming a fresh day.
+      const before = slice.dailyStanding.map((s) => s.count);
+      const click = (id) => document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.click();
+      const act = (id) => {
+        if (slice.game.isFaceHidden(id)) {
+          click(id);
+          if (slice.game.board.get(id).removed) return;
+        }
+        click(id);
+      };
+      const suits = [];
+      for (let i = 0; i < 6; i++) {
+        const free = slice.game.hitCandidates().filter((c) => c.free).map((c) => c.id);
+        const byFace = {};
+        for (const id of free) (byFace[slice.game.board.get(id).face] ??= []).push(id);
+        const pair = Object.values(byFace).find((ids) => ids.length >= 2);
+        if (!pair) break;
+        suits.push(slice.game.board.get(pair[0]).face.split('-')[0]);
+        act(pair[0]);
+        act(pair[1]);
+      }
+      return {
+        suits,
+        standing: slice.dailyStanding.map((s, i) => ({
+          kind: s.challenge.kind,
+          suit: s.challenge.suit ?? null,
+          gained: s.count - before[i],
+          done: s.done,
+        })),
+      };
+    });
+    const matched = played.suits.length;
+    check(matched > 0, 'the harness could play at least one pair', played);
+    for (const slot of played.standing) {
+      // A challenge already finished stops counting, which is its own rule
+      // (checked in ui/test/daily.test.ts) — not a miscount.
+      if (slot.done) continue;
+      if (slot.kind === 'pairs') {
+        check(slot.gained === matched, 'every match counts toward the pairs challenge', { played, slot });
+      }
+      if (slot.kind === 'suit') {
+        const want = played.suits.filter((s) => s === slot.suit).length;
+        check(slot.gained === want, 'a suit challenge counts only its own suit', { played, slot, want });
+      }
+      if (slot.kind === 'boards') {
+        check(slot.gained === 0, 'matching pairs is not finishing a board', { played, slot });
+      }
+    }
+    await restoreStores(page, priorStores);
+    console.log(`${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: the Daily chip opens today's challenges and play ticks them off`);
   }
 
-  // 2b2. Issue #166: a cleared Daily locks the chip for the rest of the local
-  //      day — disabled, greyed out, its accessible name saying so — and does
-  //      not lift until the next local calendar date. A native `disabled`
-  //      closes the chip's own replay route on its own; this only checks that
-  //      the chip actually reaches that state and that a native `.click()`
-  //      (which a disabled control refuses to turn into a click event) really
-  //      does nothing.
+  // 2b2. Issue #183: a completed challenge pays a trophy and a booster charge,
+  //      the chip counts it, and the completed row is marked by more than
+  //      colour (a check glyph, a bold weight and "completed" in its name).
   {
     const before = failures;
     const key = dailyDateKey();
-    const priorRecord = await page.evaluate(() => localStorage.getItem('mahjong.record.v1'));
-    await page.evaluate(
-      (k) => localStorage.setItem('mahjong.record.v1', JSON.stringify({ cleared: [47], lastDaily: k })),
-      key,
+    const priorStores = await page.evaluate(() =>
+      ['mahjong.daily.v1', 'mahjong.record.v1', 'mahjong.boosters.v1'].map((k) => [
+        k,
+        localStorage.getItem(k),
+      ]),
     );
+
+    // One challenge one match short of done, so a single match completes it.
+    const short = await page.evaluate(
+      ([k, counts]) => {
+        localStorage.setItem(
+          'mahjong.daily.v1',
+          JSON.stringify({ date: k, counts, done: [false, false, false] }),
+        );
+        return counts;
+      },
+      [key, dailyChallenges(key).map((c) => (c.kind === 'pairs' ? c.target - 1 : 0))],
+    );
+    check(short.some((n) => n > 0), 'the fixture primed a pairs challenge', { short });
     await page.reload();
     await page.waitForFunction(() => window.__slice !== undefined);
-    const locked = await page.evaluate(() => {
-      const b = document.getElementById('btn-daily');
+
+    const paid = await page.evaluate(() => {
+      const slice = window.__slice;
+      const trophiesBefore = JSON.parse(localStorage.getItem('mahjong.record.v1') ?? '{}').trophies ?? 0;
+      const total = (counts) => counts.hint + counts.undo + counts.shuffle;
+      const chargesBefore = total(slice.boosterCharges());
+      const click = (id) => document.querySelector(`#a11y-layer [data-tile-id="${id}"]`)?.click();
+      const act = (id) => {
+        if (slice.game.isFaceHidden(id)) {
+          click(id);
+          if (slice.game.board.get(id).removed) return;
+        }
+        click(id);
+      };
+      const free = slice.game.hitCandidates().filter((c) => c.free).map((c) => c.id);
+      const byFace = {};
+      for (const id of free) (byFace[slice.game.board.get(id).face] ??= []).push(id);
+      const pair = Object.values(byFace).find((ids) => ids.length >= 2);
+      act(pair[0]);
+      act(pair[1]);
+      const record = JSON.parse(localStorage.getItem('mahjong.record.v1') ?? '{}');
+      // Read the live region before opening the panel: opening announces its
+      // own summary line over whatever the match said.
+      const announced = document.getElementById('a11y-status').textContent;
+      document.getElementById('btn-daily').click();
+      const row = [...document.querySelectorAll('#daily-panel .daily-row')].find(
+        (r) => r.dataset.done === 'true',
+      );
       return {
-        state: b.dataset.state,
-        disabled: b.disabled,
-        name: b.getAttribute('aria-label'),
+        trophiesBefore,
+        trophies: record.trophies ?? 0,
+        streak: record.dailyStreak ?? 0,
+        weekScore: record.weekScore ?? 0,
+        levelsCleared: record.levelsCleared ?? 0,
+        chargesBefore,
+        charges: total(slice.boosterCharges()),
+        chip: document.getElementById('daily-value').textContent,
+        chipState: document.getElementById('btn-daily').dataset.state,
+        announced,
+        doneRow: row === undefined ? null : {
+          name: row.getAttribute('aria-label'),
+          mark: row.querySelector('.daily-mark').textContent,
+          weight: getComputedStyle(row.querySelector('.daily-goal')).fontWeight,
+          count: row.querySelector('.daily-count').textContent,
+        },
       };
     });
-    check(locked.state === 'locked', 'a cleared Daily reads as locked, not pending', locked);
-    check(locked.disabled === true, 'a locked Daily chip is disabled, not just visually dimmed', locked);
+    check(paid.trophies === paid.trophiesBefore + 1, 'a completed challenge pays one trophy', paid);
+    check(paid.streak === 1, "the day's first completion starts the streak", paid);
+    check(paid.charges === paid.chargesBefore + 1, 'and one booster charge', paid);
+    check(paid.weekScore === 0 && paid.levelsCleared === 0, 'and no score and no level cleared', paid);
+    check(paid.chip === '1/3' && paid.chipState === 'partial', 'the chip counts the completion', paid);
     check(
-      /cleared/i.test(locked.name) && /tomorrow/i.test(locked.name),
-      'the locked name says the board is cleared for today and a new one arrives tomorrow',
-      locked,
+      /Daily challenge complete/i.test(paid.announced),
+      'the completion is announced on the line of the move that earned it',
+      paid,
     );
-    const clicked = await page.evaluate(() => {
-      document.getElementById('btn-daily').click();
-      return window.__slice.daily;
-    });
-    check(clicked === null, 'a disabled chip does not deal the Daily even when .click() is forced', { clicked });
-    // Restore the record the rest of the harness expects, and reload back to
-    // an unlocked chip before the sections below run.
-    await page.evaluate((v) => {
-      if (v === null) localStorage.removeItem('mahjong.record.v1');
-      else localStorage.setItem('mahjong.record.v1', v);
-    }, priorRecord);
-    await page.reload();
-    await page.waitForFunction(() => window.__slice !== undefined);
-    console.log(`${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: a cleared Daily locks the chip until the next local date`);
+    check(paid.doneRow !== null, 'the panel marks the completed challenge', paid);
+    check(
+      paid.doneRow !== null && paid.doneRow.mark === '✓' && Number(paid.doneRow.weight) >= 700,
+      'the completed row is marked by a check and a bold weight, not colour alone',
+      paid.doneRow,
+    );
+    check(
+      paid.doneRow !== null && /completed$/.test(paid.doneRow.name),
+      'and its accessible name says completed',
+      paid.doneRow,
+    );
+
+    await page.evaluate(() => document.getElementById('daily-panel-close').click());
+    await restoreStores(page, priorStores);
+    console.log(`${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: a completed challenge pays and is marked done`);
   }
 
   // 2c. The Level chip opens the profile (issue #137): a real button, 48dp,
@@ -1471,12 +1607,14 @@ for (const vp of VIEWPORTS) {
     charges: window.__slice.boosterCharges(),
   }));
   // Issue #51/#117: level 47 is seeded as already cleared, so this win is a
-  // replay and must pay no grant — no payout line, balances untouched.
-  const noGrant =
-    result.grant === null &&
-    result.charges.hint === 5 &&
-    result.charges.undo === 5 &&
-    result.charges.shuffle === 5;
+  // replay and must pay no grant — no payout line on the dialog.
+  //
+  // The balance is no longer a proxy for that: since issue #183 a board clear
+  // can also complete daily challenges, each of which legitimately pays a
+  // charge. The dialog's grant line is the first-clear rule itself, and the
+  // per-completion charge is asserted exactly in the daily-challenge section
+  // above and in ui/test/boosters-replenish.test.ts.
+  const noGrant = result.grant === null;
   const ok =
     result.tilesLeft === 0 &&
     result.status === 'won' &&
@@ -1505,10 +1643,25 @@ for (const vp of VIEWPORTS) {
         !document.getElementById('overlay').classList.contains('visible') &&
         !window.__slice.dealing,
     );
+    // Pin the balances at the starting grant first. This section is about
+    // spending — "a charge goes only when the booster did something" — and
+    // since issue #183 the play above legitimately *earns* charges by
+    // completing daily challenges, so the balance reaching here is no longer a
+    // fixed number. The starting grant itself is asserted in
+    // ui/test/boosters.test.ts, where no play can move it.
+    await page.evaluate(() => {
+      const stored = JSON.parse(localStorage.getItem('mahjong.boosters.v1') ?? '{}');
+      localStorage.setItem(
+        'mahjong.boosters.v1',
+        JSON.stringify({ ...stored, hint: 5, undo: 5, shuffle: 5 }),
+      );
+    });
+    await page.reload();
+    await page.waitForFunction(() => window.__slice !== undefined && !window.__slice.dealing);
     const start = await page.evaluate(() => window.__slice.boosterCharges());
     check(
       start.hint === 5 && start.undo === 5 && start.shuffle === 5,
-      'starting grant is 5 of each',
+      'the balances start this section at 5 of each',
       start,
     );
 
