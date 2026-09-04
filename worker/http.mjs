@@ -108,3 +108,17 @@ export function callerKey(request, scope) {
 export function playerKey(scope, playerId) {
   return `${scope}:player:${playerId}`;
 }
+
+/** The window a quota counts over (issue #189). A day, and no longer: the
+ *  nightly sweep in index.mjs deletes rows whose window opened more than a day
+ *  ago, so a longer window here would be reset by the sweep mid-count. */
+export const QUOTA_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** A quota (issue #189) is the shared limiter over a day: the same upsert and
+ *  the same table as the minutes-long bucket, with a longer window and its own
+ *  `-day` scope so the two never share a row. The minutes bucket answers
+ *  "slow down"; this one answers "enough for today" and is what bounds a
+ *  credential's writes when the pace is patient. */
+export function quotaExceeded(db, key, now, max) {
+  return rateLimitedShared(db, key, now, { max, windowMs: QUOTA_WINDOW_MS });
+}

@@ -35,7 +35,7 @@
 // `authenticate` is exported for the leaderboard routes (issue #70), which
 // hang off the same bearer code.
 
-import { callerKey, isCrossSite, json, playerKey, rateLimitedShared } from './http.mjs';
+import { callerKey, isCrossSite, json, playerKey, quotaExceeded, rateLimitedShared } from './http.mjs';
 
 const MAX_BODY_BYTES = 16 * 1024;
 /** Mirrors ui/src/profile.ts NAME_MAX_LENGTH — the client clamps, the server
@@ -68,13 +68,31 @@ const MAX_COUNTER = 1e12;
  * from either side, so a player cannot exceed it by changing address and an
  * address cannot exceed it by rotating codes. Both counts live in D1, not in
  * one isolate's memory (decision 0029).
+ *
+ * `perDay` is the quota (issue #189): what one identity may do in a day, at
+ * any pace. The minutes-long bucket slows a burst but lets a patient loop
+ * write without end (60 syncs per 10 minutes is 8,640 a day); the quota is the
+ * bound. For the authenticated routes it is per player. Register has no
+ * player, so its quota is per address, and `perDayGlobal` caps the day's
+ * registrations across every address: a row is minted per call, and the
+ * reaper (issue #188) only takes unused ones back after 30 days.
+ *
+ * Sizing: a sync per win (the submit cap allows ~43 a week's worth a day) plus
+ * avatar picks and a restore, so 200 is loose for a player and tight for a
+ * loop. A name is chosen a few times ever. The global register ceiling is a
+ * playtest number: exhausting it locks new players out until the window
+ * turns, so it is high, and raising it costs nothing.
  */
 const RATE_LIMITS = {
-  register: { max: 5, windowMs: 60 * 60 * 1000 },
+  register: { max: 5, windowMs: 60 * 60 * 1000, perDay: 10, perDayGlobal: 1000 },
   read: { max: 10, windowMs: 10 * 60 * 1000 },
-  sync: { max: 60, windowMs: 10 * 60 * 1000 },
-  name: { max: 20, windowMs: 10 * 60 * 1000 },
+  sync: { max: 60, windowMs: 10 * 60 * 1000, perDay: 200 },
+  name: { max: 20, windowMs: 10 * 60 * 1000, perDay: 20 },
 };
+
+/** The one key every registration shares (issue #189). `global` is neither
+ *  `ip` nor `player`, so it can never collide with a caller's bucket. */
+const REGISTER_GLOBAL_KEY = 'register-day:global';
 
 // --- recovery codes ----------------------------------------------------------
 
@@ -413,15 +431,29 @@ export async function authenticate(request, db) {
 
 /** The post-auth half of the limiter (issue #186): the player's own bucket for
  *  `scope`, with the same allowance as the address bucket the router already
- *  checked. `null` when within it; the 429 to return when not. */
+ *  checked, then the player's quota for the day (issue #189) when the route
+ *  has one. `null` when within both; the 429 to return when not. The minutes
+ *  bucket goes first, so a burst that is already refused does not also spend
+ *  the day's allowance. */
 async function playerLimited(db, scope, playerId, now, limit) {
   if (await rateLimitedShared(db, playerKey(scope, playerId), now, limit)) {
+    return json(429, { error: 'rate_limited' });
+  }
+  if (limit.perDay !== undefined && (await quotaExceeded(db, playerKey(`${scope}-day`, playerId), now, limit.perDay))) {
     return json(429, { error: 'rate_limited' });
   }
   return null;
 }
 
-async function register(request, env, deps, now) {
+async function register(request, env, deps, now, limit) {
+  // The quotas (issue #189), before the body is read: this address's day, then
+  // everyone's day. There is no player yet, so the address is the identity.
+  if (await quotaExceeded(env.DB, callerKey(request, 'register-day'), now, limit.perDay)) {
+    return json(429, { error: 'rate_limited' });
+  }
+  if (await quotaExceeded(env.DB, REGISTER_GLOBAL_KEY, now, limit.perDayGlobal)) {
+    return json(429, { error: 'rate_limited' });
+  }
   const body = await readBody(request);
   if (body.error) return body.error;
   const payload = body.value;

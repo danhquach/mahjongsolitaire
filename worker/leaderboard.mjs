@@ -49,6 +49,7 @@ import {
   isCrossSite,
   json,
   playerKey,
+  quotaExceeded,
   rateLimited,
   rateLimitedShared,
 } from './http.mjs';
@@ -129,7 +130,12 @@ const RATE_LIMITS = {
   // one; an anonymous read never touches a code at all.
   read: { max: 60, windowMs: 10 * 60 * 1000 },
   'read-signed': { max: 10, windowMs: 10 * 60 * 1000 },
-  withdraw: { max: 10, windowMs: 10 * 60 * 1000 },
+  // `perDay` is the player's quota for the day (issue #189, see profile.mjs).
+  // Withdrawing is idempotent and deletes only the caller's own rows, so the
+  // quota is for consistency with the other writes, not for a threat.
+  // Submit has no quota here: `MAX_RUNS_PER_WEEK` is already the quota that
+  // route needed, enforced against the standing itself.
+  withdraw: { max: 10, windowMs: 10 * 60 * 1000, perDay: 10 },
 };
 
 /** For the anonymous board read only (issue #186): public data, no credential,
@@ -141,9 +147,13 @@ const defaultRateLimitStore = createRateLimitStore();
 
 /** The post-auth half of the limiter (issue #186): the player's own bucket for
  *  `scope`, with the same allowance as the address bucket the router already
- *  checked. `null` when within it; the 429 to return when not. */
+ *  checked, then the player's quota for the day (issue #189) when the route
+ *  has one. `null` when within both; the 429 to return when not. */
 async function playerLimited(db, scope, playerId, now, limit) {
   if (await rateLimitedShared(db, playerKey(scope, playerId), now, limit)) {
+    return json(429, { error: 'rate_limited' });
+  }
+  if (limit.perDay !== undefined && (await quotaExceeded(db, playerKey(`${scope}-day`, playerId), now, limit.perDay))) {
     return json(429, { error: 'rate_limited' });
   }
   return null;

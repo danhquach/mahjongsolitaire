@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { handleFeedback, sweep, sweepRateLimits } from '../index.mjs';
+import { QUOTA_WINDOW_MS } from '../http.mjs';
 import { createDb } from './d1.mjs';
 
 const VALID_CONTEXT = { version: 'v0.1.0+ab12cd3', level: 'Level 12', ua: 'test-agent', date: '2026-09-02T00:00:00.000Z' };
@@ -161,6 +162,18 @@ test('the daily sweep drops rows whose window opened more than a day ago, and no
   await sweepRateLimits(DB, now);
   const keys = DB.raw.prepare('SELECT key FROM rate_limits ORDER BY key').all().map((r) => r.key);
   assert.deepEqual(keys, ['edge', 'live']);
+});
+
+test('a quota row still inside its window survives the sweep (issue #189)', async () => {
+  // The quota window is the longest any limiter has. If it ever grew past the
+  // sweep's TTL the sweep would reset live quotas mid-count; this pins the two.
+  const { DB } = validEnv();
+  const now = 10 * QUOTA_WINDOW_MS;
+  DB.raw
+    .prepare('INSERT INTO rate_limits (key, window_start, count) VALUES (?, ?, 199)')
+    .run('sync-day:player:X', now - QUOTA_WINDOW_MS + 1);
+  await sweepRateLimits(DB, now);
+  assert.equal(DB.raw.prepare('SELECT count FROM rate_limits WHERE key = ?').get('sync-day:player:X').count, 199);
 });
 
 test('cross-site request -> 403', async () => {
