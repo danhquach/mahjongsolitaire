@@ -4,6 +4,12 @@ Playtest builds deploy from `main` on every merge; entries are grouped by
 deploy day. The in-game Settings screen shows this file with the exact
 commit and build time of the running bundle.
 
+## 2026-09-04
+
+- If the leaderboard cannot answer, the game now says so ("The leaderboard is
+  unavailable right now") instead of the server failing with a raw error, and
+  a build can no longer deploy ahead of the database change it needs (#185).
+
 ## 2026-09-03
 
 - **The Daily is now three challenges you finish while you climb.** The Daily

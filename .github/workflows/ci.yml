@@ -138,6 +138,32 @@ jobs:
       # than fail the run so CI stays green in the meantime.
       # Every argument is fixed in-repo — name and asset directory come from
       # wrangler.jsonc — so nothing interpolated reaches the shell.
+      # Issue #185 — the deploy gate. Migrations are applied by hand while
+      # deploys are automatic, and on 2026-09-04 a Worker went live ahead of the
+      # migration that created its tables: every leaderboard read was a 500
+      # until someone noticed. So before deploying, ask the live database what it
+      # has and compare it to what worker/schema*.sql would produce; a missing
+      # table or column fails this job, leaving the previous Worker live. The
+      # query is fixed here and checked against the script's own copy by
+      # worker/test/check-schema.test.mjs, so the two cannot drift apart. The
+      # result reaches the script through an env var, never the shell.
+      - uses: actions/setup-node@v4
+        if: env.HAS_CLOUDFLARE_CREDS == 'true'
+        with:
+          node-version: 22
+      - name: Read the live D1 schema
+        if: env.HAS_CLOUDFLARE_CREDS == 'true'
+        id: live-schema
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: d1 execute lantern-tiles --remote --json --command "SELECT m.name AS tbl, p.name AS col FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%' AND m.name NOT LIKE '_cf_%' ORDER BY m.name, p.cid"
+      - name: Refuse to deploy ahead of a pending migration
+        if: env.HAS_CLOUDFLARE_CREDS == 'true'
+        env:
+          LIVE_SCHEMA: ${{ steps.live-schema.outputs.command-output }}
+        run: node worker/scripts/check-schema.mjs
       - name: Deploy to Cloudflare
         if: env.HAS_CLOUDFLARE_CREDS == 'true'
         uses: cloudflare/wrangler-action@v4
