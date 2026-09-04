@@ -502,6 +502,35 @@
       #holder.lost .slot .tile {
         border: 3px solid #b91c1c;
       }
+      /* The one-slot-left banner (issue #190). Absolutely positioned inside
+         #board so showing it never shifts the fit; above the tiles, below the
+         loss wash (z 33) and the dialog. pointer-events off: it must never
+         swallow a tap on the tile under it. Colour is not the only cue (spec
+         §7): the words are. */
+      #holder-warning {
+        position: absolute;
+        top: 6px;
+        /* Centered without `left: 50%`: an absolutely positioned box shrinks
+           to the space right of its left edge, which halved the line length
+           and quadrupled the height on a phone. */
+        left: 0;
+        right: 0;
+        margin: 0 auto;
+        width: fit-content;
+        max-width: calc(100% - 24px);
+        z-index: 20;
+        padding: 6px 12px;
+        border: 2px solid #f59e0b;
+        border-radius: 8px;
+        /* Translucent: a top-row tile under it stays readable, and taps pass
+           through regardless (pointer-events: none). */
+        background: rgba(255, 251, 235, 0.88);
+        color: #78350f;
+        font-size: 0.8125rem;
+        line-height: 1.3;
+        text-align: center;
+        pointer-events: none;
+      }
       /* Pressed state (issue #95): every real control darkens and sinks while
          the pointer or Space key is down, and releases back. The board's tile
          proxies (.tile-node — invisible, the canvas carries their visuals) and
@@ -1615,6 +1644,15 @@
         <div id="board">
           <div id="a11y-layer"></div>
           <div id="loss-wash-layer"></div>
+          <!-- The one-slot-left warning for sighted players (issue #190): the
+               amber slot mark and the accessible names already carry it; this
+               says it in words. Derived from state on every redraw (main.ts),
+               so it shows while exactly one slot is empty and hides itself;
+               the text is written there too, since it depends on whether an
+               Undo charge is left. aria-hidden: the live region already
+               announces the third park, and the holder group's name carries
+               the same warning. -->
+          <div id="holder-warning" hidden aria-hidden="true"></div>
           <!-- The gear used to live top-right, absolutely positioned inside
                #board, where it could sit on top of the board's own top-right
                tiles (issue #125): it wasn't part of what the HUD fit measures.

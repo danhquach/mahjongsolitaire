@@ -134,3 +134,22 @@ happened), and a full holder still loses the level the moment the fourth slot
 fills — the loss dialog offers no Undo. What changes: the deadlock dialog
 offers Undo only when the holder has a tile to give back, because Undo can no
 longer rescue a deadlock caused purely by matching.
+
+## Follow-up (issue #190, 2026-09-04)
+
+An external review read the loss dialog as the game refusing a booster the
+player owns: Undo's whole job since #100 is returning the newest parked tile,
+which is exactly the fourth one. The question was put to the PM as a choice
+between letting Undo rescue the loss for a charge and keeping the hard fail.
+
+**Kept: a loss is a loss.** The game is already on the easy side, and an Undo
+that rescues a full holder makes the starting charges a loss budget — five
+free walks off the cliff — which is 0008 back with extra steps. Point 3 above
+stands with its reason updated: it is no longer "the move stack stays honest"
+(the return *is* a move now) but "the fourth slot has to cost something".
+
+What changed instead is legibility: the loss dialog names Undo and says it
+cannot help once the holder is full, and the one-slot-left warning is shown in
+words to sighted players (a banner over the board, up while exactly one slot
+is empty) rather than only as the amber slot mark and the accessible names.
+

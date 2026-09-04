@@ -6,6 +6,10 @@ commit and build time of the running bundle.
 
 ## 2026-09-04
 
+- With one holder slot left, a banner over the board now says so in words and
+  reminds you that Undo returns a parked tile. Filling the fourth slot is still
+  the end of the level, and the loss dialog now says plainly that Undo cannot
+  help once the holder is full (#190).
 - If the leaderboard cannot answer, the game now says so ("The leaderboard is
   unavailable right now") instead of the server failing with a raw error, and
   a build can no longer deploy ahead of the database change it needs (#185).

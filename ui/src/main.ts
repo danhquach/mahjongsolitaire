@@ -253,6 +253,7 @@ async function start(): Promise<void> {
   const header = el<HTMLElement>('app-header');
   const boosterRail = el<HTMLDivElement>('booster-rail');
   const holderRoot = el<HTMLDivElement>('holder');
+  const holderWarning = el<HTMLDivElement>('holder-warning');
   const settingsPanel = el<HTMLDivElement>('settings');
   const settingsButton = el<HTMLButtonElement>('btn-settings');
   const changelogPanel = el<HTMLDivElement>('changelog');
@@ -634,6 +635,27 @@ async function start(): Promise<void> {
     return faceStyle(game.board.get(id).face).label;
   }
 
+  /** The one-slot-left warning in words, for whoever cannot see the amber
+   *  slot mark (issue #190). Undo is named only while a charge is left to
+   *  spend: with none, telling the player to Undo would be a lie. */
+  function oneSlotLeftWarning(): string {
+    return charges.has('undo')
+      ? 'One slot left: Undo returns a parked tile, or the next unmatched tile ends the level.'
+      : 'One slot left: the next unmatched tile ends the level.';
+  }
+
+  /** The same warning as a banner over the board for sighted players (issue
+   *  #190). State-derived rather than timed: it is up exactly while one slot
+   *  is empty and no dialog is showing, and drops the moment a match frees a
+   *  slot, the fourth park lands, or a dialog takes over. Called from every
+   *  redraw and from both overlay transitions — showStatus and hideOverlay
+   *  flip `overlayVisible` without redrawing. */
+  function syncHolderWarning(): void {
+    const show = game.holderVacancies === 1 && !overlayVisible;
+    if (show) holderWarning.textContent = oneSlotLeftWarning();
+    holderWarning.hidden = !show;
+  }
+
   function redraw(): void {
     renderer.draw(game, {
       flash,
@@ -667,6 +689,7 @@ async function start(): Promise<void> {
     // an unmatched tile ends the level, so a free tile's accessible name has
     // to say so.
     a11y.sync(a11yTiles(), (t) => tileCssRect(t.slot), game.holderVacancies === 1);
+    syncHolderWarning();
   }
 
   /** The score the chip currently shows; -1 until the first paint so a resumed
@@ -814,10 +837,13 @@ async function start(): Promise<void> {
       syncAfterWin();
     } else if (status === 'lost') {
       overlayTitle.textContent = 'Holder full';
+      // Undo is named so the refusal is legible (issue #190, PM: a loss is a
+      // loss): the player may well have charges left, and the dialog has to
+      // say why they cannot be spent here.
       overlayText.textContent =
-        'All four holder slots hold unmatched tiles, and a tile can only leave the holder by being matched. The level is over — restart it, or start a new game.';
+        'All four holder slots hold unmatched tiles, and a tile can only leave the holder by being matched. Undo cannot return a tile once the holder is full. The level is over — restart it, or start a new game.';
       announcer.say(
-        `Holder full. The level is over. Score ${game.score}. Restart the level, or start a new game.`,
+        `Holder full. The level is over. Undo cannot help now. Score ${game.score}. Restart the level, or start a new game.`,
       );
     } else {
       const ways = [
@@ -842,6 +868,7 @@ async function start(): Promise<void> {
     // reach it in the gap (issue #120).
     overlayVisible = true;
     setBackgroundInert(true);
+    syncHolderWarning();
     // Focus the way out, not the way back: Shuffle if it can help, else Undo,
     // and only then the restart the player loses progress to.
     const wayOut = canShuffle
@@ -1077,6 +1104,7 @@ async function start(): Promise<void> {
     overlayVisible = false;
     overlay.classList.remove('visible');
     setBackgroundInert(false);
+    syncHolderWarning();
     return true;
   }
 
@@ -2835,7 +2863,7 @@ async function start(): Promise<void> {
         announcer.say(
           `${label(outcome.id)} sent to holder slot ${outcome.slot + 1}. ${
             game.holderVacancies === 1
-              ? 'One holder slot left. A tile with no match in the holder ends the level.'
+              ? `One holder slot left. ${oneSlotLeftWarning().replace('One slot left: ', '')}`
               : `${game.tilesLeft} tiles left.`
           }`,
         );
