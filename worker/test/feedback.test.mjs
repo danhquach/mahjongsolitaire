@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { handleFeedback, sweepRateLimits } from '../index.mjs';
+import { handleFeedback, sweep, sweepRateLimits } from '../index.mjs';
 import { createDb } from './d1.mjs';
 
 const VALID_CONTEXT = { version: 'v0.1.0+ab12cd3', level: 'Level 12', ua: 'test-agent', date: '2026-09-02T00:00:00.000Z' };
@@ -375,4 +375,29 @@ test('path separators and control characters are scrubbed from the filename', as
   );
   assert.equal(res.status, 202);
   assert.equal(sent.attachments[0].filename, '.._.._evil name__.png');
+});
+
+test('the nightly sweep is one entry point for all three tables', async () => {
+  const { DB } = validEnv();
+  const day = 24 * 60 * 60 * 1000;
+  const now = Date.parse('2026-09-03T12:00:00Z');
+  DB.raw.prepare('INSERT INTO rate_limits (key, window_start, count) VALUES (?, ?, 1)').run('old', now - 2 * day);
+  DB.raw
+    .prepare(
+      `INSERT INTO players (id, code_hash, name, avatar, created_at, updated_at)
+       VALUES ('STALE', 'h1', 'Stale', 'lantern', ?, ?), ('GONE', 'h2', 'Gone', 'lantern', ?, ?)`,
+    )
+    .run(now - 400 * day, now - 400 * day, now - 400 * day, now - 400 * day);
+  // A withdrawn-and-forgotten player: standing gone, but one run from long ago
+  // survived — the sweep must clear that before the player can go.
+  DB.raw
+    .prepare(
+      `INSERT INTO weekly_submissions (week_start, player_id, score, elapsed_ms, history, created_at)
+       VALUES ('2026-01-04', 'GONE', 1, 1, '[]', ?)`,
+    )
+    .run(now - 240 * day);
+  await sweep(DB, now);
+  assert.equal(DB.raw.prepare('SELECT COUNT(*) AS n FROM rate_limits').get().n, 0);
+  assert.equal(DB.raw.prepare('SELECT COUNT(*) AS n FROM weekly_submissions').get().n, 0);
+  assert.equal(DB.raw.prepare('SELECT COUNT(*) AS n FROM players').get().n, 0);
 });

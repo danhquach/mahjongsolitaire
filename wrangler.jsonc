@@ -21,9 +21,11 @@
   // in by wrangler. Run `npm --prefix core run build` before a local
   // `wrangler deploy`; CI's deploy job does the same.
   "main": "worker/index.mjs",
-  // Issue #186 — once a day, delete rate-limit rows whose window opened more
-  // than a day ago (worker/index.mjs `scheduled`). 04:17 UTC: off the hour,
-  // and outside the evening peak in every playtest time zone.
+  // Issues #186 and #188 — once a day, delete rate-limit rows whose window
+  // opened more than a day ago, runs older than the live week and the one
+  // before it, and players who never synced or have gone idle
+  // (worker/index.mjs `sweep`). 04:17 UTC: off the hour, and outside the
+  // evening peak in every playtest time zone.
   "triggers": {
     "crons": ["17 4 * * *"]
   },

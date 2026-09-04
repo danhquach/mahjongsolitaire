@@ -13,7 +13,8 @@
 // is handled below; `/api/profile*` (issue #138) lives in profile.mjs,
 // `/api/leaderboard*` (issue #70) in leaderboard.mjs, and the shared
 // JSON/cross-site/rate-limit helpers in http.mjs. Rate limits count in D1
-// since issue #186 (decision 0029); `scheduled` below sweeps their table.
+// since issue #186 (decision 0029); `scheduled` below sweeps that table and,
+// since issue #188, prunes old runs and reaps abandoned players.
 //
 // The feedback route forwards to Resend
 // (https://resend.com) so the shipped bundle never carries an email API key —
@@ -29,8 +30,8 @@
 // ones the client enforces in ui/src/feedback-form.ts — keep them in step.
 
 import { callerKey, isCrossSite, json, rateLimitedShared } from './http.mjs';
-import { handleLeaderboard } from './leaderboard.mjs';
-import { authenticate, handleProfile } from './profile.mjs';
+import { handleLeaderboard, pruneSubmissions } from './leaderboard.mjs';
+import { authenticate, handleProfile, reapPlayers } from './profile.mjs';
 
 /** Text-only body cap (issue #118); a body carrying attachments is allowed
  *  up to MAX_BODY_BYTES_WITH_ATTACHMENTS instead. */
@@ -299,9 +300,23 @@ export async function sweepRateLimits(db, now) {
   await db.prepare('DELETE FROM rate_limits WHERE window_start < ?').bind(now - RATE_LIMIT_ROW_TTL_MS).run();
 }
 
+/**
+ * The nightly sweep: rate-limit rows past their window (issue #186), then
+ * runs older than the live week and the one before it, then players who never
+ * synced or have gone idle (issue #188). Runs first, players last: a run row
+ * blocks its player's delete, so the order lets a withdrawn-and-forgotten
+ * player go in the same night. Each step is one statement, so a failure in
+ * one leaves the others' work in place and surfaces in the cron's log.
+ */
+export async function sweep(db, now) {
+  await sweepRateLimits(db, now);
+  await pruneSubmissions(db, now);
+  await reapPlayers(db, now);
+}
+
 export default {
   fetch: (request, env) => handleRequest(request, env),
   // Only ever runs when wrangler.jsonc has a cron, and only with the database
   // bound; without `DB` there is nothing to sweep.
-  scheduled: (controller, env) => (env.DB ? sweepRateLimits(env.DB, Date.now()) : undefined),
+  scheduled: (controller, env) => (env.DB ? sweep(env.DB, Date.now()) : undefined),
 };

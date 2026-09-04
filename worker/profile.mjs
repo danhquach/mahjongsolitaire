@@ -557,6 +557,38 @@ async function read(request, env, deps, now, limit) {
   return json(200, { profile: rowToProfile(auth.row) });
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** A registration that never synced afterwards is a profile nobody uses: an
+ *  abandoned first launch, or a throwaway. A month is long enough for a real
+ *  player's first sync. */
+export const UNSYNCED_PLAYER_TTL_MS = 30 * DAY_MS;
+/** A profile that has synced before, but not for this long, is idle. Six
+ *  months: a player returning after a summer away still finds their profile. */
+export const IDLE_PLAYER_TTL_MS = 180 * DAY_MS;
+
+/**
+ * Issue #188: `register` inserts a row per call and nothing ever removed one.
+ * Every write to a player's row sets `updated_at` (sync, rename), so a row
+ * whose `updated_at` still equals its `created_at` never synced, and one whose
+ * `updated_at` is old enough has gone idle. Either goes — unless the player
+ * has a standing on any week's board, whose name and avatar are read off this
+ * row; that player stays however idle. A run row without a standing cannot
+ * exist (submit writes both, withdraw deletes both), but the `REFERENCES`
+ * clause would fail the whole sweep if one did, so it is checked too. Runs
+ * from the daily cron in worker/index.mjs; exported for the test.
+ */
+export async function reapPlayers(db, now) {
+  await db
+    .prepare(
+      `DELETE FROM players
+        WHERE ((updated_at = created_at AND created_at < ?) OR updated_at < ?)
+          AND NOT EXISTS (SELECT 1 FROM weekly_scores      WHERE player_id = players.id)
+          AND NOT EXISTS (SELECT 1 FROM weekly_submissions WHERE player_id = players.id)`,
+    )
+    .bind(now - UNSYNCED_PLAYER_TTL_MS, now - IDLE_PLAYER_TTL_MS)
+    .run();
+}
+
 /**
  * The `/api/profile*` router. Everything reachable from the outside world
  * (the clock, randomness) arrives through `deps` so tests are deterministic;
