@@ -40,6 +40,7 @@ import {
   MAX_WEEK_SCORE,
   WEEK_MS,
   handleLeaderboard,
+  pruneSubmissions,
   validateSubmission,
   weekResetAt,
   weekStartKey,
@@ -1099,4 +1100,43 @@ test('a malformed body is refused', async () => {
   );
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), { error: 'invalid_json' });
+});
+
+// --- retention (issue #188) ---------------------------------------------------
+
+test('the nightly prune keeps the live week and the one before it, and drops older runs', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  const run = playedRun(1, 0);
+  await post(env, deps, alex, run);
+  await post(env, deps, alex, run, LAST_WEEK_NOW);
+  await post(env, deps, alex, run, NOW - 2 * WEEK_MS);
+  await post(env, deps, alex, run, NOW - 3 * WEEK_MS);
+  assert.equal(count(env, 'weekly_submissions'), 4);
+
+  await pruneSubmissions(env.DB, NOW);
+  const kept = env.DB.raw
+    .prepare('SELECT week_start FROM weekly_submissions ORDER BY week_start')
+    .all()
+    .map((r) => r.week_start);
+  assert.deepEqual(kept, ['2026-08-23', WEEK]);
+  // The standings are what is ranked and are never pruned: the old weeks'
+  // boards still read exactly as they did.
+  assert.equal(count(env, 'weekly_scores'), 4);
+  assert.equal((await board(env, deps, alex, NOW - 3 * WEEK_MS)).body.you.score, run.score);
+});
+
+test('a run becomes prunable the moment its week is two weeks back, not before', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  await post(env, deps, alex, playedRun(1, 0)); // week 2026-08-30
+
+  // Last millisecond of the following week: 08-30 is still "the week before".
+  await pruneSubmissions(env.DB, Date.parse('2026-09-12T23:59:59.999Z'));
+  assert.equal(count(env, 'weekly_submissions'), 1);
+  // The next week opens, and 08-30 is two weeks back.
+  await pruneSubmissions(env.DB, Date.parse('2026-09-13T00:00:00.000Z'));
+  assert.equal(count(env, 'weekly_submissions'), 0);
 });

@@ -490,6 +490,22 @@ async function withdraw(request, env, deps, now) {
 }
 
 /**
+ * Issue #188: `weekly_submissions` keeps every accepted run whole, with the
+ * move history it was verified from, and nothing else ever removed one. The
+ * history has done its work the moment `verifyRun` accepts it (issue #187), so
+ * the rows are kept for an audit window only: the live week and the one
+ * before it (the PM's call, 2026-09-04). Runs from any earlier week go. The
+ * standings in `weekly_scores` are what is ranked and are never touched —
+ * they are bounded to one row per player per week already. Runs from the
+ * daily cron in worker/index.mjs; exported so the test can run it against the
+ * SQLite fake.
+ */
+export async function pruneSubmissions(db, now) {
+  const oldestKept = weekStartKey(now - WEEK_MS);
+  await db.prepare('DELETE FROM weekly_submissions WHERE week_start < ?').bind(oldestKept).run();
+}
+
+/**
  * The `/api/leaderboard/*` router. `deps.authenticate` is the profile's own
  * bearer-code check, injected rather than imported so this module never has
  * its own idea of who a player is.

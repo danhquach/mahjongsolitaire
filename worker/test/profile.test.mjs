@@ -18,6 +18,7 @@ import {
   handleProfile,
   mergeRecords,
   nameAllowed,
+  reapPlayers,
   normalizeCode,
   sanitizeName,
   validateRecord,
@@ -579,4 +580,54 @@ test('the count survives a fresh deps object — nothing is kept in memory', asy
   let last;
   for (let i = 0; i < 6; i += 1) last = await registerPlayer(env, makeDeps());
   assert.equal(last.response.status, 429);
+});
+
+// --- reaping (issue #188) ------------------------------------------------------
+
+const DAY = 24 * 60 * 60 * 1000;
+
+/** A registered player whose row was created at `createdAt` and last written
+ *  at `updatedAt` (equal for a profile that never synced after registering). */
+async function agedPlayer(env, deps, createdAt, updatedAt = createdAt) {
+  const { json } = await registerPlayer(env, deps);
+  env.DB.raw
+    .prepare('UPDATE players SET created_at = ?, updated_at = ? WHERE id = ?')
+    .run(createdAt, updatedAt, json.playerId);
+  return json.playerId;
+}
+
+const playerIds = (env) => env.DB.raw.prepare('SELECT id FROM players ORDER BY id').all().map((r) => r.id);
+
+test('the nightly reap drops profiles that never synced after a month, and idle ones after six', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const now = deps.now();
+  const neverSyncedOld = await agedPlayer(env, deps, now - 31 * DAY);
+  const neverSyncedNew = await agedPlayer(env, deps, now - 29 * DAY);
+  const idleOld = await agedPlayer(env, deps, now - 400 * DAY, now - 181 * DAY);
+  const idleRecent = await agedPlayer(env, deps, now - 400 * DAY, now - 179 * DAY);
+
+  await reapPlayers(env.DB, now);
+  assert.deepEqual(playerIds(env), [neverSyncedNew, idleRecent].sort());
+  assert.ok(!playerIds(env).includes(neverSyncedOld));
+  assert.ok(!playerIds(env).includes(idleOld));
+});
+
+test('a player with a standing on any board is never reaped, however idle', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const now = deps.now();
+  const ranked = await agedPlayer(env, deps, now - 400 * DAY);
+  const unranked = await agedPlayer(env, deps, now - 400 * DAY);
+  env.DB.raw
+    .prepare(
+      `INSERT INTO weekly_scores (week_start, player_id, score, runs, created_at, updated_at)
+       VALUES ('2020-01-05', ?, 100, 1, ?, ?)`,
+    )
+    .run(ranked, now - 400 * DAY, now - 400 * DAY);
+
+  await reapPlayers(env.DB, now);
+  // Reaping the row would orphan the standing's name join; it stays.
+  assert.deepEqual(playerIds(env), [ranked]);
+  assert.ok(!playerIds(env).includes(unranked));
 });
