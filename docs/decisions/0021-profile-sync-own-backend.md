@@ -110,6 +110,17 @@ bound — leaves the local profile exactly as it was and says so in the panel.
 - Worker tests run the real schema against real SQLite (`node:sqlite`) behind
   a D1-shaped adapter. A hand-written fake would pass while the SQL was wrong,
   and wrong SQL is most of what can break here.
+- A schema change is applied by hand while the Worker deploys itself, and on
+  2026-09-04 the two got out of order (issue #185): the weekly-leaderboard
+  Worker went live before its tables existed and every board read was an
+  escaped exception — a Cloudflare 500 page. Two consequences, both shipped
+  under #185. The router now turns anything a route throws into
+  `503 unavailable`, the same status as `not_configured`, so the game shows
+  its placeholder instead of a raw error and no database message reaches the
+  client. And the deploy job runs `worker/scripts/check-schema.mjs` first: it
+  reads the live database's tables and columns and refuses to deploy while
+  anything the schema files define is missing. Extra live columns pass, so a
+  drop migration can still follow the deploy that stops reading them.
 - Store data-safety labels now have something to declare: a display name, an
   avatar id, and gameplay counters, tied to a random id, with no email, no
   device identifier, and no advertising id. That belongs in the Phase 4

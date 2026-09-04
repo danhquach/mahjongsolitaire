@@ -240,10 +240,7 @@ export async function handleFeedback(request, env, deps = {}) {
   return json(202, { status: 'sent' });
 }
 
-/** Route by path. Only requests with no matching static asset get here (see
- *  the note at the top), so anything that is not an API path is a 404. */
-export async function handleRequest(request, env) {
-  const { pathname } = new URL(request.url);
+function route(request, env, pathname) {
   if (pathname === '/api/feedback') return handleFeedback(request, env);
   if (pathname === '/api/profile' || pathname.startsWith('/api/profile/')) {
     return handleProfile(request, env);
@@ -254,6 +251,29 @@ export async function handleRequest(request, env) {
     return handleLeaderboard(request, env, { authenticate });
   }
   return json(404, { error: 'not_found' });
+}
+
+/** Route by path. Only requests with no matching static asset get here (see
+ *  the note at the top), so anything that is not an API path is a 404.
+ *
+ *  Nothing thrown by a route reaches the platform (issue #185). On 2026-09-04
+ *  the Worker went live ahead of the migrations that create the weekly tables,
+ *  and every leaderboard read answered a Cloudflare 500 page: an escaped
+ *  exception, billed as a full invocation plus a failed query per hit, and
+ *  opaque to the client. Here it becomes the same `503` the client already
+ *  reads as "unavailable" (the `not_configured` case has the same status), so
+ *  the game shows its placeholder and moves on. The client gets only a fixed
+ *  body: the database's message names tables and columns, and one of the
+ *  profile's columns is the credential. The log gets the message, because
+ *  "which table is missing" is exactly what whoever is on call needs. */
+export async function handleRequest(request, env) {
+  const { pathname } = new URL(request.url);
+  try {
+    return await route(request, env, pathname);
+  } catch (error) {
+    console.error(`api route failed: ${request.method} ${pathname}: ${error?.message ?? error}`);
+    return json(503, { error: 'unavailable' });
+  }
 }
 
 export default {

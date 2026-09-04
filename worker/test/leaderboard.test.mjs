@@ -659,6 +659,46 @@ test('the routes work through the Worker entry point, which injects nothing', as
   assert.equal(signed.status, 200);
 });
 
+test('a database the code disagrees with fails closed as 503 unavailable, never a raw 500', async () => {
+  // Issue #185. This is the live failure of 2026-09-04: the Worker expecting
+  // the weekly tables was deployed before the migrations creating them ran, and
+  // every board read answered a Cloudflare 500 page — an escaped exception,
+  // costing a Worker invocation plus a failed query per hit and telling the
+  // client nothing it understands. The tables are dropped here to reproduce
+  // exactly that state; the fix is in the router, so the test goes through it.
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  env.DB.raw.exec('DROP TABLE weekly_submissions; DROP TABLE weekly_scores');
+
+  const read = await handleRequest(request('GET', '/api/leaderboard/weekly'), env);
+  assert.equal(read.status, 503);
+  assert.deepEqual(await read.json(), { error: 'unavailable' });
+
+  const submit = await handleRequest(
+    request('POST', '/api/leaderboard/weekly', {
+      headers: bearer(alex.code),
+      body: { score: 4200, elapsedMs: 90_000 },
+    }),
+    env,
+  );
+  assert.equal(submit.status, 503);
+  const text = await submit.text();
+  assert.deepEqual(JSON.parse(text), { error: 'unavailable' });
+  // The database's own message names tables and columns; none of it leaves.
+  assert.doesNotMatch(text, /no such table|weekly_/);
+
+  // The profile routes share the router and the database, so the same
+  // schema drift fails the same way there.
+  env.DB.raw.exec('DROP TABLE players');
+  const profile = await handleRequest(
+    request('GET', '/api/profile', { headers: bearer(alex.code) }),
+    env,
+  );
+  assert.equal(profile.status, 503);
+  assert.deepEqual(await profile.json(), { error: 'unavailable' });
+});
+
 test('an anonymous read never reaches the credential check', async () => {
   // The signed bucket is the tight one (10 / 10 min); a public board read must
   // not spend it, or an unauthenticated caller could exhaust every player's
