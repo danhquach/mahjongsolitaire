@@ -2,9 +2,11 @@
 
 **Date:** 2026-09-02 · **Status:** superseded in part · **Ticket:** issue #70
 **Superseded by:** [0027](0027-one-weekly-score.md) — the Daily board chosen
-here is replaced by one weekly board ranking the ladder (issue #176). This
-record's central position, that scores are **bounded rather than verified**,
-stands unchanged and is why every run still stores its move history.
+here is replaced by one weekly board ranking the ladder (issue #176) — and
+[0030](0030-server-verified-runs.md) — the "bounded rather than verified"
+position is retired: since issue #187 the server replays every run's move
+history before it counts. Storing that history from day one, which this record
+insisted on, is what made the first weeks' rows checkable.
 
 ## Context
 

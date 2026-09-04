@@ -115,13 +115,83 @@ test('a parked tile later matched out of the holder is not a candidate', () => {
   assert.equal(board.get(0).removed, true);
 });
 
-test('undo removes the hold record: holdsUsed rolls back, history reads clean', () => {
+test('undo keeps the hold and records the return: holdsUsed rolls back, history stays replayable', () => {
+  // Issue #187: the hold record used to be spliced out. A hold frees what it
+  // covered, so a match made while the tile was out cannot be replayed from a
+  // history that never mentions the park — the return is recorded instead.
   const stack = new MoveStack(rowBoard());
   stack.hold(0, 1000);
   assert.equal(stack.holdsUsed, 1);
+  stack.undo(1500);
+  assert.equal(stack.holdsUsed, 0, 'a returned hold counts as never taken');
+  assert.equal(stack.depth, 2, 'the park and its return are both on record');
+  assert.deepEqual(
+    stack.state.moves.map((m) => [m.kind, m.atMs]),
+    [
+      ['hold', 1000],
+      ['return', 1500],
+    ],
+  );
+  const returned = stack.state.moves[1]!;
+  assert.equal(returned.kind === 'return' && returned.tile, 0);
+  assert.equal(returned.kind === 'return' && returned.slotIndex, 0, 'the slot it left');
+});
+
+test('a return without a clock is stamped no earlier than the last move', () => {
+  const stack = new MoveStack(rowBoard());
+  stack.hold(0, 1000);
+  stack.play(2, 3, 4000);
   stack.undo();
-  assert.equal(stack.holdsUsed, 0);
-  assert.equal(stack.depth, 0, 'the park never happened');
+  assert.equal(stack.state.moves.at(-1)?.atMs, 4000);
+});
+
+// --- shuffle (issue #187: a recorded move, so a history replays) --------------
+
+test('shuffle re-faces the board and records the seed as a move', () => {
+  const level = generateLevel(SEED_LAYOUTS[0]!, 11);
+  const board = new Board(level.tiles);
+  const stack = new MoveStack(board);
+  level.solution.slice(0, 5).forEach((move, i) => stack.play(move[0], move[1], (i + 1) * 1000));
+  stack.select(board.freeTileIds()[0]!);
+  const before = board.presentTiles().map((t) => t.face).sort();
+
+  assert.equal(stack.shuffle(424242, 6000), true);
+  assert.deepEqual(board.presentTiles().map((t) => t.face).sort(), before, 'a permutation of the same faces');
+  assert.equal(stack.selection, null, 'the face under the selection changed');
+  const last = stack.state.moves.at(-1)!;
+  assert.equal(last.kind, 'shuffle');
+  assert.equal(last.kind === 'shuffle' && last.seed, 424242);
+  assert.equal(last.atMs, 6000);
+  assert.equal(stack.depth, 6);
+  assert.deepEqual(stack.moves().length, 5, 'pairs only — a shuffle is not a pair');
+
+  // The same seed at the same point lands on the same faces: that is what
+  // makes the record enough for a replay.
+  const again = new Board(level.tiles);
+  const twin = new MoveStack(again);
+  level.solution.slice(0, 5).forEach((move, i) => twin.play(move[0], move[1], (i + 1) * 1000));
+  twin.shuffle(424242, 6000);
+  assert.deepEqual(
+    again.allTiles().map((t) => t.face),
+    board.allTiles().map((t) => t.face),
+  );
+});
+
+test('a shuffle that cannot happen records nothing', () => {
+  const stack = new MoveStack(rowBoard());
+  stack.play(0, 1, 1000);
+  stack.play(2, 3, 2000);
+  assert.equal(stack.shuffle(1, 3000), false, 'nothing on the board to shuffle');
+  assert.equal(stack.depth, 2);
+  // A geometry no face assignment can save: a pair stacked on itself.
+  const stacked = new MoveStack(
+    new Board([
+      { id: 0, slot: slot(0, 0, 1), face: 'dots-1' },
+      { id: 1, slot: slot(0, 0, 0), face: 'dots-1' },
+    ]),
+  );
+  assert.equal(stacked.shuffle(1, 0), false);
+  assert.equal(stacked.depth, 0);
 });
 
 test('undo clears the selection — the return can re-cover the selected tile', () => {

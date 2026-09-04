@@ -18,26 +18,31 @@
 //
 //   * `weekly_scores` — one row per (week, player), score summed over the
 //     week. This is what is ranked.
-//   * `weekly_submissions` — one row per run, with the move history. Issue
-//     #176 keeps history per submission for the score-verification follow-up,
-//     and an accumulating standing has nowhere to put it.
+//   * `weekly_submissions` — one row per run, with the move history it was
+//     verified from (issue #176 kept it from day one so that the first weeks
+//     could be checked once the verifier existed; issue #187 is that verifier).
 //
 // Identity comes from issue #138: an entry belongs to a `players` row, and the
 // name shown on the board is the screened, server-held one, never a name the
 // submitting client supplies.
 //
-// **Scores are not verified.** A submission is bounded, not checked: the
-// server confirms a single run's score is inside what the scoring rules can
-// produce on a 144-tile board at the highest difficulty multiplier, and then
-// believes it. Verifying a score means recomputing it from the move history
-// against a regenerated board, which needs a change to core's move stack
-// (shuffles are counted but their seeds are not recorded, so a run that
-// shuffled cannot be replayed) — that is the follow-up ticket, and the reason
-// every run already stores the history it was submitted with. Until then a
-// determined player can post a score they did not play, and the board should
-// not be treated as evidence of anything. Accumulation makes that bound matter
-// more, not less: it applies to each score added, never to the total.
+// **Scores are verified by replay** (issue #187, decision 0030). A submission
+// names the deal it played — `(layoutId, seed)`, which must be a ladder level
+// — and the moves it made. The server regenerates the deal with core's own
+// generator, plays the moves through core's own move stack (worker/replay.mjs),
+// and the score it stores is the one that replay earns. The client's `score`
+// is a cross-check: a run that does not regenerate, does not replay legally,
+// does not clear the board, or does not arrive at the claimed score is refused
+// as 422 `run_rejected` and never touches the standing.
+//
+// What replay does *not* prove is who was at the keyboard, or that the
+// timestamps were honest: the moves' clock is the client's. The elapsed-time
+// floor below and the per-week run cap stay for that reason, and the token
+// still only proves who is posting. The bound on a single run's score is now a
+// cheap pre-check ahead of the replay, not the thing standing between a
+// fabricated score and the board.
 
+import { MAX_RUN_SCORE } from '../core/dist/src/index.js';
 import {
   callerKey,
   createRateLimitStore,
@@ -47,22 +52,20 @@ import {
   rateLimited,
   rateLimitedShared,
 } from './http.mjs';
+import { verifyRun } from './replay.mjs';
 
 /**
- * The most a single run can pay. A flawless 144-tile board is 72 pairs on the
- * Super Combo ladder:
- *
- *     100 + 120 + 150 + 200 + 68 × 300 = 20970
- *
- * and issue #176 scales every pair by the level's band, topping out at ×2.5 on
- * the hard spikes. Nothing in the game deducts points, so this is a hard
- * ceiling rather than a heuristic.
+ * The most a single run can pay: core's own figure — a flawless 144-tile
+ * board on the highest band multiplier (`100 + 120 + 150 + 200 + 68 × 300`,
+ * times ×2.5). Imported rather than restated since the Worker started
+ * building against core (issue #187), so it cannot drift.
  *
  * It bounds **each score being added**, not the standing it accumulates into —
- * a week of good runs is supposed to exceed it. Kept in step with core's
- * `MAX_RUN_SCORE` by worker/test/leaderboard.test.mjs, which imports both.
+ * a week of good runs is supposed to exceed it. Since the replay recomputes the
+ * score anyway this is a pre-check that refuses the absurd before paying for a
+ * regeneration, and the ceiling the `ON CONFLICT` clause below is derived from.
  */
-export const MAX_RUN_SCORE = 52425;
+export { MAX_RUN_SCORE };
 
 /**
  * How many runs one player may bank into a single week, and the score ceiling
@@ -101,13 +104,15 @@ export const MAX_WEEK_SCORE = MAX_RUN_SCORE * MAX_RUNS_PER_WEEK;
 const MAX_ELAPSED_MS = 24 * 60 * 60 * 1000;
 /** A 144-tile board is 72 pairs. Under this a run is not a fast player, it is
  *  a fabricated one — 72 matches in 20 seconds is 3.6 a second sustained. The
- *  cheapest brake there is on a score nothing else verifies. */
+ *  replay (issue #187) proves the moves were legal on that deal, not that a
+ *  person made them at that pace: the timestamps are the client's. So this
+ *  brake stays. */
 const MIN_ELAPSED_MS = 20_000;
-/** The move history rides along for the verification follow-up. It is stored
- *  and never read, so the cap only has to keep a row from being abused as
- *  storage: a full 72-pair game is a few KB. Measured in UTF-16 units rather
- *  than bytes — the real byte ceiling is `MAX_BODY_BYTES`, checked on the
- *  request itself before anything is parsed. */
+/** The move history is what gets replayed (issue #187) and what the row keeps.
+ *  A full 72-pair game with holds is a few KB; the cap keeps a row from being
+ *  abused as storage and bounds what the replay is asked to walk. Measured in
+ *  UTF-16 units rather than bytes — the real byte ceiling is `MAX_BODY_BYTES`,
+ *  checked on the request itself before anything is parsed. */
 const MAX_HISTORY_CHARS = 64 * 1024;
 const MAX_BODY_BYTES = 96 * 1024;
 
@@ -174,8 +179,10 @@ function integerInRange(value, max, min = 0) {
 }
 
 /**
- * A submission, bounded field by field. Returns the values to store, or a
- * string naming what was wrong.
+ * A submission, bounded field by field. Returns the values to store — plus
+ * `run`, the parsed history for the replay to verify — or a string naming what
+ * was wrong. Shape only: whether the history *replays* is `verifyRun`'s call,
+ * made by the route after the credential and the cheap bounds have passed.
  *
  * No date and no week: the server decides which week a run lands in, from the
  * moment it arrives. A run posted seconds before the rollover counts for the
@@ -195,10 +202,15 @@ export function validateSubmission(payload) {
     return 'invalid';
   }
   const elapsedMs = Math.min(payload.elapsedMs, MAX_ELAPSED_MS);
+  // Required since issue #187: without a history there is nothing to verify,
+  // and an unverified run is not a run. Its absence is not refused here but
+  // by `verifyRun`, as 422 `history_missing` — a client of the previous build
+  // posting without one gets the reason, not a bare 400.
+  const run = payload.history === undefined ? null : payload.history;
   let history = null;
-  if (payload.history !== undefined && payload.history !== null) {
+  if (run !== null) {
     try {
-      history = JSON.stringify(payload.history);
+      history = JSON.stringify(run);
     } catch {
       // V8's stringify recurses, so a deeply nested body throws RangeError
       // before the length check below ever runs. Nothing above this catches it,
@@ -208,7 +220,7 @@ export function validateSubmission(payload) {
     }
     if (history.length > MAX_HISTORY_CHARS) return 'invalid';
   }
-  return { score: payload.score, elapsedMs, history };
+  return { score: payload.score, elapsedMs, history, run };
 }
 
 // --- queries -----------------------------------------------------------------
@@ -363,12 +375,30 @@ async function submit(request, env, deps, now) {
   if (submission === 'bad_score') return json(422, { error: 'score_out_of_range' });
   if (submission === 'invalid') return json(400, { error: 'invalid_payload' });
 
+  // The record is the server's (issue #187): regenerate the deal, replay the
+  // moves, and refuse anything that does not come out as claimed. Before the
+  // run cap and before any write, so a refused run leaves nothing behind.
+  const verdict = verifyRun(submission.run, { score: submission.score });
+  if (!verdict.ok) {
+    return json(422, {
+      error: 'run_rejected',
+      reason: verdict.reason,
+      ...(verdict.index === undefined ? {} : { index: verdict.index }),
+    });
+  }
+  // The run cannot have ended before its last move. `elapsedMs` was clamped
+  // to a day above (an overnight level is legitimate), so a run whose last
+  // move is past the clamp compares against the clamp rather than failing.
+  if (submission.elapsedMs < Math.min(verdict.lastMs, MAX_ELAPSED_MS)) {
+    return json(422, { error: 'run_rejected', reason: 'elapsed_before_last_move' });
+  }
+
   const week = weekStartKey(now);
 
   // The per-week cap, checked before anything is written (issue #176). It
   // bounds two things the rate limiter cannot: the standing, which now only
-  // ever grows, and `weekly_submissions`, whose move history is kept for the
-  // verification follow-up and never pruned. Refusing here rather than after
+  // ever grows, and `weekly_submissions`, whose move history is kept and never
+  // pruned (issue #188 is the retention rule). Refusing here rather than after
   // the insert is what keeps a capped player from still filling the table.
   const standing = await env.DB.prepare(
     'SELECT runs FROM weekly_scores WHERE week_start = ? AND player_id = ?',
@@ -379,15 +409,16 @@ async function submit(request, env, deps, now) {
     return json(429, { error: 'week_run_limit' });
   }
 
-  // The run itself, kept whole for the verification follow-up. Written before
-  // the standing moves: a crash between the two leaves a run that is on record
-  // but not yet counted, which is recoverable, where the reverse would leave a
-  // counted score nobody can ever check.
+  // The run itself, kept whole with the history it was verified from. Written
+  // before the standing moves: a crash between the two leaves a run that is on
+  // record but not yet counted, which is recoverable, where the reverse would
+  // leave a counted score nobody can ever check. The score stored is the
+  // replay's — equal to the claim by now, but the replay is the authority.
   await env.DB.prepare(
     `INSERT INTO weekly_submissions (week_start, player_id, score, elapsed_ms, history, created_at)
           VALUES (?, ?, ?, ?, ?, ?)`,
   )
-    .bind(week, auth.row.id, submission.score, submission.elapsedMs, submission.history, now)
+    .bind(week, auth.row.id, verdict.score, submission.elapsedMs, submission.history, now)
     .run();
 
   // One standing per (week, player), and it *accumulates* — the Daily board's
@@ -408,7 +439,7 @@ async function submit(request, env, deps, now) {
           updated_at = excluded.updated_at
         WHERE weekly_scores.runs < ?`,
   )
-    .bind(week, auth.row.id, submission.score, now, now, MAX_WEEK_SCORE, MAX_RUNS_PER_WEEK)
+    .bind(week, auth.row.id, verdict.score, now, now, MAX_WEEK_SCORE, MAX_RUNS_PER_WEEK)
     .run();
 
   return json(200, await boardFor(env.DB, week, auth.row.id, now));

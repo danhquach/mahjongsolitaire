@@ -16,6 +16,10 @@
   // the default routing (`run_worker_first` is intentionally left unset —
   // turning it on globally would send every request, including plain page
   // loads, through the Worker first).
+  // Issue #187 — the Worker imports core's build (`core/dist`, via
+  // worker/replay.mjs) and the ladder/layout JSON under `data/`, all bundled
+  // in by wrangler. Run `npm --prefix core run build` before a local
+  // `wrangler deploy`; CI's deploy job does the same.
   "main": "worker/index.mjs",
   // Issue #186 — once a day, delete rate-limit rows whose window opened more
   // than a day ago (worker/index.mjs `scheduled`). 04:17 UTC: off the hour,

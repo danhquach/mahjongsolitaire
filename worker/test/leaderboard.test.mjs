@@ -1,23 +1,37 @@
-// The weekly leaderboard (issue #176, superseding the Daily board of #70).
+// The weekly leaderboard (issue #176, superseding the Daily board of #70),
+// with server-side verification of every run (issue #187, decision 0030).
 //
 // The ranking is the part worth testing hard: it is SQL, it has a tie-break,
 // and "your rank and the entries around you" is three separate queries that
-// have to agree with each other. So the board is built by submitting through
-// the real routes and then asserted on as a whole — a rank that disagrees with
-// the row above it is exactly the bug these tests exist to catch.
+// have to agree with each other. So the board tests run against a real SQLite
+// database built from the real schema files (see ./d1.mjs), not a fake.
 //
-// What is new here, and what most of the added tests are about: the standing
-// **accumulates** rather than only moving up, and the week comes from the
-// server's clock rather than from the request.
+// Since issue #187 a submission is only accepted if its move history replays
+// against the regenerated deal to the claimed score on a cleared board, so
+// every run these tests post is a real one: `playedRun` plays a ladder level's
+// witness solution through core's own move stack and posts what that recorded.
+// Score differences between players come from how many matches were made
+// inside the combo window, which is the only honest way to vary a score.
 
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-// Reaches into core's *build output* to check the Worker's restated score
-// ceiling against the real one. That means core must be built before this
-// suite runs — `npm --prefix core run build`, which CLAUDE.md's command order
-// and CI both already do before the worker tests.
-import { MAX_RUN_SCORE as CORE_MAX_RUN_SCORE } from '../../core/dist/src/ladder.js';
+// Reaches into core's *build output*, exactly as the Worker itself does since
+// issue #187 (worker/replay.mjs). Core must be built before this suite runs —
+// `npm --prefix core run build`, which CLAUDE.md's command order and CI both
+// already do before the worker tests.
+import {
+  Board,
+  MAX_RUN_SCORE as CORE_MAX_RUN_SCORE,
+  MoveStack,
+  ScoreKeeper,
+  generateLevel,
+  parseLadder,
+  parseLayout,
+  scoreMultiplierForLevel,
+  solve,
+} from '../../core/dist/src/index.js';
 import { createRateLimitStore } from '../http.mjs';
 import {
   BOARD_TOP,
@@ -30,6 +44,7 @@ import {
   weekResetAt,
   weekStartKey,
 } from '../leaderboard.mjs';
+import { MAX_SHUFFLES_PER_RUN, verifyRun } from '../replay.mjs';
 import { handleRequest } from '../index.mjs';
 import { authenticate, handleProfile } from '../profile.mjs';
 import { createDb } from './d1.mjs';
@@ -64,6 +79,84 @@ function request(method, path, { body, headers = {} } = {}) {
 }
 
 const bearer = (code) => ({ Authorization: `Bearer ${code}` });
+
+// --- real runs ---------------------------------------------------------------
+
+const DATA = new URL('../../data/', import.meta.url);
+const LADDER = parseLadder(JSON.parse(readFileSync(new URL('ladder.json', DATA), 'utf8')));
+const layouts = new Map();
+function layoutFor(id) {
+  if (!layouts.has(id)) {
+    layouts.set(id, parseLayout(JSON.parse(readFileSync(new URL(`layouts/${id}.json`, DATA), 'utf8'))));
+  }
+  return layouts.get(id);
+}
+const deals = new Map();
+/** The deal ladder level `level` plays — the same regeneration the Worker does. */
+function dealFor(level) {
+  if (!deals.has(level)) {
+    const entry = LADDER[level - 1];
+    deals.set(level, generateLevel(layoutFor(entry.layoutId), entry.seed));
+  }
+  return deals.get(level);
+}
+/** A level in the hard band, where a flawless run pays exactly MAX_RUN_SCORE. */
+const HARD_LEVEL = LADDER.find((e) => scoreMultiplierForLevel(e.level) === 2.5).level;
+
+/** What the client sends: the record minus the undo bookkeeping it strips. */
+function compact(moves) {
+  return moves.map(({ prevSelection, prevScores, ...rest }) => rest);
+}
+
+/** A fresh board and stack on `level`'s deal, scored at its band. */
+function fresh(level) {
+  const deal = dealFor(level);
+  const board = new Board(deal.tiles);
+  const stack = new MoveStack(board, new ScoreKeeper(scoreMultiplierForLevel(level)));
+  return { deal, board, stack };
+}
+
+/** The submission a finished game produces from its stack. */
+function submissionOf(level, stack, lastMs) {
+  return {
+    score: stack.score,
+    elapsedMs: Math.max(20_000, Math.ceil(lastMs) + 1000),
+    history: {
+      layoutId: dealFor(level).layoutId,
+      seed: dealFor(level).seed,
+      shuffles: stack.state.moves.filter((m) => m.kind === 'shuffle').length,
+      moves: compact(stack.state.moves),
+    },
+  };
+}
+
+/**
+ * A real, verifiable clear of ladder `level`: the witness solution, with the
+ * first `combo` matches one second apart (inside the Super Combo window) and
+ * the rest ten seconds apart. The score rises with `combo`, so distinct values
+ * are easy to come by and equal ones easy to make on purpose.
+ */
+function playedRun(level = 1, combo = 0) {
+  const { deal, stack } = fresh(level);
+  let t = 0;
+  deal.solution.forEach(([a, b], i) => {
+    t += i < combo ? 1000 : 10_000;
+    stack.play(a, b, t);
+  });
+  return submissionOf(level, stack, t);
+}
+
+/** Clear whatever is left on `board` from the solver's witness. */
+function finish(board, stack, fromMs) {
+  const result = solve(board.allTiles(), { holder: board.holderSlots() });
+  assert.equal(result.verdict, 'solvable');
+  let t = fromMs;
+  for (const [a, b] of result.solution) {
+    t += 10_000;
+    stack.play(a, b, t);
+  }
+  return t;
+}
 
 /** A registered player, so an entry has an owner and a display name. Each
  *  registration comes from its own address: these are meant to be different
@@ -105,15 +198,20 @@ async function board(env, deps, player = null, at = NOW) {
   return { status: response.status, body: await response.json() };
 }
 
-/** A board with `count` players on it, scoring 2000, 1900, 1800, … so rank
- *  and score tell the same story and an off-by-one is obvious. */
+const count = (env, table) => env.DB.raw.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n;
+
+/** A board with `count` players on it, each scoring less than the one before
+ *  (fewer combo matches), so rank and score tell the same story and an
+ *  off-by-one is obvious. Returns the players and the run each one posted. */
 async function fillBoard(env, deps, count) {
   const players = [];
   for (let i = 0; i < count; i += 1) {
     const player = await addPlayer(env, deps, `Player ${i + 1}`);
+    const run = playedRun(1, 60 - i * 2);
     // Submitted a second apart so the tie-break has something to order by.
-    await post(env, deps, player, { score: 2000 - i * 100, elapsedMs: 60_000 }, NOW + i * 1000);
-    players.push(player);
+    const { status } = await post(env, deps, player, run, NOW + i * 1000);
+    assert.equal(status, 200);
+    players.push({ ...player, run });
   }
   return players;
 }
@@ -167,9 +265,10 @@ test('a very long level is clamped, not dropped', () => {
 });
 
 test('the run bound is core’s, not a second opinion', () => {
-  // The Worker cannot import core at runtime, so the ceiling is restated here.
-  // If the band multipliers or the combo ladder move, this is what notices.
+  // The Worker imports core since issue #187, so this is the same constant —
+  // the test stays as the statement that it must be.
   assert.equal(MAX_RUN_SCORE, CORE_MAX_RUN_SCORE);
+  assert.equal(playedRun(HARD_LEVEL, 72).score, MAX_RUN_SCORE, 'a flawless hard-band run is the ceiling');
 });
 
 test('a submission carries no week — the server decides which one it lands in', () => {
@@ -183,13 +282,14 @@ test('a submission carries no week — the server decides which one it lands in'
     weekStart: '1999-01-03',
     date: '1999-01-03',
   });
-  assert.deepEqual(claimed, { score: 100, elapsedMs: 90_000, history: null });
+  assert.deepEqual(claimed, { score: 100, elapsedMs: 90_000, history: null, run: null });
 });
 
-test('the move history rides along, bounded, and is optional', () => {
+test('the move history is kept whole for the row, bounded, and handed on for replay', () => {
   assert.equal(validateSubmission({ score: 1, elapsedMs: 90_000 }).history, null);
-  const withHistory = validateSubmission({ score: 1, elapsedMs: 90_000, history: [{ a: 1, b: 2 }] });
-  assert.equal(withHistory.history, '[{"a":1,"b":2}]');
+  const withHistory = validateSubmission({ score: 1, elapsedMs: 90_000, history: { moves: [1] } });
+  assert.equal(withHistory.history, '{"moves":[1]}');
+  assert.deepEqual(withHistory.run, { moves: [1] });
   const huge = validateSubmission({
     score: 1,
     elapsedMs: 90_000,
@@ -198,146 +298,10 @@ test('the move history rides along, bounded, and is optional', () => {
   assert.equal(huge, 'invalid');
 });
 
-// --- submitting --------------------------------------------------------------
-
-test('a submitted score takes a place on the board', async () => {
-  const env = { DB: createDb() };
-  const deps = makeDeps();
-  const alex = await addPlayer(env, deps, 'Alex');
-  const { status, body } = await post(env, deps, alex, { score: 4200, elapsedMs: 90_000 });
-  assert.equal(status, 200);
-  assert.equal(body.weekStart, WEEK);
-  assert.equal(body.resetsAt, weekResetAt(NOW));
-  assert.deepEqual(body.you, {
-    rank: 1,
-    playerId: alex.playerId,
-    name: 'Alex',
-    avatar: 'lantern',
-    score: 4200,
-    runs: 1,
-  });
-  assert.equal(body.top.length, 1);
-  assert.equal(body.top[0].playerId, alex.playerId);
-});
-
-test('every clear adds to the standing — it accumulates, it does not replace', async () => {
-  // The whole difference from the Daily board: there a resubmission was a
-  // replay of the same deal, so the row only ever moved up. Here every clear is
-  // a different level and all of them count.
-  const env = { DB: createDb() };
-  const deps = makeDeps();
-  const alex = await addPlayer(env, deps, 'Alex');
-  await post(env, deps, alex, { score: 4200, elapsedMs: 90_000 });
-  const second = await post(env, deps, alex, { score: 900, elapsedMs: 30_000 }, NOW + 1000);
-  assert.equal(second.body.you.score, 5100, 'a smaller second run must still add');
-  const third = await post(env, deps, alex, { score: 5000, elapsedMs: 70_000 }, NOW + 2000);
-  assert.equal(third.body.you.score, 10_100);
-  assert.equal(third.body.you.runs, 3);
-  // One standing, three runs kept for verification.
-  assert.equal(env.DB.raw.prepare('SELECT COUNT(*) AS n FROM weekly_scores').get().n, 1);
-  assert.equal(env.DB.raw.prepare('SELECT COUNT(*) AS n FROM weekly_submissions').get().n, 3);
-});
-
-test('a standing may exceed what any single run can pay', async () => {
-  // The bound applies to each score being added, never to the total — a week
-  // of good runs is supposed to pass it.
-  const env = { DB: createDb() };
-  const deps = makeDeps();
-  const alex = await addPlayer(env, deps, 'Alex');
-  for (let i = 0; i < 3; i += 1) {
-    await post(env, deps, alex, { score: MAX_RUN_SCORE, elapsedMs: 90_000 }, NOW + i * 1000);
-  }
-  const { body } = await board(env, deps, alex);
-  assert.equal(body.you.score, MAX_RUN_SCORE * 3);
-  assert.ok(body.you.score > MAX_RUN_SCORE);
-});
-
-test('a new week starts empty and last week’s standing does not carry', async () => {
-  const env = { DB: createDb() };
-  const deps = makeDeps();
-  const alex = await addPlayer(env, deps, 'Alex');
-  await post(env, deps, alex, { score: 9000, elapsedMs: 90_000 }, LAST_WEEK_NOW);
-  assert.equal((await board(env, deps, alex, LAST_WEEK_NOW)).body.you.score, 9000);
-
-  const now = await board(env, deps, alex, NOW);
-  assert.deepEqual(now.body.top, [], 'the live week opens empty');
-  assert.equal(now.body.you, null);
-  assert.equal(now.body.weekStart, WEEK);
-
-  // Scoring this week starts from this week's runs alone.
-  await post(env, deps, alex, { score: 120, elapsedMs: 90_000 });
-  assert.equal((await board(env, deps, alex)).body.you.score, 120);
-});
-
-test('only the live week is browsable — there is no way to ask for an old one', async () => {
-  // No date or week parameter exists to pass, and a query string is ignored
-  // rather than honoured, so a past week cannot be addressed at all.
-  const env = { DB: createDb() };
-  const deps = makeDeps();
-  const alex = await addPlayer(env, deps, 'Alex');
-  await post(env, deps, alex, { score: 9000, elapsedMs: 90_000 }, LAST_WEEK_NOW);
-  const response = await handleLeaderboard(
-    request('GET', `/api/leaderboard/weekly?week=${weekStartKey(LAST_WEEK_NOW)}&date=2026-08-30`),
-    env,
-    deps,
-  );
-  assert.equal(response.status, 200);
-  const body = await response.json();
-  assert.equal(body.weekStart, WEEK, 'the live week, whatever the query said');
-  assert.deepEqual(body.top, []);
-});
-
-test('an impossible score is refused, and nothing is written', async () => {
-  const env = { DB: createDb() };
-  const deps = makeDeps();
-  const alex = await addPlayer(env, deps, 'Alex');
-  const cheated = await post(env, deps, alex, { score: MAX_RUN_SCORE + 1, elapsedMs: 90_000 });
-  assert.equal(cheated.status, 422);
-  assert.deepEqual(cheated.body, { error: 'score_out_of_range' });
-  assert.equal(env.DB.raw.prepare('SELECT COUNT(*) AS n FROM weekly_scores').get().n, 0);
-  assert.equal(env.DB.raw.prepare('SELECT COUNT(*) AS n FROM weekly_submissions').get().n, 0);
-});
-
-test('a score cannot be posted without a profile to hang it on', async () => {
-  const env = { DB: createDb() };
-  const response = await handleLeaderboard(
-    request('POST', '/api/leaderboard/weekly', { body: { score: 100, elapsedMs: 90_000 } }),
-    env,
-    makeDeps(),
-  );
-  assert.equal(response.status, 401);
-  assert.equal(env.DB.raw.prepare('SELECT COUNT(*) AS n FROM weekly_scores').get().n, 0);
-});
-
-test('the run is stored whole, for the verification follow-up', async () => {
-  const env = { DB: createDb() };
-  const deps = makeDeps();
-  const alex = await addPlayer(env, deps, 'Alex');
-  await post(env, deps, alex, {
-    score: 4200,
-    elapsedMs: 90_000,
-    history: { layoutId: 'turtle_classic', seed: 7, moves: [[1, 2]] },
-  });
-  const row = env.DB.raw.prepare('SELECT * FROM weekly_submissions').get();
-  assert.equal(row.week_start, WEEK);
-  assert.equal(row.player_id, alex.playerId);
-  assert.equal(row.score, 4200);
-  assert.deepEqual(JSON.parse(row.history), {
-    layoutId: 'turtle_classic',
-    seed: 7,
-    moves: [[1, 2]],
-  });
-});
-
-// --- the per-week cap --------------------------------------------------------
-//
-// Accumulation removed the absolute ceiling a max() standing had. Without a cap
-// in the database the only bound on a standing is an IP-keyed, per-isolate rate
-// limiter, which is not where score integrity can live.
-
 test('a run under a plausible length is not a run', () => {
-  // 72 pairs in under 20 seconds is 3.6 matches a second sustained. The upper
-  // bound was always there; this is the missing floor.
+  // 72 pairs in under 20 seconds is 3.6 matches a second sustained. The replay
+  // checks the moves, not the pace — the timestamps are the client's — so the
+  // floor stays.
   assert.equal(validateSubmission({ score: 40_000, elapsedMs: 0 }), 'invalid');
   assert.equal(validateSubmission({ score: 40_000, elapsedMs: 19_999 }), 'invalid');
   assert.ok(validateSubmission({ score: 40_000, elapsedMs: 20_000 }).score);
@@ -352,29 +316,336 @@ test('a deeply nested history is refused, not thrown', () => {
   assert.equal(validateSubmission({ score: 100, elapsedMs: 90_000, history: nested }), 'invalid');
 });
 
+// --- verification (issue #187) -----------------------------------------------
+
+test('the ticket’s repro: a ceiling score with no history is refused, and nothing is written', async () => {
+  // Steps to reproduce on issue #187 — this used to answer 200 and raise the
+  // standing by the maximum single-run score.
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  const { status, body } = await post(env, deps, alex, { score: 52425, elapsedMs: 60_000 });
+  assert.equal(status, 422);
+  assert.deepEqual(body, { error: 'run_rejected', reason: 'history_missing' });
+  assert.equal(count(env, 'weekly_scores'), 0);
+  assert.equal(count(env, 'weekly_submissions'), 0);
+  assert.equal((await board(env, deps, alex)).body.you, null);
+});
+
+test('a real run replays to its own score and is accepted', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  const run = playedRun(1, 10);
+  const { status, body } = await post(env, deps, alex, run);
+  assert.equal(status, 200, JSON.stringify(body));
+  assert.equal(body.you.score, run.score);
+});
+
+test('the stored score is the replay’s, at the level’s own band multiplier', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  const easy = playedRun(1, 0);
+  const hard = playedRun(HARD_LEVEL, 0);
+  assert.equal(easy.score, 7200, '72 pairs at ×1 with no combos');
+  assert.equal(hard.score, 7200 * 2.5, 'the same play on a hard level pays the band');
+  assert.equal((await post(env, deps, alex, easy)).status, 200);
+  assert.equal((await post(env, deps, alex, hard, NOW + 1000)).status, 200);
+  const rows = env.DB.raw.prepare('SELECT score FROM weekly_submissions ORDER BY id').all();
+  assert.deepEqual(
+    rows.map((r) => r.score),
+    [7200, 18_000],
+  );
+});
+
+test('a run whose claimed score is not what its moves earn is refused', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  const run = playedRun(1, 0);
+  const inflated = await post(env, deps, alex, { ...run, score: run.score + 100 });
+  assert.equal(inflated.status, 422);
+  assert.deepEqual(inflated.body, { error: 'run_rejected', reason: 'score_mismatch' });
+  // Claiming *less* is refused too: the number is the replay's or nothing.
+  const modest = await post(env, deps, alex, { ...run, score: run.score - 100 });
+  assert.equal(modest.status, 422);
+  assert.equal(count(env, 'weekly_submissions'), 0);
+});
+
+test('a history that does not replay is refused at the move that breaks it', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  const run = playedRun(1, 0);
+  const moves = [...run.history.moves];
+  // Play the last pair first: those tiles are covered at the start.
+  moves.unshift({ ...moves[moves.length - 1], atMs: 0 });
+  const { status, body } = await post(env, deps, alex, { ...run, history: { ...run.history, moves } });
+  assert.equal(status, 422);
+  assert.deepEqual(body, { error: 'run_rejected', reason: 'illegal', index: 0 });
+});
+
+test('a deal that is not a ladder level cannot be scored', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  const run = playedRun(1, 0);
+  const offLadder = await post(env, deps, alex, {
+    ...run,
+    history: { ...run.history, seed: run.history.seed + 1 },
+  });
+  assert.deepEqual(offLadder.body, { error: 'run_rejected', reason: 'unknown_deal' });
+  const noSuchLayout = await post(env, deps, alex, {
+    ...run,
+    history: { ...run.history, layoutId: 'castle' },
+  });
+  assert.deepEqual(noSuchLayout.body, { error: 'run_rejected', reason: 'unknown_deal' });
+  const malformed = await post(env, deps, alex, { ...run, history: { moves: run.history.moves } });
+  assert.deepEqual(malformed.body, { error: 'run_rejected', reason: 'history_malformed' });
+  const notAnObject = await post(env, deps, alex, { ...run, history: [[1, 2]] });
+  assert.deepEqual(notAnObject.body, { error: 'run_rejected', reason: 'history_malformed' });
+});
+
+test('a run that stopped short of clearing the board is not a clear', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  const { deal, stack } = fresh(1);
+  deal.solution.slice(0, 71).forEach(([a, b], i) => stack.play(a, b, (i + 1) * 10_000));
+  const { status, body } = await post(env, deps, alex, submissionOf(1, stack, 710_000));
+  assert.equal(status, 422);
+  assert.deepEqual(body, { error: 'run_rejected', reason: 'not_cleared' });
+});
+
+test('a run cannot have ended before its last move', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  const run = playedRun(1, 0); // last move at 720 s
+  const { status, body } = await post(env, deps, alex, { ...run, elapsedMs: 600_000 });
+  assert.equal(status, 422);
+  assert.deepEqual(body, { error: 'run_rejected', reason: 'elapsed_before_last_move' });
+  // A run whose last move is past the day clamp is still fine: the clamp is
+  // what elapsedMs is held against, so an overnight level does not fail.
+  const { deal, stack } = fresh(1);
+  const day = 24 * 60 * 60 * 1000;
+  deal.solution.forEach(([a, b], i) => stack.play(a, b, day + (i + 1) * 10_000));
+  const overnight = await post(env, deps, alex, {
+    ...submissionOf(1, stack, day + 720_000),
+  });
+  assert.equal(overnight.status, 200, JSON.stringify(overnight.body));
+});
+
+test('a run that shuffled replays from the recorded seed', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  const { deal, board: b, stack } = fresh(1);
+  deal.solution.slice(0, 20).forEach(([a, c], i) => stack.play(a, c, (i + 1) * 10_000));
+  assert.equal(stack.shuffle(0x9e3779b1, 205_000), true);
+  const end = finish(b, stack, 205_000);
+  const run = submissionOf(1, stack, end);
+  assert.equal(run.history.shuffles, 1);
+  const { status, body } = await post(env, deps, alex, run);
+  assert.equal(status, 200, JSON.stringify(body));
+  assert.equal(body.you.score, run.score);
+  // The same moves with the seed changed land on different faces, so the
+  // matches after the shuffle no longer pair up.
+  const moves = run.history.moves.map((m) => (m.kind === 'shuffle' ? { ...m, seed: 7 } : m));
+  const forged = await post(env, deps, alex, { ...run, history: { ...run.history, moves } }, NOW + 1000);
+  assert.equal(forged.status, 422);
+  assert.equal(forged.body.reason, 'illegal');
+});
+
+test('a run that parked, matched and undid replays too', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  const { deal, board: b, stack } = fresh(1);
+  const [a0, b0] = deal.solution[0];
+  const [a1, b1] = deal.solution[1];
+  stack.hold(a0, 10_000);
+  stack.play(a1, b1, 20_000);
+  assert.equal(stack.undo(30_000)?.tile, a0, 'the park comes back after a match was made');
+  stack.hold(a0, 40_000);
+  stack.play(a0, b0, 50_000); // cleared through the holder
+  const end = finish(b, stack, 50_000);
+  const run = submissionOf(1, stack, end);
+  assert.deepEqual(
+    run.history.moves.slice(0, 5).map((m) => m.kind),
+    ['hold', 'match', 'return', 'hold', 'match'],
+  );
+  const { status, body } = await post(env, deps, alex, run);
+  assert.equal(status, 200, JSON.stringify(body));
+});
+
+test('a history stuffed with shuffles is refused before it is replayed', () => {
+  const run = playedRun(1, 0);
+  const shuffles = Array.from({ length: MAX_SHUFFLES_PER_RUN + 1 }, () => ({ kind: 'shuffle', seed: 1, atMs: 0 }));
+  const verdict = verifyRun({ ...run.history, moves: [...shuffles, ...run.history.moves] }, { score: run.score });
+  assert.deepEqual(verdict, { ok: false, reason: 'too_many_shuffles' });
+});
+
+// --- submitting --------------------------------------------------------------
+
+test('a submitted score takes a place on the board', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  const run = playedRun(1, 20);
+  const { status, body } = await post(env, deps, alex, run);
+  assert.equal(status, 200);
+  assert.equal(body.weekStart, WEEK);
+  assert.equal(body.resetsAt, weekResetAt(NOW));
+  assert.deepEqual(body.you, {
+    rank: 1,
+    playerId: alex.playerId,
+    name: 'Alex',
+    avatar: 'lantern',
+    score: run.score,
+    runs: 1,
+  });
+  assert.equal(body.top.length, 1);
+  assert.equal(body.top[0].playerId, alex.playerId);
+});
+
+test('every clear adds to the standing — it accumulates, it does not replace', async () => {
+  // The whole difference from the Daily board: there a resubmission was a
+  // replay of the same deal, so the row only ever moved up. Here every clear is
+  // a different level and all of them count.
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  const runs = [playedRun(1, 30), playedRun(1, 0), playedRun(2, 40)];
+  await post(env, deps, alex, runs[0]);
+  const second = await post(env, deps, alex, runs[1], NOW + 1000);
+  assert.equal(second.body.you.score, runs[0].score + runs[1].score, 'a smaller second run must still add');
+  const third = await post(env, deps, alex, runs[2], NOW + 2000);
+  assert.equal(third.body.you.score, runs[0].score + runs[1].score + runs[2].score);
+  assert.equal(third.body.you.runs, 3);
+  // One standing, three runs kept with their histories.
+  assert.equal(count(env, 'weekly_scores'), 1);
+  assert.equal(count(env, 'weekly_submissions'), 3);
+});
+
+test('a standing may exceed what any single run can pay', async () => {
+  // The bound applies to each score being added, never to the total — a week
+  // of good runs is supposed to pass it.
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  const best = playedRun(HARD_LEVEL, 72);
+  assert.equal(best.score, MAX_RUN_SCORE);
+  for (let i = 0; i < 3; i += 1) {
+    assert.equal((await post(env, deps, alex, best, NOW + i * 1000)).status, 200);
+  }
+  const { body } = await board(env, deps, alex);
+  assert.equal(body.you.score, MAX_RUN_SCORE * 3);
+  assert.ok(body.you.score > MAX_RUN_SCORE);
+});
+
+test('a new week starts empty and last week’s standing does not carry', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  const run = playedRun(1, 10);
+  await post(env, deps, alex, run, LAST_WEEK_NOW);
+  assert.equal((await board(env, deps, alex, LAST_WEEK_NOW)).body.you.score, run.score);
+
+  const now = await board(env, deps, alex, NOW);
+  assert.deepEqual(now.body.top, [], 'the live week opens empty');
+  assert.equal(now.body.you, null);
+  assert.equal(now.body.weekStart, WEEK);
+
+  // Scoring this week starts from this week's runs alone.
+  const fresh1 = playedRun(1, 0);
+  await post(env, deps, alex, fresh1);
+  assert.equal((await board(env, deps, alex)).body.you.score, fresh1.score);
+});
+
+test('only the live week is browsable — there is no way to ask for an old one', async () => {
+  // No date or week parameter exists to pass, and a query string is ignored
+  // rather than honoured, so a past week cannot be addressed at all.
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  await post(env, deps, alex, playedRun(1, 0), LAST_WEEK_NOW);
+  const response = await handleLeaderboard(
+    request('GET', `/api/leaderboard/weekly?week=${weekStartKey(LAST_WEEK_NOW)}&date=2026-08-30`),
+    env,
+    deps,
+  );
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.weekStart, WEEK, 'the live week, whatever the query said');
+  assert.deepEqual(body.top, []);
+});
+
+test('an impossible score is refused before anything is replayed, and nothing is written', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  const run = playedRun(1, 0);
+  const cheated = await post(env, deps, alex, { ...run, score: MAX_RUN_SCORE + 1 });
+  assert.equal(cheated.status, 422);
+  assert.deepEqual(cheated.body, { error: 'score_out_of_range' });
+  assert.equal(count(env, 'weekly_scores'), 0);
+  assert.equal(count(env, 'weekly_submissions'), 0);
+});
+
+test('a score cannot be posted without a profile to hang it on', async () => {
+  const env = { DB: createDb() };
+  const response = await handleLeaderboard(
+    request('POST', '/api/leaderboard/weekly', { body: playedRun(1, 0) }),
+    env,
+    makeDeps(),
+  );
+  assert.equal(response.status, 401);
+  assert.equal(count(env, 'weekly_scores'), 0);
+});
+
+test('the run is stored whole, with the history it was verified from', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  const run = playedRun(3, 12);
+  await post(env, deps, alex, run);
+  const row = env.DB.raw.prepare('SELECT * FROM weekly_submissions').get();
+  assert.equal(row.week_start, WEEK);
+  assert.equal(row.player_id, alex.playerId);
+  assert.equal(row.score, run.score);
+  assert.equal(row.elapsed_ms, run.elapsedMs);
+  assert.deepEqual(JSON.parse(row.history), run.history);
+});
+
+// --- the per-week cap --------------------------------------------------------
+//
+// Accumulation removed the absolute ceiling a max() standing had. Without a cap
+// in the database the only bound on a standing is an IP-keyed, per-isolate rate
+// limiter, which is not where score integrity can live.
+
 test('a player cannot bank more than the week’s run cap', async () => {
   const env = { DB: createDb() };
   const deps = makeDeps();
   const alex = await addPlayer(env, deps, 'Alex');
+  const run = playedRun(1, 0);
   let last;
   for (let i = 0; i < MAX_RUNS_PER_WEEK + 5; i += 1) {
     // A minute apart: the submit limiter (20 / 10 min) rolls over as the run
     // goes, so the database's run cap — not the limiter — is what stops this.
     // That is the whole point: a caller who slips the limiter must still stop
     // at the database.
-    last = await post(env, deps, alex, { score: 100, elapsedMs: 90_000 }, NOW + i * 60_000);
+    last = await post(env, deps, alex, run, NOW + i * 60_000);
   }
   assert.equal(last.status, 429);
   assert.deepEqual(last.body, { error: 'week_run_limit' });
   const { body } = await board(env, deps, alex);
   assert.equal(body.you.runs, MAX_RUNS_PER_WEEK, 'runs stop at the cap');
-  assert.equal(body.you.score, 100 * MAX_RUNS_PER_WEEK);
+  assert.equal(body.you.score, run.score * MAX_RUNS_PER_WEEK);
   // And the refused submits wrote no history either — a capped player must not
   // still be able to fill weekly_submissions, which is never pruned.
-  assert.equal(
-    env.DB.raw.prepare('SELECT COUNT(*) AS n FROM weekly_submissions').get().n,
-    MAX_RUNS_PER_WEEK,
-  );
+  assert.equal(count(env, 'weekly_submissions'), MAX_RUNS_PER_WEEK);
 });
 
 test('the standing is ceilinged even if the run cap is somehow passed', async () => {
@@ -384,11 +655,12 @@ test('the standing is ceilinged even if the run cap is somehow passed', async ()
   const env = { DB: createDb() };
   const deps = makeDeps();
   const alex = await addPlayer(env, deps, 'Alex');
-  await post(env, deps, alex, { score: MAX_RUN_SCORE, elapsedMs: 90_000 });
+  const best = playedRun(HARD_LEVEL, 72);
+  await post(env, deps, alex, best);
   env.DB.raw
     .prepare('UPDATE weekly_scores SET score = ? WHERE player_id = ?')
     .run(MAX_WEEK_SCORE, alex.playerId);
-  await post(env, deps, alex, { score: MAX_RUN_SCORE, elapsedMs: 90_000 }, NOW + 1000);
+  await post(env, deps, alex, best, NOW + 1000);
   const { body } = await board(env, deps, alex);
   assert.equal(body.you.score, MAX_WEEK_SCORE, 'the standing cannot pass its ceiling');
 });
@@ -405,9 +677,10 @@ test('the board is ordered by score, and among equal scores by who got there fir
   const first = await addPlayer(env, deps, 'First');
   const second = await addPlayer(env, deps, 'Second');
   const high = await addPlayer(env, deps, 'High');
-  await post(env, deps, second, { score: 1000, elapsedMs: 90_000 }, NOW + 2000);
-  await post(env, deps, first, { score: 1000, elapsedMs: 90_000 }, NOW + 1000);
-  await post(env, deps, high, { score: 2000, elapsedMs: 90_000 }, NOW + 3000);
+  const same = playedRun(1, 10);
+  await post(env, deps, second, same, NOW + 2000);
+  await post(env, deps, first, same, NOW + 1000);
+  await post(env, deps, high, playedRun(1, 30), NOW + 3000);
 
   const { body } = await board(env, deps);
   assert.deepEqual(
@@ -423,11 +696,11 @@ test('the board is ordered by score, and among equal scores by who got there fir
 test('the board shows the top ten and no more', async () => {
   const env = { DB: createDb() };
   const deps = makeDeps();
-  await fillBoard(env, deps, 14);
+  const players = await fillBoard(env, deps, 14);
   const { body } = await board(env, deps);
   assert.equal(body.top.length, BOARD_TOP);
   assert.equal(body.top[9].rank, 10);
-  assert.equal(body.top[9].score, 1100);
+  assert.equal(body.top[9].score, players[9].run.score);
 });
 
 test('a player outside the top ten still sees their rank and their neighbours', async () => {
@@ -477,16 +750,19 @@ test('a standing built from many runs ranks above a single big one', async () =>
   const deps = makeDeps();
   const grinder = await addPlayer(env, deps, 'Grinder');
   const oneShot = await addPlayer(env, deps, 'OneShot');
-  await post(env, deps, oneShot, { score: 9000, elapsedMs: 90_000 }, NOW + 1000);
+  const big = playedRun(1, 60);
+  const small = playedRun(1, 0);
+  assert.ok(big.score < 4 * small.score && big.score > small.score);
+  await post(env, deps, oneShot, big, NOW + 1000);
   for (let i = 0; i < 4; i += 1) {
-    await post(env, deps, grinder, { score: 2500, elapsedMs: 90_000 }, NOW + 2000 + i * 1000);
+    await post(env, deps, grinder, small, NOW + 2000 + i * 1000);
   }
   const { body } = await board(env, deps);
   assert.deepEqual(
     body.top.map((e) => [e.rank, e.name, e.score]),
     [
-      [1, 'Grinder', 10_000],
-      [2, 'OneShot', 9000],
+      [1, 'Grinder', 4 * small.score],
+      [2, 'OneShot', big.score],
     ],
   );
 });
@@ -516,7 +792,7 @@ test('the name on the board is the server-held one, so a rename reaches old entr
   const env = { DB: createDb() };
   const deps = makeDeps();
   const alex = await addPlayer(env, deps, 'Alex');
-  await post(env, deps, alex, { score: 500, elapsedMs: 90_000 });
+  await post(env, deps, alex, playedRun(1, 0));
   await handleProfile(
     request('POST', '/api/profile/name', { headers: bearer(alex.code), body: { name: 'Jamie' } }),
     env,
@@ -548,9 +824,10 @@ test('withdrawing takes the player off every week, standings and runs alike', as
   const deps = makeDeps();
   const alex = await addPlayer(env, deps, 'Alex');
   const other = await addPlayer(env, deps, 'Other');
-  await post(env, deps, alex, { score: 500, elapsedMs: 90_000 });
-  await post(env, deps, alex, { score: 700, elapsedMs: 90_000 }, LAST_WEEK_NOW);
-  await post(env, deps, other, { score: 400, elapsedMs: 90_000 });
+  const run = playedRun(1, 0);
+  await post(env, deps, alex, run);
+  await post(env, deps, alex, run, LAST_WEEK_NOW);
+  await post(env, deps, other, run);
 
   const response = await handleLeaderboard(
     request('DELETE', '/api/leaderboard/weekly', { headers: bearer(alex.code) }),
@@ -568,7 +845,7 @@ test('withdrawing takes the player off every week, standings and runs alike', as
     0,
   );
   // Nobody else was swept up.
-  assert.equal((await board(env, deps, other)).body.you.score, 400);
+  assert.equal((await board(env, deps, other)).body.you.score, run.score);
   assert.equal(
     env.DB.raw.prepare('SELECT COUNT(*) AS n FROM weekly_submissions WHERE player_id = ?').get(other.playerId).n,
     1,
@@ -625,9 +902,10 @@ test('submissions from one address are rate limited', async () => {
   const env = { DB: createDb() };
   const deps = makeDeps();
   const alex = await addPlayer(env, deps, 'Alex');
+  const run = playedRun(1, 0);
   let last;
   for (let i = 0; i < 21; i += 1) {
-    last = await post(env, deps, alex, { score: 100 + i, elapsedMs: 90_000 });
+    last = await post(env, deps, alex, run);
   }
   assert.equal(last.status, 429);
   assert.deepEqual(last.body, { error: 'rate_limited' });
@@ -640,12 +918,13 @@ test('one player submitting from two addresses is metered as one player', async 
   const env = { DB: createDb() };
   const deps = makeDeps();
   const alex = await addPlayer(env, deps, 'Alex');
+  const run = playedRun(1, 0);
   let last;
   for (let i = 0; i < 21; i += 1) {
     const response = await handleLeaderboard(
       request('POST', '/api/leaderboard/weekly', {
         headers: { ...bearer(alex.code), 'CF-Connecting-IP': i % 2 ? '198.51.100.1' : '198.51.100.2' },
-        body: { score: 100 + i, elapsedMs: 90_000 },
+        body: run,
       }),
       env,
       deps,
@@ -659,9 +938,10 @@ test('one player submitting from two addresses is metered as one player', async 
 test('the submit count survives a fresh deps object — nothing is kept in memory', async () => {
   const env = { DB: createDb() };
   const alex = await addPlayer(env, makeDeps(), 'Alex');
+  const run = playedRun(1, 0);
   let last;
   for (let i = 0; i < 21; i += 1) {
-    last = await post(env, makeDeps(), alex, { score: 100 + i, elapsedMs: 90_000 });
+    last = await post(env, makeDeps(), alex, run);
   }
   assert.equal(last.status, 429);
 });
@@ -689,7 +969,7 @@ test('an anonymous read writes nothing to the limiter table, but is still limite
   const env = { DB: createDb() };
   const deps = makeDeps();
   const alex = await addPlayer(env, deps, 'Alex');
-  const rows = () => env.DB.raw.prepare('SELECT COUNT(*) AS n FROM rate_limits').get().n;
+  const rows = () => count(env, 'rate_limits');
   const before = rows();
   for (let i = 0; i < 5; i += 1) assert.equal((await board(env, deps, null)).status, 200);
   assert.equal(rows(), before);
@@ -713,7 +993,7 @@ test('the routes work through the Worker entry point, which injects nothing', as
   const env = { DB: createDb() };
   const deps = makeDeps();
   const alex = await addPlayer(env, deps, 'Alex');
-  await post(env, deps, alex, { score: 4200, elapsedMs: 90_000 });
+  await post(env, deps, alex, playedRun(1, 0));
 
   const response = await handleRequest(request('GET', '/api/leaderboard/weekly'), env);
   assert.equal(response.status, 200);
@@ -729,6 +1009,13 @@ test('the routes work through the Worker entry point, which injects nothing', as
     env,
   );
   assert.equal(signed.status, 200);
+
+  // And a submit through the entry point replays like one through the route.
+  const submit = await handleRequest(
+    request('POST', '/api/leaderboard/weekly', { headers: bearer(alex.code), body: playedRun(2, 5) }),
+    env,
+  );
+  assert.equal(submit.status, 200);
 });
 
 test('a database the code disagrees with fails closed as 503 unavailable, never a raw 500', async () => {
@@ -747,10 +1034,11 @@ test('a database the code disagrees with fails closed as 503 unavailable, never 
   assert.equal(read.status, 503);
   assert.deepEqual(await read.json(), { error: 'unavailable' });
 
+  // A run that verifies, so the failure reached is the database's.
   const submit = await handleRequest(
     request('POST', '/api/leaderboard/weekly', {
       headers: bearer(alex.code),
-      body: { score: 4200, elapsedMs: 90_000 },
+      body: playedRun(1, 0),
     }),
     env,
   );
@@ -778,7 +1066,7 @@ test('an anonymous read never reaches the credential check', async () => {
   const env = { DB: createDb() };
   const deps = makeDeps();
   const alex = await addPlayer(env, deps, 'Alex');
-  await post(env, deps, alex, { score: 4200, elapsedMs: 90_000 });
+  await post(env, deps, alex, playedRun(1, 0));
   for (let i = 0; i < 30; i += 1) await board(env, deps, null);
   const mine = await board(env, deps, alex);
   assert.equal(mine.status, 200);

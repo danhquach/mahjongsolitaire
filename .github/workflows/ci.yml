@@ -151,6 +151,18 @@ jobs:
         if: env.HAS_CLOUDFLARE_CREDS == 'true'
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: core/package-lock.json
+      # Issue #187 — the Worker imports core's build (worker/replay.mjs replays
+      # a submitted run through core's generator and move stack), so `core/dist`
+      # has to exist here for wrangler to bundle it. Built from the same commit
+      # the `test` job just passed; the bundle artifact carries the UI only.
+      - name: Build core (the Worker imports it)
+        if: env.HAS_CLOUDFLARE_CREDS == 'true'
+        working-directory: core
+        run: |
+          npm ci
+          npm run build
       - name: Read the live D1 schema
         if: env.HAS_CLOUDFLARE_CREDS == 'true'
         id: live-schema

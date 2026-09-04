@@ -23,14 +23,29 @@
 // rewinds arbitrary moves. It returns the most recently parked tile still in
 // the holder to its own layout slot — matched pairs are permanent, and no
 // amount of Undo brings a matched tile back. Score and later matches are
-// untouched; the undone hold's record is removed, so history reads as if that
-// park never happened (holdsUsed rolls back with it).
+// untouched.
+//
+// Issue #187 makes the stack a complete replay log, because the leaderboard
+// now verifies a run by replaying it (decision 0030). Two things had to
+// change for `[deal, moves]` to reproduce a game:
+//
+//   * Shuffle is a recorded move carrying its seed. `shuffleBoard` is
+//     deterministic per (board, seed), so the record is all a replay needs to
+//     land on the same faces — but only if it is applied at the same point in
+//     the sequence, which is why it lives in the stack rather than in a count.
+//   * Undo *appends* a `return` record instead of deleting the hold. A hold
+//     frees whatever it covered; if that tile was matched before the undo,
+//     a history with the hold spliced out plays that match against a still-
+//     covered tile and fails. The return says when the tile went back.
+//     `holdsUsed` nets the two, so it still rolls back the way #100 meant.
 
 import type { Board, TileId } from './board.js';
 import { canMatch, matchPair } from './match.js';
 import { hashString } from './rng.js';
 import { ScoreKeeper } from './scoring.js';
 import type { MatchScore, ScoreSnapshot } from './scoring.js';
+import { shuffleBoard } from './shuffle.js';
+import type { SolveOptions } from './solver.js';
 
 /** What every move records. `prevSelection` / `prevScores` are no longer
  *  replayed by `undo` (issue #100: matches are permanent, and a return leaves
@@ -59,7 +74,25 @@ export interface HoldMove extends MoveBase {
   readonly slotIndex: number;
 }
 
-export type MoveRecord = MatchMove | HoldMove;
+/** A held tile put back on its own layout slot by Undo (issues #100, #187).
+ *  Records the slot it left so a replay can check the holder agrees. */
+export interface ReturnMove extends MoveBase {
+  readonly kind: 'return';
+  readonly tile: TileId;
+  readonly slotIndex: number;
+}
+
+/** The Shuffle booster, with the seed that re-faced the board and the attempt
+ *  the solver accepted (issue #187). Occupancy is untouched; only faces
+ *  change, and `applyShuffle(board, seed, attempt)` reproduces them at this
+ *  point in the sequence without paying for the solver again. */
+export interface ShuffleMove extends MoveBase {
+  readonly kind: 'shuffle';
+  readonly seed: number;
+  readonly attempt: number;
+}
+
+export type MoveRecord = MatchMove | HoldMove | ReturnMove | ShuffleMove;
 
 /**
  * A MoveStack's serializable state (spec §9 save/resume, issue #14). Pair it
@@ -98,9 +131,21 @@ export class MoveStack {
    *  measure of how close the player came to losing. Vita Mahjong reports a per-level
    *  holder average, so the count is tracked even though nothing deducts for it
    *  (PM decision 2026-08-31: no score penalty in v1). Derived from the stack,
-   *  so undo rolls it back for free and a resumed game carries it. */
+   *  so undo rolls it back for free and a resumed game carries it: a returned
+   *  hold (issue #187 keeps the record) counts as never taken. */
   get holdsUsed(): number {
-    return this.stack.reduce((n, m) => n + (m.kind === 'hold' ? 1 : 0), 0);
+    return this.stack.reduce(
+      (n, m) => n + (m.kind === 'hold' ? 1 : m.kind === 'return' ? -1 : 0),
+      0,
+    );
+  }
+
+  /** The timestamp a caller without a clock gets: no earlier than the last
+   *  recorded move, so the record stays non-decreasing (the save format
+   *  checks that). Return and shuffle records never affect the score, so
+   *  the only property their time has to have is that one. */
+  private latestMs(): number {
+    return this.stack.length === 0 ? 0 : this.stack[this.stack.length - 1]!.atMs;
   }
 
   /** Select a matchable tile — free on the board, or held (tap 1 of a pair
@@ -185,15 +230,24 @@ export class MoveStack {
    * combo ladder and later matches are untouched. Returns the undone hold
    * record, or null when the holder holds nothing to return (no charge).
    *
-   * The record is removed from the stack: history reads as if that park never
-   * happened, which keeps the save's undo chain walking back to a pristine
-   * deal and rolls holdsUsed back with it.
+   * The hold record stays and a `return` record is appended (issue #187): the
+   * history has to say when the tile went back, or a match made while it was
+   * out cannot be replayed. `nowMs` is the game clock; without one the return
+   * is stamped at the last recorded move.
    */
-  undo(): HoldMove | null {
+  undo(nowMs: number = this.latestMs()): HoldMove | null {
     for (let i = this.stack.length - 1; i >= 0; i--) {
       const record = this.stack[i]!;
       if (record.kind !== 'hold' || !this.board.isHeld(record.tile)) continue;
-      this.stack.splice(i, 1);
+      const slotIndex = this.board.holderSlots().indexOf(record.tile);
+      this.stack.push({
+        kind: 'return',
+        tile: record.tile,
+        slotIndex,
+        atMs: nowMs,
+        prevSelection: this.selected,
+        prevScores: this.scores.snapshot(),
+      });
       this.board.unhold(record.tile);
       // The returned tile re-covers what parking it freed — possibly the
       // selected tile — so the selection does not survive the return.
@@ -203,8 +257,31 @@ export class MoveStack {
     return null;
   }
 
-  /** Pairs played so far, oldest first (spec §9 replay order). Holds are moves
-   *  but not pairs, so they are not listed — `state.moves` is the full record. */
+  /**
+   * Shuffle booster (spec §5, issue #187): re-face the tiles on the board
+   * through `shuffleBoard` and record the seed as a move. False — nothing
+   * changed, nothing recorded — when the board is clear or no solvable face
+   * assignment exists, so an impossible shuffle costs the player nothing.
+   * Clears the selection: the face under it just changed.
+   */
+  shuffle(seed: number, nowMs: number = this.latestMs(), options: SolveOptions = {}): boolean {
+    const prevSelection = this.selected;
+    const prevScores = this.scores.snapshot();
+    let attempt: number | null;
+    try {
+      attempt = shuffleBoard(this.board, seed, options);
+    } catch {
+      return false;
+    }
+    if (attempt === null) return false;
+    this.stack.push({ kind: 'shuffle', seed, attempt, atMs: nowMs, prevSelection, prevScores });
+    this.selected = null;
+    return true;
+  }
+
+  /** Pairs played so far, oldest first (spec §9 replay order). Holds, returns
+   *  and shuffles are moves but not pairs, so they are not listed —
+   *  `state.moves` is the full record. */
   moves(): ReadonlyArray<readonly [TileId, TileId]> {
     return this.stack
       .filter((m): m is MatchMove => m.kind === 'match')

@@ -66,7 +66,11 @@ export type {
   MoveBase,
   MoveRecord,
   MoveStackState,
+  ReturnMove,
+  ShuffleMove,
 } from './moves.js';
+export { replayMoves } from './replay.js';
+export type { ReplayMove, ReplayResult } from './replay.js';
 export { ScoreKeeper, BASE_PAIR_POINTS, COMBO_WINDOW_MS, FLAWLESS_RUN_POINTS } from './scoring.js';
 export type { MatchScore, ScoreSnapshot } from './scoring.js';
-export { shuffleBoard } from './shuffle.js';
+export { MAX_SHUFFLE_ATTEMPTS, applyShuffle, shuffleBoard } from './shuffle.js';

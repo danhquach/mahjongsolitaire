@@ -107,11 +107,14 @@ test('the choice persists both ways', () => {
 
 // --- the endpoint ----------------------------------------------------------------
 
-test('a finished level posts its score and time under the player code', async () => {
+test('a finished level posts its score, time and history under the player code', async () => {
   const { fetchImpl, calls } = stubFetch({ status: 200, body: BOARD });
+  // The history is what the server replays (issue #187); the deal and the
+  // moves are whatever the game recorded, passed through untouched.
+  const history = { layoutId: 'windmill', seed: 100000, shuffles: 0, moves: [{ kind: 'match' }] };
   const result = await submitRunScore(
     CREDENTIALS,
-    { score: 4200, elapsedMs: 90_000 },
+    { score: 4200, elapsedMs: 90_000, history },
     { fetchImpl },
   );
   assert.ok(result.ok);
@@ -121,7 +124,7 @@ test('a finished level posts its score and time under the player code', async ()
   assert.equal(calls[0]!.headers['Authorization'], `Bearer ${CREDENTIALS.code}`);
   // No week and no date: the server decides which week the run lands in, so
   // the client never gets to claim one.
-  assert.deepEqual(calls[0]!.body, { score: 4200, elapsedMs: 90_000 });
+  assert.deepEqual(calls[0]!.body, { score: 4200, elapsedMs: 90_000, history });
 });
 
 test('reading a board carries a code only when there is one, and names no week', async () => {
