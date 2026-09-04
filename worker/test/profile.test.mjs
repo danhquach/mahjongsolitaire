@@ -582,6 +582,140 @@ test('the count survives a fresh deps object — nothing is kept in memory', asy
   assert.equal(last.response.status, 429);
 });
 
+// --- quotas (issue #189) -------------------------------------------------------
+
+const FIVE_MINUTES = 5 * 60 * 1000;
+
+test('a player may sync 200 times a day, from any address and at any pace', async () => {
+  // Paced at one sync per 5 minutes (200 of them span 17 hours, inside the
+  // day), the 60-per-10-minutes bucket never trips; only the day's quota can,
+  // and it is the player's, not the address's.
+  const env = { DB: createDb() };
+  let clock = 1_700_000_000_000;
+  const deps = makeDeps({ now: () => clock });
+  const { json: created } = await registerPlayer(env, deps);
+  const sync = (i) =>
+    handleProfile(
+      request('POST', '/api/profile/sync', {
+        headers: { ...bearer(created.code), ...from(`203.0.${(i >> 8) & 0xff}.${i & 0xff}`) },
+        body: { record: EMPTY_RECORD },
+      }),
+      env,
+      deps,
+    );
+  for (let i = 0; i < 200; i += 1) {
+    assert.equal((await sync(i)).status, 200, `sync ${i + 1}`);
+    clock += FIVE_MINUTES;
+  }
+  const over = await sync(200);
+  assert.equal(over.status, 429);
+  assert.deepEqual(await over.json(), { error: 'rate_limited' });
+  // Another player behind the same address is untouched: the quota is per player.
+  const other = await registerPlayer(env, deps, { name: 'Bea' });
+  const theirs = await handleProfile(
+    request('POST', '/api/profile/sync', {
+      headers: { ...bearer(other.json.code), ...from('203.0.0.200') },
+      body: { record: EMPTY_RECORD },
+    }),
+    env,
+    deps,
+  );
+  assert.equal(theirs.status, 200);
+  // A day after the first sync, the window has turned.
+  clock = 1_700_000_000_000 + 24 * 60 * 60 * 1000;
+  assert.equal((await sync(201)).status, 200);
+});
+
+test('a refused burst does not spend the day’s quota', async () => {
+  // 61 syncs in one instant: the 61st is refused by the minutes bucket, and
+  // that refusal is not counted against the day.
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const { json: created } = await registerPlayer(env, deps);
+  for (let i = 0; i < 61; i += 1) {
+    await handleProfile(
+      request('POST', '/api/profile/sync', { headers: bearer(created.code), body: { record: EMPTY_RECORD } }),
+      env,
+      deps,
+    );
+  }
+  const day = env.DB.raw
+    .prepare('SELECT count FROM rate_limits WHERE key = ?')
+    .get(`sync-day:player:${created.playerId}`);
+  assert.equal(day.count, 60);
+});
+
+test('a player may rename 20 times a day', async () => {
+  const env = { DB: createDb() };
+  let clock = 1_700_000_000_000;
+  const deps = makeDeps({ now: () => clock });
+  const { json: created } = await registerPlayer(env, deps);
+  const rename = (name) =>
+    handleProfile(
+      request('POST', '/api/profile/name', { headers: bearer(created.code), body: { name } }),
+      env,
+      deps,
+    );
+  for (let i = 0; i < 20; i += 1) {
+    assert.equal((await rename(`Alex ${i}`)).status, 200);
+    clock += 11 * 60 * 1000;
+  }
+  assert.equal((await rename('Alex 20')).status, 429);
+  // The row kept the last accepted name.
+  assert.equal(env.DB.raw.prepare('SELECT name FROM players WHERE id = ?').get(created.playerId).name, 'Alex 19');
+});
+
+test('an address may register 10 profiles a day, at any pace', async () => {
+  // Five an hour is the burst bucket; spaced past it, the day's quota is what
+  // stops the eleventh. Nothing is minted for the refused one.
+  const env = { DB: createDb() };
+  let clock = 1_700_000_000_000;
+  const deps = makeDeps({ now: () => clock });
+  const players = () => env.DB.raw.prepare('SELECT COUNT(*) AS n FROM players').get().n;
+  let last;
+  for (let i = 0; i < 11; i += 1) {
+    last = await registerPlayer(env, deps);
+    clock += 61 * 60 * 1000;
+  }
+  assert.equal(last.response.status, 429);
+  assert.deepEqual(last.json, { error: 'rate_limited' });
+  assert.equal(players(), 10);
+  // Another address is not affected by this one's day.
+  const elsewhere = await handleProfile(
+    request('POST', '/api/profile/register', {
+      headers: from('198.51.100.7'),
+      body: { name: 'Bea', avatar: 'lantern', record: EMPTY_RECORD },
+    }),
+    env,
+    deps,
+  );
+  assert.equal(elsewhere.status, 201);
+});
+
+test('registrations across every address stop at 1000 a day', async () => {
+  // One registration per address, so no address bucket is anywhere near its
+  // own limits; the global ceiling is the only thing that can refuse. Real
+  // randomness: the seeded generator repeats after a few players and would
+  // collide on the UNIQUE columns long before a thousand.
+  const env = { DB: createDb() };
+  const deps = makeDeps({ randomBytes: (n) => crypto.getRandomValues(new Uint8Array(n)) });
+  const register = (i) =>
+    handleProfile(
+      request('POST', '/api/profile/register', {
+        headers: from(`10.${(i >> 16) & 0xff}.${(i >> 8) & 0xff}.${i & 0xff}`),
+        body: { name: 'Alex', avatar: 'lantern', record: EMPTY_RECORD },
+      }),
+      env,
+      deps,
+    );
+  for (let i = 0; i < 1000; i += 1) assert.equal((await register(i)).status, 201, `registration ${i + 1}`);
+  const over = await register(1000);
+  assert.equal(over.status, 429);
+  assert.deepEqual(await over.json(), { error: 'rate_limited' });
+  assert.equal(env.DB.raw.prepare('SELECT COUNT(*) AS n FROM players').get().n, 1000);
+  assert.equal(env.DB.raw.prepare('SELECT count FROM rate_limits WHERE key = ?').get('register-day:global').count, 1001);
+});
+
 // --- reaping (issue #188) ------------------------------------------------------
 
 const DAY = 24 * 60 * 60 * 1000;

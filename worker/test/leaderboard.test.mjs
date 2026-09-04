@@ -964,6 +964,32 @@ test('withdrawing is metered per player', async () => {
   assert.equal(last.status, 429);
 });
 
+test('a player may withdraw 10 times a day, at any pace (issue #189)', async () => {
+  // Spaced past the 10-per-10-minutes bucket, only the day's quota can refuse,
+  // and it is keyed by player, so the address is irrelevant.
+  const env = { DB: createDb() };
+  let clock = NOW;
+  const deps = makeDeps({ now: () => clock });
+  const alex = await addPlayer(env, deps, 'Alex');
+  const withdraw = (i) =>
+    handleLeaderboard(
+      request('DELETE', '/api/leaderboard/weekly', {
+        headers: { ...bearer(alex.code), 'CF-Connecting-IP': `198.51.100.${i}` },
+      }),
+      env,
+      deps,
+    );
+  for (let i = 0; i < 10; i += 1) {
+    assert.equal((await withdraw(i)).status, 200);
+    clock += 11 * 60 * 1000;
+  }
+  const over = await withdraw(10);
+  assert.equal(over.status, 429);
+  assert.deepEqual(await over.json(), { error: 'rate_limited' });
+  clock = NOW + 24 * 60 * 60 * 1000;
+  assert.equal((await withdraw(11)).status, 200);
+});
+
 test('an anonymous read writes nothing to the limiter table, but is still limited per isolate', async () => {
   // Public data, no credential: the in-memory limiter stays for this one route
   // so a board read does not cost a database write.

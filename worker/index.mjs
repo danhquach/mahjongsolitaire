@@ -285,8 +285,10 @@ export async function handleRequest(request, env) {
   }
 }
 
-/** Longer than any limiter window (the longest is register's hour), so a row
- *  this old cannot still be counting. */
+/** No shorter than any limiter window — the longest is the day of a quota
+ *  (`QUOTA_WINDOW_MS`, issue #189) — so a row this old has expired and cannot
+ *  still be counting. A quota window longer than this would be reset by the
+ *  sweep mid-count, which is why there is none. */
 const RATE_LIMIT_ROW_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
