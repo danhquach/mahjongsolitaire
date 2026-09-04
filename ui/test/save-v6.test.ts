@@ -42,7 +42,7 @@ test('v6 carries hints and undos, and round-trips them', () => {
     undos: 3,
     elapsedMs: 4000,
   });
-  assert.equal(SAVE_VERSION, 7);
+  assert.equal(SAVE_VERSION, 8);
   assert.equal(save.hints, 2);
   assert.equal(save.undos, 3);
   const parsed = parseSave(JSON.parse(JSON.stringify(save)));
@@ -97,4 +97,8 @@ test('an older record reads as absent — the in-flight deal restarts, progress 
   // v6 too (issue #176): its shape is fine, but its score was accumulated at
   // the old flat rate, so it must not be resumed at the new one.
   assert.equal(parseSave({ ...current, version: 6 }), null);
+  // And v7 (issue #187): its move list has no shuffle seeds and no undo
+  // returns, so a deal resumed from it would end with a history the
+  // leaderboard cannot replay.
+  assert.equal(parseSave({ ...current, version: 7 }), null);
 });

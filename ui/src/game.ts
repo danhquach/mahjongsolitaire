@@ -78,7 +78,6 @@ import {
   concealedTileIds,
   findHint,
   hasPlayableMove,
-  shuffleBoard,
   takeablePairs,
 } from '@mahjongsolitaire/core';
 import type {
@@ -406,9 +405,12 @@ export class Game {
    * record, or null on an empty holder (nothing to return, nothing to charge
    * for). The loss dialog still offers no Undo: the level ended the moment the
    * fourth slot filled, so a full holder stays final (decision 0009).
+   *
+   * `nowMs` is the game clock the return is recorded at (issue #187: the
+   * history keeps the return so a replay knows when the tile went back).
    */
-  undo(): HoldMove | null {
-    const record = this.stack.undo();
+  undo(nowMs?: number): HoldMove | null {
+    const record = this.stack.undo(nowMs);
     if (record === null) return null;
     this.forgetHints();
     // A returned concealed tile comes back face-down (the set is fixed). The
@@ -480,21 +482,16 @@ export class Game {
    * primitive. False — board untouched — when no solvable assignment exists
    * (or the board is already clear), so an impossible shuffle costs nothing.
    *
-   * Not an undoable move: the move stack keeps pointing at the moves actually
-   * played, and Undo across a shuffle still returns the parked tile to its
-   * own slot (issue #100 — held and removed tiles keep their faces; only
-   * present tiles are permuted).
+   * Not an undoable move, but a recorded one (issue #187): the stack keeps
+   * the seed so the history replays, and Undo across a shuffle still returns
+   * the parked tile to its own slot (issue #100 — held and removed tiles keep
+   * their faces; only present tiles are permuted). `nowMs` is the game clock
+   * the record is stamped with.
    */
-  shuffle(seed: number): boolean {
-    // Board tiles, not `tilesLeft`: shuffle permutes the faces of what is on
-    // the board, and held tiles keep theirs (issue #43).
-    if (this.board.presentTiles().length === 0) return false;
-    try {
-      shuffleBoard(this.board, seed);
-    } catch {
-      return false; // no solvable face assignment for this geometry
-    }
-    this.stack.clearSelection();
+  shuffle(seed: number, nowMs?: number): boolean {
+    // False when nothing is on the board or no solvable face assignment
+    // exists for this geometry — the stack records nothing either way.
+    if (!this.stack.shuffle(seed, nowMs)) return false;
     this.forgetHints();
     this.forgetPeek(); // the face under the peek just changed
     return true;

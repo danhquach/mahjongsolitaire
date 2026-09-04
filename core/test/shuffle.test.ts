@@ -8,7 +8,7 @@ import { Board } from '../src/board.js';
 import type { Slot } from '../src/board.js';
 import { generateLevel } from '../src/generator.js';
 import { SEED_LAYOUTS } from '../src/layouts.js';
-import { shuffleBoard } from '../src/shuffle.js';
+import { MAX_SHUFFLE_ATTEMPTS, applyShuffle, shuffleBoard } from '../src/shuffle.js';
 import { solve } from '../src/solver.js';
 
 const slot = (x: number, y: number, z = 0): Slot => ({ x, y, z });
@@ -75,13 +75,47 @@ test('shuffle is deterministic per (board, seed)', () => {
   assert.notDeepEqual(faces(777), faces(778));
 });
 
-test('shuffle of an empty board is a no-op', () => {
+test('shuffle of an empty board is a no-op, and says so', () => {
   const board = new Board([
     { id: 0, slot: slot(0, 0), face: 'dots-1', removed: true },
     { id: 1, slot: slot(2, 0), face: 'dots-1', removed: true },
   ]);
-  shuffleBoard(board, 1);
+  assert.equal(shuffleBoard(board, 1), null);
   assert.equal(board.get(0).face, 'dots-1');
+  assert.throws(() => applyShuffle(board, 1, 0), /nothing on the board/);
+});
+
+test('issue #187: applyShuffle reproduces the attempt shuffleBoard accepted, without the solver', () => {
+  for (const layout of SEED_LAYOUTS) {
+    for (const seed of [1, 2, 3, 99, 424242]) {
+      const level = generateLevel(layout, seed);
+      const played = new Board(level.tiles);
+      const replayed = new Board(level.tiles);
+      for (const [a, b] of level.solution.slice(0, 3)) {
+        played.remove(a);
+        played.remove(b);
+        replayed.remove(a);
+        replayed.remove(b);
+      }
+      const attempt = shuffleBoard(played, seed * 31 + 7);
+      assert.ok(attempt !== null && attempt >= 0 && attempt < MAX_SHUFFLE_ATTEMPTS);
+      applyShuffle(replayed, seed * 31 + 7, attempt);
+      assert.deepEqual(
+        replayed.allTiles().map((t) => t.face),
+        played.allTiles().map((t) => t.face),
+        `${layout.id} seed ${seed}: attempt ${attempt}`,
+      );
+    }
+  }
+});
+
+test('applyShuffle refuses an attempt shuffleBoard could not have produced', () => {
+  const board = new Board(generateLevel(SEED_LAYOUTS[0]!, 11).tiles);
+  const before = board.allTiles().map((t) => t.face);
+  assert.throws(() => applyShuffle(board, 1, -1), RangeError);
+  assert.throws(() => applyShuffle(board, 1, 1.5), RangeError);
+  assert.throws(() => applyShuffle(board, 1, MAX_SHUFFLE_ATTEMPTS), RangeError);
+  assert.deepEqual(board.allTiles().map((t) => t.face), before, 'the board is untouched');
 });
 
 test('shuffle throws, board unchanged, when no face assignment is solvable', () => {

@@ -278,6 +278,55 @@ test('resume reproduces shuffled faces, including undo across a shuffle', () => 
   );
 });
 
+test('issue #187: the save keeps the shuffle seed and the undo return, and checks them', () => {
+  // The move stack is the leaderboard's replay log now, so both records have
+  // to survive a force-quit — and a record that lies about them has to be
+  // refused the way every other incoherent move is.
+  const level = generateValidatedLevel(TURTLE, SAMPLE_SEED);
+  const game = new Game(level, undefined, []);
+  level.solution.slice(0, 4).forEach(([a, b], i) => {
+    game.tap(free(a), (i + 1) * 100);
+    game.tap(free(b), (i + 1) * 100 + 10);
+  });
+  game.tap(free(game.board.freeTileIds()[0]!), 500); // parked
+  assert.equal(game.shuffle(0xbeef, 600), true);
+  assert.notEqual(game.undo(700), null);
+  const save = captureSave(game, { shuffles: 1, hints: 0, undos: 0, elapsedMs: 800 });
+  assert.deepEqual(
+    save.snapshot.stack.moves.slice(-3).map((m) => [m.kind, m.atMs]),
+    [
+      ['hold', 500],
+      ['shuffle', 600],
+      ['return', 700],
+    ],
+  );
+  const shuffle = save.snapshot.stack.moves.at(-2)!;
+  assert.equal(shuffle.kind === 'shuffle' && shuffle.seed, 0xbeef);
+  assert.notEqual(parseSave(JSON.parse(JSON.stringify(save))), null, 'the honest record parses');
+  const resumed = forceQuit(game, { shuffles: 1, hints: 0, undos: 0, elapsedMs: 800 })!;
+  assert.deepEqual(fingerprint(resumed), fingerprint(game));
+
+  const lastOf = (s: Record<string, unknown>, kind: string) =>
+    movesOf(s).filter((m) => m['kind'] === kind).at(-1)!;
+  const cases: Record<string, (save: Record<string, unknown>) => void> = {
+    'a return naming a slot the hold did not use': (s) => void (lastOf(s, 'return')['slotIndex'] = 3),
+    'a return of a tile that was matched away': (s) =>
+      void (lastOf(s, 'return')['tile'] = (snap(s)['removed'] as number[])[0]!),
+    'a return of a tile never parked': (s) => void (lastOf(s, 'return')['tile'] = 143),
+    'a return with no hold before it': (s) => {
+      const moves = movesOf(s);
+      moves.splice(moves.indexOf(lastOf(s, 'hold')), 1);
+    },
+    'a shuffle with a negative seed': (s) => void (lastOf(s, 'shuffle')['seed'] = -1),
+    'a shuffle with a fractional seed': (s) => void (lastOf(s, 'shuffle')['seed'] = 1.5),
+    'a shuffle with no seed': (s) => void delete lastOf(s, 'shuffle')['seed'],
+    'a shuffle stamped before the move it followed': (s) => void (lastOf(s, 'shuffle')['atMs'] = 1),
+  };
+  for (const [name, mutate] of Object.entries(cases)) {
+    assert.equal(parseSave(corrupt(mutate, save)), null, `should reject: ${name}`);
+  }
+});
+
 test('the save carries the session fields the HUD needs back', () => {
   const game = new Game(generateValidatedLevel(TURTLE, SAMPLE_SEED));
   const save = captureSave(game, { shuffles: 3, hints: 0, undos: 0, elapsedMs: 91400 });

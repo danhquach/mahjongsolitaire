@@ -1,8 +1,10 @@
 # 0027 — One weekly score: the board ranks the ladder, the Daily pays trophies
 
-**Date:** 2026-09-03 · **Status:** accepted · **Ticket:** issue #176
+**Date:** 2026-09-03 · **Status:** accepted, amended · **Ticket:** issue #176
 **Supersedes:** [0022](0022-daily-leaderboard-first.md) in part — the Daily
-board it chose is replaced; its "bounded, not verified" position stands.
+board it chose is replaced; its "bounded, not verified" position stood until
+[0030](0030-server-verified-runs.md) (issue #187), which verifies every run by
+replay. The board, the standing and the per-run history below are unchanged.
 
 ## Context
 

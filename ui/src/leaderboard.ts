@@ -143,14 +143,25 @@ export function compactHistory(moves: readonly Record<string, unknown>[]): unkno
   });
 }
 
+/** The deal and what was played on it — what the server replays (issue #187,
+ *  decision 0030). `moves` is the compacted move stack, shuffle seeds and undo
+ *  returns included; `shuffles` is the count the row keeps for its own
+ *  record, not what the replay reads. */
+export interface RunHistory {
+  readonly layoutId: string;
+  readonly seed: number;
+  readonly shuffles: number;
+  readonly moves: readonly unknown[];
+}
+
 /** What a finished ladder level has to say about itself. No week: the server
  *  decides which one the run lands in, from the moment it arrives. */
 export interface RunResult {
   readonly score: number;
   readonly elapsedMs: number;
-  /** The move history, sent so a later build can verify the score by
-   *  replaying it (the server stores it and does not read it today). */
-  readonly history?: unknown;
+  /** Required since issue #187: the server regenerates the deal, replays the
+   *  moves and refuses a run it cannot reproduce. `score` is its cross-check. */
+  readonly history: RunHistory;
 }
 
 /** Post a finished ladder level and take back the standing it added to. */

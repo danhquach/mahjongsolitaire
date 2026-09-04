@@ -2275,18 +2275,25 @@ async function start(): Promise<void> {
    *  from the moment it arrives, so a device with a wrong clock cannot post
    *  into a week that is not open.
    *
-   *  The move history goes with it. Nothing reads it yet — the server stores
-   *  it so a later build can verify a score by replaying it (decision 0027).
-   *  Sending it from the first day the board is open is the whole point: a
-   *  history that only starts when the verifier ships leaves every earlier
-   *  entry uncheckable. It is deliberately the *whole* deal — layout, seed,
-   *  shuffle count and the move records — so a replay has everything the
-   *  client knows. */
+   *  The move history goes with it, and since issue #187 (decision 0030) it
+   *  is what the server scores: the deal is regenerated from layout and seed,
+   *  the moves are replayed, and `score` is only checked against the result.
+   *  A run whose history does not replay is refused and never reaches the
+   *  board — silently, like every other failed post here. The history is the
+   *  *whole* deal — layout, seed, and the move records with the shuffle seeds
+   *  and undo returns the stack keeps — so a replay has everything the client
+   *  knows. `shuffles` stays for the row's own record; the replay reads the
+   *  shuffle moves, not the count. */
   function submitRunResult(score: number, elapsedMs: number): void {
     if (syncCredentials === null || !boardOptIn) return;
     void submitRunScore(syncCredentials, {
       score,
-      elapsedMs,
+      // The game clock is `performance.now()`-based and fractional; the
+      // server takes whole milliseconds and refuses anything else (found
+      // while wiring #187 — every post since #176 had been failing on this).
+      // Ceiling, not rounding, so the run never claims to have ended before
+      // its own last move, which the server now checks.
+      elapsedMs: Math.ceil(elapsedMs),
       history: {
         layoutId: game.level.layoutId,
         seed: game.level.seed,
@@ -2880,16 +2887,17 @@ async function start(): Promise<void> {
         return { ok: true, message: `Hint: ${describePair(pair)}.` };
       }
       case 'undo': {
-        const move = game.undo();
+        const move = game.undo(elapsed.ms);
         if (move === null) return { ok: false, message: 'Nothing to undo — the holder is empty.' };
         hintPair = [];
         return { ok: true, message: `Undo: ${describeUndo(move)}` };
       }
       case 'shuffle': {
         // Deterministic per (level seed, shuffle index) so a replay of the same
-        // deal reproduces the same shuffled boards.
+        // deal reproduces the same shuffled boards. The seed also goes into the
+        // move history (issue #187), which is what the server replays from.
         const shuffleSeed = (game.level.seed + 0x9e3779b1 * (shuffleCount + 1)) >>> 0;
-        if (!game.shuffle(shuffleSeed)) {
+        if (!game.shuffle(shuffleSeed, elapsed.ms)) {
           return { ok: false, message: 'This board cannot be shuffled.' };
         }
         shuffleCount++;

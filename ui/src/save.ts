@@ -100,8 +100,15 @@ import type { KeyValueStorage } from './storage.js';
  *  one would keep those points and then pay a different rate for every match
  *  after the reload — one deal scored two ways, with the seam invisible. The
  *  version bump is the same clean break as every one before it: the in-flight
- *  deal restarts, and level progress (stored separately) keeps. */
-export const SAVE_VERSION = 7;
+ *  deal restarts, and level progress (stored separately) keeps.
+ *
+ *  v8 (issue #187): the move stack is now a complete replay log — Shuffle is
+ *  recorded with its seed and Undo appends a `return` instead of deleting the
+ *  hold — because the leaderboard verifies a run by replaying its history
+ *  (decision 0030). A v7 record's moves omit both, so a deal resumed from one
+ *  would finish with a history the server cannot replay and its clear would
+ *  never reach the board. Same clean break: the in-flight deal restarts. */
+export const SAVE_VERSION = 8;
 /** The slot key is deliberately *not* versioned with the record: the `version`
  *  field inside is what decides whether a record can be trusted, and renaming
  *  the key would only orphan the old bytes instead of overwriting them. */
@@ -214,10 +221,16 @@ function parseMoves(value: unknown): MoveRecord[] | null {
         heldA: heldA as number | null,
         heldB: heldB as number | null,
       });
-    } else if (kind === 'hold') {
+    } else if (kind === 'hold' || kind === 'return') {
       const { tile, slotIndex } = raw;
       if (!isCount(tile) || !isSlotIndex(slotIndex)) return null;
       moves.push({ ...base, kind, tile, slotIndex });
+    } else if (kind === 'shuffle') {
+      // Issue #187: the seed the Shuffle booster re-faced the board with, and
+      // the attempt the solver accepted, so a replay can reproduce the faces.
+      const { seed, attempt } = raw;
+      if (!isCount(seed) || !isCount(attempt)) return null;
+      moves.push({ ...base, kind, seed, attempt });
     } else {
       // An unknown kind, or `unhold` from a v2 record — a move this build has
       // no way to replay (decision 0009). The version check above catches a
@@ -253,7 +266,9 @@ function parseHolder(value: unknown): (TileId | null)[] | null {
 /**
  * Walk the undo stack backwards and check every step is one the game could
  * actually take, ending at a pristine deal — nothing removed, holder empty.
- * Two kinds since decision 0009: a match and a hold.
+ * Two kinds since decision 0009, a match and a hold; issue #187 adds the two
+ * the replay log needs, a return (the hold's tile going back to the board)
+ * and a shuffle (faces only — it moves nothing, so the walk skips it).
  *
  * This is the check that makes the record safe to *play*, not just to load.
  * Reopening a save only replays the state, so an incoherent stack loads fine
@@ -291,9 +306,15 @@ function checkUndoChain(
         if (slot >= slots.length || slots[slot] !== null) return false;
         slots[slot] = id;
       }
-    } else {
+    } else if (move.kind === 'hold') {
       if (move.slotIndex >= slots.length || slots[move.slotIndex] !== move.tile) return false;
       slots[move.slotIndex] = null;
+    } else if (move.kind === 'return') {
+      // Before the return the tile sat in that slot; walking back puts it
+      // there — so the slot must be empty now and the tile still in play.
+      if (move.slotIndex >= slots.length || slots[move.slotIndex] !== null) return false;
+      if (gone.has(move.tile) || slots.includes(move.tile)) return false;
+      slots[move.slotIndex] = move.tile;
     }
   }
   return gone.size === 0 && slots.every((s) => s === null);
