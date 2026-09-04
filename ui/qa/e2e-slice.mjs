@@ -1477,8 +1477,15 @@ for (const vp of VIEWPORTS) {
       lastLabel: document.querySelector('#holder .slot.last')?.getAttribute('aria-label'),
       said: document.getElementById('a11y-status').textContent,
       overlay: document.getElementById('overlay').classList.contains('visible'),
+      bannerShown: !document.getElementById('holder-warning').hidden,
+      banner: document.getElementById('holder-warning').textContent.trim(),
     }));
     check(nearlyFull.holder.vacancies === 1, 'three parks leave one slot', nearlyFull);
+    check(
+      nearlyFull.bannerShown && /one slot left/i.test(nearlyFull.banner) && /undo/i.test(nearlyFull.banner),
+      'the one-slot-left banner is up and names Undo (issue #190)',
+      nearlyFull,
+    );
     check(nearlyFull.status === 'playing', 'and the level is still on', nearlyFull);
     check(!nearlyFull.overlay, 'no dialog yet', nearlyFull);
     check(nearlyFull.lastMarked.length === 1, 'exactly one slot is marked as the last', nearlyFull);
@@ -1553,8 +1560,11 @@ for (const vp of VIEWPORTS) {
       railInert: document.getElementById('booster-rail').hasAttribute('inert'),
       focus: document.activeElement?.id,
       tilesLeft: window.__slice.game.tilesLeft,
+      bannerShown: !document.getElementById('holder-warning').hidden,
     }));
     check(lost.holder.full && lost.status === 'lost', 'the fourth park ends the level', lost);
+    check(/undo cannot/i.test(lost.text ?? ''), 'the dialog says Undo cannot rescue it (issue #190)', lost);
+    check(!lost.bannerShown, 'and the one-slot-left banner is gone', lost);
     check(/holder full/i.test(lost.title ?? ''), 'the dialog names the reason', lost);
     check(!lost.shuffleOffered, 'a full holder is final: no Shuffle', lost);
     check(!lost.undoOffered, 'and no Undo', lost);
@@ -1880,6 +1890,14 @@ for (const vp of VIEWPORTS) {
       console.log(`  note — ${vp.name}: no deadlock in ${DEADLOCK_HUNT_DEALS} naive deals; stuck-dialog check skipped`);
     } else {
       check(stuck.title === 'No moves left', 'deadlock raises the stuck dialog', stuck);
+      // Issue #190: the one-slot-left banner must not bleed through a dialog.
+      // With one vacancy this is exactly the 'stuck' transition the review
+      // caught — showStatus opens the dialog without a redraw.
+      const bannerWhileStuck = await page.evaluate(() => ({
+        vacancies: window.__slice.holder().vacancies,
+        bannerShown: !document.getElementById('holder-warning').hidden,
+      }));
+      check(!bannerWhileStuck.bannerShown, 'no one-slot-left banner under the stuck dialog', bannerWhileStuck);
       check(stuck.shuffleOffered, 'stuck dialog offers Shuffle', stuck);
       check(stuck.focus === 'overlay-shuffle', 'focus lands on the way out', stuck);
       // Issue #159: the grey-out is the resting state of a stuck board, not a
