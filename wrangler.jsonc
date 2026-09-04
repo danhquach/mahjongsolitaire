@@ -17,6 +17,12 @@
   // turning it on globally would send every request, including plain page
   // loads, through the Worker first).
   "main": "worker/index.mjs",
+  // Issue #186 — once a day, delete rate-limit rows whose window opened more
+  // than a day ago (worker/index.mjs `scheduled`). 04:17 UTC: off the hour,
+  // and outside the evening peak in every playtest time zone.
+  "triggers": {
+    "crons": ["17 4 * * *"]
+  },
   "vars": {
     // Resend's shared test sender (docs/decisions/0019): it can only deliver
     // to the Resend account's own address, so the account must be created
@@ -29,6 +35,10 @@
   // applied to it in the same pass:
   //   wrangler d1 execute lantern-tiles --remote --file worker/schema.sql
   //   wrangler d1 execute lantern-tiles --remote --file worker/schema-0002-leaderboard.sql
+  //
+  // Later migrations, each applied the same way before the deploy that reads
+  // it (the deploy job checks): schema-0003, schema-0004 (after its deploy —
+  // see the file), and schema-0005 (issue #186, the rate limiter's table).
   //
   // A later schema change gets its own numbered file and the same `--remote`
   // run; every file is `IF NOT EXISTS` throughout, so re-applying them all is a

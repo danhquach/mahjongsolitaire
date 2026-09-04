@@ -68,6 +68,8 @@ its own.
   "slow down obvious abuse," not a hard cap; a determined abuser could still
   exceed it across isolates. Revisit with Durable Objects or KV if this ever
   needs to be a real guarantee.
+  **Superseded by [0029](0029-shared-rate-limiter-in-d1.md) (issue #186):** the
+  count now lives in D1 and is checked before the body is read.
 - `FEEDBACK_TO`/`FEEDBACK_FROM` are plain `vars` in `wrangler.jsonc`, not
   secrets — neither is sensitive on its own (the QA inbox address already
   ships in the mailto fallback, and the shared Resend sender is public), so

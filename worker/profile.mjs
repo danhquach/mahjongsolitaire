@@ -35,7 +35,7 @@
 // `authenticate` is exported for the leaderboard routes (issue #70), which
 // hang off the same bearer code.
 
-import { callerKey, createRateLimitStore, isCrossSite, json, rateLimited } from './http.mjs';
+import { callerKey, isCrossSite, json, playerKey, rateLimitedShared } from './http.mjs';
 
 const MAX_BODY_BYTES = 16 * 1024;
 /** Mirrors ui/src/profile.ts NAME_MAX_LENGTH — the client clamps, the server
@@ -62,6 +62,12 @@ const MAX_COUNTER = 1e12;
  *
  * The numbers are set by how often a *player* does each thing: registering
  * and restoring happen once per device, syncing happens per win.
+ *
+ * Each number is enforced twice (issue #186): once per calling address before
+ * the code is checked, and once per player after it is — the same allowance
+ * from either side, so a player cannot exceed it by changing address and an
+ * address cannot exceed it by rotating codes. Both counts live in D1, not in
+ * one isolate's memory (decision 0029).
  */
 const RATE_LIMITS = {
   register: { max: 5, windowMs: 60 * 60 * 1000 },
@@ -69,8 +75,6 @@ const RATE_LIMITS = {
   sync: { max: 60, windowMs: 10 * 60 * 1000 },
   name: { max: 20, windowMs: 10 * 60 * 1000 },
 };
-
-const defaultRateLimitStore = createRateLimitStore();
 
 // --- recovery codes ----------------------------------------------------------
 
@@ -407,6 +411,16 @@ export async function authenticate(request, db) {
   return { row };
 }
 
+/** The post-auth half of the limiter (issue #186): the player's own bucket for
+ *  `scope`, with the same allowance as the address bucket the router already
+ *  checked. `null` when within it; the 429 to return when not. */
+async function playerLimited(db, scope, playerId, now, limit) {
+  if (await rateLimitedShared(db, playerKey(scope, playerId), now, limit)) {
+    return json(429, { error: 'rate_limited' });
+  }
+  return null;
+}
+
 async function register(request, env, deps, now) {
   const body = await readBody(request);
   if (body.error) return body.error;
@@ -471,9 +485,11 @@ async function register(request, env, deps, now) {
   });
 }
 
-async function sync(request, env, deps, now) {
+async function sync(request, env, deps, now, limit) {
   const auth = await authenticate(request, env.DB);
   if (auth.error) return auth.error;
+  const limited = await playerLimited(env.DB, 'sync', auth.row.id, now, limit);
+  if (limited) return limited;
   const body = await readBody(request);
   if (body.error) return body.error;
   const payload = body.value;
@@ -513,9 +529,11 @@ async function sync(request, env, deps, now) {
   });
 }
 
-async function rename(request, env, deps, now) {
+async function rename(request, env, deps, now, limit) {
   const auth = await authenticate(request, env.DB);
   if (auth.error) return auth.error;
+  const limited = await playerLimited(env.DB, 'name', auth.row.id, now, limit);
+  if (limited) return limited;
   const body = await readBody(request);
   if (body.error) return body.error;
   const payload = body.value;
@@ -531,23 +549,23 @@ async function rename(request, env, deps, now) {
   return json(200, { profile: { ...rowToProfile(auth.row), name } });
 }
 
-async function read(request, env) {
+async function read(request, env, deps, now, limit) {
   const auth = await authenticate(request, env.DB);
   if (auth.error) return auth.error;
+  const limited = await playerLimited(env.DB, 'read', auth.row.id, now, limit);
+  if (limited) return limited;
   return json(200, { profile: rowToProfile(auth.row) });
 }
 
 /**
  * The `/api/profile*` router. Everything reachable from the outside world
- * (the clock, randomness, the rate-limit store) arrives through `deps` so
- * tests are deterministic; the database arrives as `env.DB`, D1's binding.
+ * (the clock, randomness) arrives through `deps` so tests are deterministic;
+ * the database — rows and the rate limiter's counts alike — arrives as
+ * `env.DB`, D1's binding.
  */
 export async function handleProfile(request, env, deps = {}) {
   const now = (deps.now ?? (() => Date.now()))();
-  const resolved = {
-    randomBytes: deps.randomBytes ?? defaultRandomBytes,
-    rateLimitStore: deps.rateLimitStore ?? defaultRateLimitStore,
-  };
+  const resolved = { randomBytes: deps.randomBytes ?? defaultRandomBytes };
 
   if (isCrossSite(request)) return json(403, { error: 'cross_site' });
   if (!env.DB) return json(503, { error: 'not_configured' });
@@ -567,10 +585,12 @@ export async function handleProfile(request, env, deps = {}) {
   if (route === null) return json(404, { error: 'not_found' });
   if (!route.allowed) return json(405, { error: 'method_not_allowed' });
 
-  // Before the handler, and so before any code is checked or any row is read.
+  // The address bucket, before the handler — and so before any code is
+  // checked or any row is read. The handler checks the player bucket once it
+  // knows who the player is (issue #186).
   const limit = RATE_LIMITS[route.name];
-  if (rateLimited(callerKey(request, route.name), resolved.rateLimitStore, now, limit)) {
+  if (await rateLimitedShared(env.DB, callerKey(request, route.name), now, limit)) {
     return json(429, { error: 'rate_limited' });
   }
-  return route.handler(request, env, resolved, now);
+  return route.handler(request, env, resolved, now, limit);
 }

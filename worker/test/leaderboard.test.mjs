@@ -66,15 +66,19 @@ function request(method, path, { body, headers = {} } = {}) {
 const bearer = (code) => ({ Authorization: `Bearer ${code}` });
 
 /** A registered player, so an entry has an owner and a display name. Each
- *  registration gets its own limiter store: these are meant to be different
- *  people, and the profile route caps registrations per address. */
+ *  registration comes from its own address: these are meant to be different
+ *  people, and the profile route caps registrations per address (in the
+ *  database since issue #186, so a throwaway store no longer bypasses it). */
+let nextAddress = 0;
 async function addPlayer(env, deps, name) {
+  nextAddress += 1;
   const response = await handleProfile(
     request('POST', '/api/profile/register', {
+      headers: { 'CF-Connecting-IP': `203.0.${Math.floor(nextAddress / 256)}.${nextAddress % 256}` },
       body: { name, avatar: 'lantern', record: {} },
     }),
     env,
-    { ...deps, rateLimitStore: createRateLimitStore() },
+    deps,
   );
   const body = await response.json();
   assert.equal(response.status, 201, JSON.stringify(body));
@@ -354,16 +358,11 @@ test('a player cannot bank more than the week’s run cap', async () => {
   const alex = await addPlayer(env, deps, 'Alex');
   let last;
   for (let i = 0; i < MAX_RUNS_PER_WEEK + 5; i += 1) {
-    // A fresh limiter store per call, so the rate limiter is never what stops
-    // this. That is the whole point: the limiter is IP-keyed, best-effort and
-    // per-isolate, so a caller who evades it must still stop at the database.
-    last = await post(
-      env,
-      { ...deps, rateLimitStore: createRateLimitStore() },
-      alex,
-      { score: 100, elapsedMs: 90_000 },
-      NOW + i * 1000,
-    );
+    // A minute apart: the submit limiter (20 / 10 min) rolls over as the run
+    // goes, so the database's run cap — not the limiter — is what stops this.
+    // That is the whole point: a caller who slips the limiter must still stop
+    // at the database.
+    last = await post(env, deps, alex, { score: 100, elapsedMs: 90_000 }, NOW + i * 60_000);
   }
   assert.equal(last.status, 429);
   assert.deepEqual(last.body, { error: 'week_run_limit' });
@@ -632,6 +631,79 @@ test('submissions from one address are rate limited', async () => {
   }
   assert.equal(last.status, 429);
   assert.deepEqual(last.body, { error: 'rate_limited' });
+});
+
+test('one player submitting from two addresses is metered as one player', async () => {
+  // Issue #186: the address bucket alone lets a player exceed the allowance by
+  // changing address. The player bucket, checked after the code is verified,
+  // does not.
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  let last;
+  for (let i = 0; i < 21; i += 1) {
+    const response = await handleLeaderboard(
+      request('POST', '/api/leaderboard/weekly', {
+        headers: { ...bearer(alex.code), 'CF-Connecting-IP': i % 2 ? '198.51.100.1' : '198.51.100.2' },
+        body: { score: 100 + i, elapsedMs: 90_000 },
+      }),
+      env,
+      deps,
+    );
+    last = { status: response.status, body: await response.json() };
+  }
+  assert.equal(last.status, 429);
+  assert.deepEqual(last.body, { error: 'rate_limited' });
+});
+
+test('the submit count survives a fresh deps object — nothing is kept in memory', async () => {
+  const env = { DB: createDb() };
+  const alex = await addPlayer(env, makeDeps(), 'Alex');
+  let last;
+  for (let i = 0; i < 21; i += 1) {
+    last = await post(env, makeDeps(), alex, { score: 100 + i, elapsedMs: 90_000 });
+  }
+  assert.equal(last.status, 429);
+});
+
+test('withdrawing is metered per player', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  let last;
+  for (let i = 0; i < 11; i += 1) {
+    last = await handleLeaderboard(
+      request('DELETE', '/api/leaderboard/weekly', {
+        headers: { ...bearer(alex.code), 'CF-Connecting-IP': `198.51.100.${i}` },
+      }),
+      env,
+      deps,
+    );
+  }
+  assert.equal(last.status, 429);
+});
+
+test('an anonymous read writes nothing to the limiter table, but is still limited per isolate', async () => {
+  // Public data, no credential: the in-memory limiter stays for this one route
+  // so a board read does not cost a database write.
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  const rows = () => env.DB.raw.prepare('SELECT COUNT(*) AS n FROM rate_limits').get().n;
+  const before = rows();
+  for (let i = 0; i < 5; i += 1) assert.equal((await board(env, deps, null)).status, 200);
+  assert.equal(rows(), before);
+  // A signed read writes exactly its two buckets — address and player, both
+  // in the signed scope — and not the public one as well.
+  assert.equal((await board(env, deps, alex)).status, 200);
+  assert.equal(rows(), before + 2);
+  const keys = env.DB.raw.prepare("SELECT key FROM rate_limits WHERE key LIKE 'lb-read%' ORDER BY key").all();
+  assert.deepEqual(
+    keys.map((r) => r.key),
+    ['lb-read-signed:ip:unknown', `lb-read-signed:player:${alex.playerId}`],
+  );
+  for (let i = 0; i < 55; i += 1) await board(env, deps, null);
+  assert.equal((await board(env, deps, null)).status, 429);
 });
 
 test('the routes work through the Worker entry point, which injects nothing', async () => {

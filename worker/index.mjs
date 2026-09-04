@@ -12,7 +12,8 @@
 // This file is the Worker's entry point and its router. `POST /api/feedback`
 // is handled below; `/api/profile*` (issue #138) lives in profile.mjs,
 // `/api/leaderboard*` (issue #70) in leaderboard.mjs, and the shared
-// JSON/cross-site/rate-limit helpers in http.mjs.
+// JSON/cross-site/rate-limit helpers in http.mjs. Rate limits count in D1
+// since issue #186 (decision 0029); `scheduled` below sweeps their table.
 //
 // The feedback route forwards to Resend
 // (https://resend.com) so the shipped bundle never carries an email API key —
@@ -27,7 +28,7 @@
 // CPU-time reasoning). The caps below are the server-side backstop for the
 // ones the client enforces in ui/src/feedback-form.ts — keep them in step.
 
-import { callerKey, createRateLimitStore, isCrossSite, json, rateLimited } from './http.mjs';
+import { callerKey, isCrossSite, json, rateLimitedShared } from './http.mjs';
 import { handleLeaderboard } from './leaderboard.mjs';
 import { authenticate, handleProfile } from './profile.mjs';
 
@@ -54,8 +55,6 @@ const PROVIDER_TIMEOUT_MS = 5000;
 const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const CONTEXT_FIELD_MAX = 300;
-
-const defaultRateLimitStore = createRateLimitStore();
 
 function isNonEmptyString(value, maxLen) {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= maxLen;
@@ -155,18 +154,36 @@ function feedbackText({ summary, body, context, attachments }) {
 
 /**
  * Pure-ish request handler: everything reachable from the outside world
- * (fetch, the clock, the rate-limit store) comes in through `deps` so tests
- * never touch the network or real time.
+ * (fetch, the clock) comes in through `deps` so tests never touch the network
+ * or real time. The database — which holds the rate limiter's counts (issue
+ * #186) — arrives as `env.DB`, D1's binding, exactly as for the profile.
  */
 export async function handleFeedback(request, env, deps = {}) {
   const fetchImpl = deps.fetch ?? fetch;
   const now = deps.now ?? (() => Date.now());
-  const rateLimitStore = deps.rateLimitStore ?? defaultRateLimitStore;
 
   const url = new URL(request.url);
   if (url.pathname !== '/api/feedback') return json(404, { error: 'not_found' });
   if (request.method !== 'POST') return json(405, { error: 'method_not_allowed' });
   if (isCrossSite(request)) return json(403, { error: 'cross_site' });
+  // Without the database there is no limiter, and an unmetered 36 MB
+  // unauthenticated write is not something to run "for now" — so the route
+  // fails closed, like the profile does. The client falls back to mailto.
+  if (!env.DB) return json(503, { error: 'not_configured' });
+
+  // Before the body is read (issue #186). This is the most expensive
+  // unauthenticated write surface, and the point of a limit on it is to not
+  // pay for the over-limit bodies — parsing 36 MB to then say 429 would pay
+  // for them. A malformed request therefore spends allowance too; a real
+  // client does not send those.
+  if (
+    await rateLimitedShared(env.DB, callerKey(request, 'feedback'), now(), {
+      max: RATE_LIMIT_MAX,
+      windowMs: RATE_LIMIT_WINDOW_MS,
+    })
+  ) {
+    return json(429, { error: 'rate_limited' });
+  }
 
   const contentLength = request.headers.get('Content-Length');
   if (contentLength !== null && Number(contentLength) > MAX_BODY_BYTES_WITH_ATTACHMENTS) {
@@ -195,15 +212,6 @@ export async function handleFeedback(request, env, deps = {}) {
   // above exists only for bodies that actually carry attachments.
   if (payload.attachments.length === 0 && rawLength > MAX_BODY_BYTES) {
     return json(413, { error: 'payload_too_large' });
-  }
-
-  if (
-    rateLimited(callerKey(request, 'feedback'), rateLimitStore, now(), {
-      max: RATE_LIMIT_MAX,
-      windowMs: RATE_LIMIT_WINDOW_MS,
-    })
-  ) {
-    return json(429, { error: 'rate_limited' });
   }
 
   const apiKey = env.RESEND_API_KEY;
@@ -276,6 +284,24 @@ export async function handleRequest(request, env) {
   }
 }
 
+/** Longer than any limiter window (the longest is register's hour), so a row
+ *  this old cannot still be counting. */
+const RATE_LIMIT_ROW_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Issue #186: `rate_limits` rows are reused per key, so the table is bounded
+ * by the number of distinct callers — but a caller seen once leaves a row
+ * behind forever. This runs from the cron trigger in wrangler.jsonc, once a
+ * day, and deletes rows whose window opened more than a day ago. Exported so
+ * the test can run it against the SQLite fake.
+ */
+export async function sweepRateLimits(db, now) {
+  await db.prepare('DELETE FROM rate_limits WHERE window_start < ?').bind(now - RATE_LIMIT_ROW_TTL_MS).run();
+}
+
 export default {
   fetch: (request, env) => handleRequest(request, env),
+  // Only ever runs when wrangler.jsonc has a cron, and only with the database
+  // bound; without `DB` there is nothing to sweep.
+  scheduled: (controller, env) => (env.DB ? sweepRateLimits(env.DB, Date.now()) : undefined),
 };

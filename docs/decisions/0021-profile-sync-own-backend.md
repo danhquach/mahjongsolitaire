@@ -55,6 +55,9 @@ would be no limit on the thing worth limiting: a wrong code never reaches a
 post-auth check, so an unauthenticated caller could spend unbounded SHA-256
 work and indexed row reads for free. 120 bits is not guessable either way —
 this is about the meter, not the lock.
+Since [0029](0029-shared-rate-limiter-in-d1.md) (issue #186) the count lives in
+D1 rather than in one isolate's memory, and the same allowance is checked again
+after authentication, keyed by player.
 
 **A separate public id.** `playerId` (10 symbols) is what a leaderboard will
 show beside the name — `Alex #7K3MQ2R9WD`. It is random rather than

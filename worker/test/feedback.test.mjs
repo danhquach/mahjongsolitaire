@@ -1,14 +1,19 @@
 // Feedback endpoint tests (issue #118). Node 22's global Request/Response/fetch
-// stand in for the Workers runtime; the handler takes its own `fetch`/`now`/
-// rate-limit store as injectable deps so nothing here touches the network or
-// a shared clock.
+// stand in for the Workers runtime; the handler takes its own `fetch`/`now` as
+// injectable deps so nothing here touches the network or a shared clock, and
+// the rate limiter's counts live in the SQLite-backed D1 fake (issue #186).
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { handleFeedback } from '../index.mjs';
+import { handleFeedback, sweepRateLimits } from '../index.mjs';
+import { createDb } from './d1.mjs';
 
 const VALID_CONTEXT = { version: 'v0.1.0+ab12cd3', level: 'Level 12', ua: 'test-agent', date: '2026-09-02T00:00:00.000Z' };
-const VALID_ENV = { RESEND_API_KEY: 'test-key', FEEDBACK_TO: 'qa@example.com', FEEDBACK_FROM: 'Lantern Tiles <onboarding@resend.dev>' };
+/** A fresh database per call: the limiter lives in it (issue #186), and one
+ *  shared database would let one call's post spend the next one's allowance. */
+function validEnv() {
+  return { RESEND_API_KEY: 'test-key', FEEDBACK_TO: 'qa@example.com', FEEDBACK_FROM: 'Lantern Tiles <onboarding@resend.dev>', DB: createDb() };
+}
 
 function req(body, init = {}) {
   return new Request('https://lantern-tiles.example.workers.dev/api/feedback', {
@@ -25,38 +30,37 @@ function okFetch() {
 
 test('method not allowed', async () => {
   const request = new Request('https://x.example/api/feedback', { method: 'GET' });
-  const res = await handleFeedback(request, VALID_ENV, { rateLimitStore: new Map() });
+  const res = await handleFeedback(request, validEnv(), {});
   assert.equal(res.status, 405);
 });
 
 test('bad JSON body', async () => {
   const request = req('not json');
-  const res = await handleFeedback(request, VALID_ENV, { rateLimitStore: new Map() });
+  const res = await handleFeedback(request, validEnv(), {});
   assert.equal(res.status, 400);
 });
 
 test('over-length summary is rejected', async () => {
   const request = req({ summary: 'x'.repeat(101), body: 'hello', context: VALID_CONTEXT });
-  const res = await handleFeedback(request, VALID_ENV, { rateLimitStore: new Map() });
+  const res = await handleFeedback(request, validEnv(), {});
   assert.equal(res.status, 400);
 });
 
 test('over-length body is rejected', async () => {
   const request = req({ summary: 'hi', body: 'x'.repeat(2001), context: VALID_CONTEXT });
-  const res = await handleFeedback(request, VALID_ENV, { rateLimitStore: new Map() });
+  const res = await handleFeedback(request, validEnv(), {});
   assert.equal(res.status, 400);
 });
 
 test('missing key -> 503', async () => {
   const request = req({ summary: 'hi', body: 'hello', context: VALID_CONTEXT });
-  const res = await handleFeedback(request, { ...VALID_ENV, RESEND_API_KEY: undefined }, { rateLimitStore: new Map() });
+  const res = await handleFeedback(request, { ...validEnv(), RESEND_API_KEY: undefined }, {});
   assert.equal(res.status, 503);
 });
 
 test('provider failure -> 502', async () => {
   const request = req({ summary: 'hi', body: 'hello', context: VALID_CONTEXT });
-  const res = await handleFeedback(request, VALID_ENV, {
-    rateLimitStore: new Map(),
+  const res = await handleFeedback(request, validEnv(), {
     fetch: async () => new Response('nope', { status: 500 }),
   });
   assert.equal(res.status, 502);
@@ -65,8 +69,8 @@ test('provider failure -> 502', async () => {
 test('success -> 202 with exact subject and a text body containing summary/body/context lines', async () => {
   let captured;
   const request = req({ summary: 'Tiles overlap', body: 'The bamboo tile clips the dot tile.', context: VALID_CONTEXT });
-  const res = await handleFeedback(request, VALID_ENV, {
-    rateLimitStore: new Map(),
+  const env = validEnv();
+  const res = await handleFeedback(request, env, {
     fetch: async (url, init) => {
       captured = { url, init };
       return new Response('{}', { status: 200 });
@@ -82,24 +86,81 @@ test('success -> 202 with exact subject and a text body containing summary/body/
   assert.match(sent.text, /Level 12/);
   assert.match(sent.text, /test-agent/);
   assert.match(sent.text, /2026-09-02T00:00:00\.000Z/);
-  assert.equal(sent.to, VALID_ENV.FEEDBACK_TO);
-  assert.equal(sent.from, VALID_ENV.FEEDBACK_FROM);
-  assert.equal(captured.init.headers.Authorization, `Bearer ${VALID_ENV.RESEND_API_KEY}`);
+  assert.equal(sent.to, env.FEEDBACK_TO);
+  assert.equal(sent.from, env.FEEDBACK_FROM);
+  assert.equal(captured.init.headers.Authorization, `Bearer ${env.RESEND_API_KEY}`);
 });
 
-test('rate limit: 6th call in the window is 429', async () => {
-  const store = new Map();
-  const deps = { rateLimitStore: store, fetch: okFetch(), now: () => 1_000 };
+test('rate limit: 6th call in the window is 429, with nothing shared in memory between calls', async () => {
+  // A fresh deps object per call: the count has to live in the database, or
+  // a recycled isolate (issue #186) would start every caller at zero.
+  const env = validEnv();
   const headers = { 'CF-Connecting-IP': '203.0.113.9' };
   let last;
   for (let i = 0; i < 6; i++) {
     last = await handleFeedback(
       req({ summary: 'hi', body: 'hello', context: VALID_CONTEXT }, { headers }),
-      VALID_ENV,
-      deps,
+      env,
+      { fetch: okFetch(), now: () => 1_000 },
     );
   }
   assert.equal(last.status, 429);
+  assert.deepEqual(await last.json(), { error: 'rate_limited' });
+});
+
+test('rate limit: the over-limit request is refused before its body is read', async () => {
+  // Feedback is the most expensive unauthenticated write (up to 36 MB). The
+  // sixth caller's body must not be parsed to find out it is refused.
+  const env = validEnv();
+  const headers = { 'CF-Connecting-IP': '203.0.113.9' };
+  const deps = { fetch: okFetch(), now: () => 1_000 };
+  for (let i = 0; i < 5; i++) {
+    await handleFeedback(req({ summary: 'hi', body: 'hello', context: VALID_CONTEXT }, { headers }), env, deps);
+  }
+  const res = await handleFeedback(req('{ not json', { headers }), env, deps);
+  assert.equal(res.status, 429, 'a 400 here would mean the body was parsed first');
+});
+
+test('rate limit: two addresses have independent allowances', async () => {
+  const env = validEnv();
+  const deps = { fetch: okFetch(), now: () => 1_000 };
+  for (let i = 0; i < 5; i++) {
+    await handleFeedback(
+      req({ summary: 'hi', body: 'hello', context: VALID_CONTEXT }, { headers: { 'CF-Connecting-IP': '203.0.113.9' } }),
+      env,
+      deps,
+    );
+  }
+  const other = await handleFeedback(
+    req({ summary: 'hi', body: 'hello', context: VALID_CONTEXT }, { headers: { 'CF-Connecting-IP': '203.0.113.10' } }),
+    env,
+    deps,
+  );
+  assert.equal(other.status, 202);
+});
+
+test('no database -> 503 not_configured: the limiter fails closed', async () => {
+  const { DB, ...env } = validEnv();
+  void DB;
+  const res = await handleFeedback(
+    req({ summary: 'hi', body: 'hello', context: VALID_CONTEXT }),
+    env,
+    { fetch: okFetch() },
+  );
+  assert.equal(res.status, 503);
+  assert.deepEqual(await res.json(), { error: 'not_configured' });
+});
+
+test('the daily sweep drops rows whose window opened more than a day ago, and nothing else', async () => {
+  const { DB } = validEnv();
+  const day = 24 * 60 * 60 * 1000;
+  const now = 10 * day;
+  DB.raw
+    .prepare('INSERT INTO rate_limits (key, window_start, count) VALUES (?, ?, 1), (?, ?, 1), (?, ?, 1)')
+    .run('old', now - day - 1, 'edge', now - day, 'live', now - 60_000);
+  await sweepRateLimits(DB, now);
+  const keys = DB.raw.prepare('SELECT key FROM rate_limits ORDER BY key').all().map((r) => r.key);
+  assert.deepEqual(keys, ['edge', 'live']);
 });
 
 test('cross-site request -> 403', async () => {
@@ -107,7 +168,7 @@ test('cross-site request -> 403', async () => {
     { summary: 'hi', body: 'hello', context: VALID_CONTEXT },
     { headers: { 'Sec-Fetch-Site': 'cross-site' } },
   );
-  const res = await handleFeedback(request, VALID_ENV, { rateLimitStore: new Map() });
+  const res = await handleFeedback(request, validEnv(), {});
   assert.equal(res.status, 403);
 });
 
@@ -119,8 +180,8 @@ test('no Origin and no Sec-Fetch-Site (a non-browser or same-origin client) is a
   };
   const res = await handleFeedback(
     req({ summary: 'hi', body: 'there', context: VALID_CONTEXT }),
-    VALID_ENV,
-    { fetch: fetchImpl, rateLimitStore: new Map() },
+    validEnv(),
+    { fetch: fetchImpl },
   );
   assert.equal(res.status, 202);
   assert.equal(seen.length, 1);
@@ -143,7 +204,7 @@ test('an oversized body with no Content-Length is still rejected with 413', asyn
     duplex: 'half',
   });
   assert.equal(request.headers.get('Content-Length'), null);
-  const res = await handleFeedback(request, VALID_ENV, { fetch: okFetch(), rateLimitStore: new Map() });
+  const res = await handleFeedback(request, validEnv(), { fetch: okFetch() });
   assert.equal(res.status, 413);
 });
 
@@ -155,8 +216,8 @@ test('line breaks in the summary never reach the subject line', async () => {
   };
   const res = await handleFeedback(
     req({ summary: 'line one\r\nBcc: x', body: 'b', context: VALID_CONTEXT }),
-    VALID_ENV,
-    { fetch: fetchImpl, rateLimitStore: new Map() },
+    validEnv(),
+    { fetch: fetchImpl },
   );
   assert.equal(res.status, 202);
   assert.equal(sent.subject, '[Lantern Tiles feedback] line one Bcc: x');
@@ -181,8 +242,7 @@ function reqWithAttachments(attachments, init) {
 
 async function sendAndCapture(request) {
   let sent;
-  const res = await handleFeedback(request, VALID_ENV, {
-    rateLimitStore: new Map(),
+  const res = await handleFeedback(request, validEnv(), {
     fetch: async (_url, init) => {
       sent = JSON.parse(init.body);
       return new Response('{}', { status: 200 });
@@ -215,13 +275,13 @@ test('an empty attachments array is fine and sends nothing extra', async () => {
 });
 
 test('a fourth attachment is rejected as an invalid payload', async () => {
-  const res = await handleFeedback(reqWithAttachments([PNG, PNG, PNG, PNG]), VALID_ENV, { rateLimitStore: new Map() });
+  const res = await handleFeedback(reqWithAttachments([PNG, PNG, PNG, PNG]), validEnv(), {});
   assert.equal(res.status, 400);
 });
 
 test('an attachment type outside the allow-list (HEIC, text, svg) is rejected', async () => {
   for (const type of ['image/heic', 'text/plain', 'image/svg+xml', 'application/octet-stream', undefined]) {
-    const res = await handleFeedback(reqWithAttachments([{ ...PNG, type }]), VALID_ENV, { rateLimitStore: new Map() });
+    const res = await handleFeedback(reqWithAttachments([{ ...PNG, type }]), validEnv(), {});
     assert.equal(res.status, 400, `type ${type}`);
   }
 });
@@ -237,7 +297,7 @@ test('malformed attachment entries are rejected', async () => {
     'not-an-array',
   ];
   for (const attachments of bad) {
-    const res = await handleFeedback(reqWithAttachments(attachments), VALID_ENV, { rateLimitStore: new Map() });
+    const res = await handleFeedback(reqWithAttachments(attachments), validEnv(), {});
     assert.equal(res.status, 400, JSON.stringify(attachments).slice(0, 60));
   }
 });
@@ -245,15 +305,15 @@ test('malformed attachment entries are rejected', async () => {
 test('an image over 10 MB is 413 attachment_too_large; one at exactly 10 MB is accepted', async () => {
   const over = await handleFeedback(
     reqWithAttachments([{ ...PNG, content: base64OfSize(10 * 1024 * 1024 + 1) }]),
-    VALID_ENV,
-    { rateLimitStore: new Map(), fetch: okFetch() },
+    validEnv(),
+    { fetch: okFetch() },
   );
   assert.equal(over.status, 413);
   assert.deepEqual(await over.json(), { error: 'attachment_too_large' });
   const exact = await handleFeedback(
     reqWithAttachments([{ ...PNG, content: base64OfSize(10 * 1024 * 1024) }]),
-    VALID_ENV,
-    { rateLimitStore: new Map(), fetch: okFetch() },
+    validEnv(),
+    { fetch: okFetch() },
   );
   assert.equal(exact.status, 202);
 });
@@ -261,22 +321,21 @@ test('an image over 10 MB is 413 attachment_too_large; one at exactly 10 MB is a
 test('a video over 25 MB is 413; one at 25 MB (over the image cap) is accepted because it is video', async () => {
   const over = await handleFeedback(
     reqWithAttachments([{ ...MP4, content: base64OfSize(25 * 1024 * 1024 + 3) }]),
-    VALID_ENV,
-    { rateLimitStore: new Map(), fetch: okFetch() },
+    validEnv(),
+    { fetch: okFetch() },
   );
   assert.equal(over.status, 413);
   const exact = await handleFeedback(
     reqWithAttachments([{ ...MP4, content: base64OfSize(25 * 1024 * 1024) }]),
-    VALID_ENV,
-    { rateLimitStore: new Map(), fetch: okFetch() },
+    validEnv(),
+    { fetch: okFetch() },
   );
   assert.equal(exact.status, 202);
 });
 
 test('three images that individually fit but total over 25 MB are 413', async () => {
   const nine = { ...PNG, content: base64OfSize(9 * 1024 * 1024) };
-  const res = await handleFeedback(reqWithAttachments([nine, nine, nine]), VALID_ENV, {
-    rateLimitStore: new Map(),
+  const res = await handleFeedback(reqWithAttachments([nine, nine, nine]), validEnv(), {
     fetch: okFetch(),
   });
   assert.equal(res.status, 413);
@@ -288,15 +347,15 @@ test('a body over 36 MB is 413 before parsing, via Content-Length', async () => 
     headers: { 'content-type': 'application/json', 'Content-Length': String(37 * 1024 * 1024) },
     body: '{}',
   });
-  const res = await handleFeedback(request, VALID_ENV, { rateLimitStore: new Map() });
+  const res = await handleFeedback(request, validEnv(), {});
   assert.equal(res.status, 413);
 });
 
 test('a text-only body over 8 KB is still 413 even though the attachment allowance is larger', async () => {
   const res = await handleFeedback(
     req({ summary: 'x', body: 'y', context: VALID_CONTEXT, attachments: [], pad: 'p'.repeat(9000) }),
-    VALID_ENV,
-    { rateLimitStore: new Map(), fetch: okFetch() },
+    validEnv(),
+    { fetch: okFetch() },
   );
   assert.equal(res.status, 413);
 });
@@ -304,8 +363,8 @@ test('a text-only body over 8 KB is still 413 even though the attachment allowan
 test('a body over 8 KB that carries an attachment is accepted', async () => {
   const res = await handleFeedback(
     reqWithAttachments([{ ...PNG, content: base64OfSize(12 * 1024) }]),
-    VALID_ENV,
-    { rateLimitStore: new Map(), fetch: okFetch() },
+    validEnv(),
+    { fetch: okFetch() },
   );
   assert.equal(res.status, 202);
 });
