@@ -9,7 +9,6 @@ import test from 'node:test';
 /** The Sunday opening the week these fixtures score into. */
 const WEEK = '2026-08-30';
 
-import { createRateLimitStore } from '../http.mjs';
 import { createDb } from './d1.mjs';
 import {
   EMPTY_RECORD,
@@ -36,7 +35,6 @@ function makeDeps(overrides = {}) {
   return {
     now: () => 1_700_000_000_000,
     randomBytes: seededRandomBytes(),
-    rateLimitStore: createRateLimitStore(),
     ...overrides,
   };
 }
@@ -468,12 +466,11 @@ test('each route has its own bucket — reading does not spend the sync allowanc
 });
 
 test("a short-window route's traffic cannot expire the hour-long register window", async () => {
-  // One store serves both; evicting entries against the *calling* route's
-  // window would hand back the register allowance after ten minutes.
+  // Every key has its own row and its own window (issue #186); a route with a
+  // short window running in between must not hand back the register allowance.
   const env = { DB: createDb() };
-  const store = createRateLimitStore();
   let clock = 1_700_000_000_000;
-  const deps = makeDeps({ rateLimitStore: store, now: () => clock });
+  const deps = makeDeps({ now: () => clock });
   let last;
   for (let i = 0; i < 6; i += 1) last = await registerPlayer(env, deps);
   assert.equal(last.response.status, 429);
@@ -499,4 +496,87 @@ test('registrations from one address are rate limited', async () => {
   assert.deepEqual(last.json, { error: 'rate_limited' });
   // The sixth attempt wrote nothing.
   assert.equal(env.DB.raw.prepare('SELECT COUNT(*) AS n FROM players').get().n, 5);
+});
+
+function from(ip) {
+  return { 'CF-Connecting-IP': ip };
+}
+
+test('one player syncing from two addresses is metered as one player', async () => {
+  // Issue #186: the address bucket alone lets a player exceed the allowance by
+  // changing address. The player bucket, checked after the code is verified,
+  // does not.
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const { json: created } = await registerPlayer(env, deps);
+  let last;
+  for (let i = 0; i < 61; i += 1) {
+    last = await handleProfile(
+      request('POST', '/api/profile/sync', {
+        headers: { ...bearer(created.code), ...from(i % 2 ? '203.0.113.1' : '203.0.113.2') },
+        body: { record: EMPTY_RECORD },
+      }),
+      env,
+      deps,
+    );
+  }
+  assert.equal(last.status, 429);
+  assert.deepEqual(await last.json(), { error: 'rate_limited' });
+});
+
+test('two players behind one address share the address bucket', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const a = await registerPlayer(env, deps);
+  const b = await registerPlayer(env, deps, { name: 'Bea' });
+  const sync = (code) =>
+    handleProfile(
+      request('POST', '/api/profile/sync', { headers: bearer(code), body: { record: EMPTY_RECORD } }),
+      env,
+      deps,
+    );
+  for (let i = 0; i < 30; i += 1) await sync(a.json.code);
+  for (let i = 0; i < 30; i += 1) await sync(b.json.code);
+  assert.equal((await sync(a.json.code)).status, 429);
+  // From another address, neither player has spent their own allowance.
+  const elsewhere = await handleProfile(
+    request('POST', '/api/profile/sync', {
+      headers: { ...bearer(a.json.code), ...from('198.51.100.7') },
+      body: { record: EMPTY_RECORD },
+    }),
+    env,
+    deps,
+  );
+  assert.equal(elsewhere.status, 200);
+});
+
+test('registrations from two addresses are independent', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  for (let i = 0; i < 5; i += 1) {
+    await handleProfile(
+      request('POST', '/api/profile/register', {
+        headers: from('203.0.113.1'),
+        body: { name: 'Alex', avatar: 'lantern', record: EMPTY_RECORD },
+      }),
+      env,
+      deps,
+    );
+  }
+  const other = await handleProfile(
+    request('POST', '/api/profile/register', {
+      headers: from('203.0.113.2'),
+      body: { name: 'Alex', avatar: 'lantern', record: EMPTY_RECORD },
+    }),
+    env,
+    deps,
+  );
+  assert.equal(other.status, 201);
+});
+
+test('the count survives a fresh deps object — nothing is kept in memory', async () => {
+  const env = { DB: createDb() };
+  let last;
+  for (let i = 0; i < 6; i += 1) last = await registerPlayer(env, makeDeps());
+  assert.equal(last.response.status, 429);
 });

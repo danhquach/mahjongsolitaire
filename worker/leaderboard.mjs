@@ -38,7 +38,15 @@
 // not be treated as evidence of anything. Accumulation makes that bound matter
 // more, not less: it applies to each score added, never to the total.
 
-import { callerKey, createRateLimitStore, isCrossSite, json, rateLimited } from './http.mjs';
+import {
+  callerKey,
+  createRateLimitStore,
+  isCrossSite,
+  json,
+  playerKey,
+  rateLimited,
+  rateLimitedShared,
+} from './http.mjs';
 
 /**
  * The most a single run can pay. A flawless 144-tile board is 72 pairs on the
@@ -119,10 +127,22 @@ const RATE_LIMITS = {
   withdraw: { max: 10, windowMs: 10 * 60 * 1000 },
 };
 
-/** Falls back to a per-isolate store, exactly like the profile routes: the
- *  entry point injects nothing, and a limiter that is only wired up in tests
- *  is not a limiter. */
+/** For the anonymous board read only (issue #186): public data, no credential,
+ *  and a database write per read would double the cost of the cheapest route.
+ *  Every other route is metered in D1 by `rateLimitedShared`. Falls back to a
+ *  per-isolate store, exactly like before: the entry point injects nothing,
+ *  and a limiter that is only wired up in tests is not a limiter. */
 const defaultRateLimitStore = createRateLimitStore();
+
+/** The post-auth half of the limiter (issue #186): the player's own bucket for
+ *  `scope`, with the same allowance as the address bucket the router already
+ *  checked. `null` when within it; the 429 to return when not. */
+async function playerLimited(db, scope, playerId, now, limit) {
+  if (await rateLimitedShared(db, playerKey(scope, playerId), now, limit)) {
+    return json(429, { error: 'rate_limited' });
+  }
+  return null;
+}
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const WEEK_MS = 7 * DAY_MS;
@@ -334,6 +354,8 @@ async function readBody(request) {
 async function submit(request, env, deps, now) {
   const auth = await deps.authenticate(request, env.DB);
   if (auth.error) return auth.error;
+  const limited = await playerLimited(env.DB, 'lb-submit', auth.row.id, now, RATE_LIMITS.submit);
+  if (limited) return limited;
   const body = await readBody(request);
   if (body.error) return body.error;
 
@@ -403,19 +425,24 @@ async function read(request, env, deps, now) {
   if (request.headers.get('Authorization') === null) {
     return json(200, await boardFor(env.DB, week, null, now));
   }
-  if (
-    rateLimited(callerKey(request, 'lb-read-signed'), deps.rateLimitStore, now, RATE_LIMITS['read-signed'])
-  ) {
+  const signed = RATE_LIMITS['read-signed'];
+  if (await rateLimitedShared(env.DB, callerKey(request, 'lb-read-signed'), now, signed)) {
     return json(429, { error: 'rate_limited' });
   }
   const auth = await deps.authenticate(request, env.DB);
+  if (!auth.error) {
+    const limited = await playerLimited(env.DB, 'lb-read-signed', auth.row.id, now, signed);
+    if (limited) return limited;
+  }
   const playerId = auth.error ? null : auth.row.id;
   return json(200, await boardFor(env.DB, week, playerId, now));
 }
 
-async function withdraw(request, env, deps) {
+async function withdraw(request, env, deps, now) {
   const auth = await deps.authenticate(request, env.DB);
   if (auth.error) return auth.error;
+  const limited = await playerLimited(env.DB, 'lb-withdraw', auth.row.id, now, RATE_LIMITS.withdraw);
+  if (limited) return limited;
   // Every week and every run, not just the live one: this is the "take me off
   // the leaderboard" path, and leaving the submissions behind would keep a
   // record of exactly what the player asked to have removed.
@@ -456,15 +483,23 @@ export async function handleLeaderboard(request, env, deps) {
           : null;
   if (route === null) return json(405, { error: 'method_not_allowed' });
 
-  // Before the handler, so a caller with no valid code is metered too.
-  if (
-    rateLimited(
-      callerKey(request, `lb-${route.name}`),
-      resolved.rateLimitStore,
-      now,
-      RATE_LIMITS[route.name],
-    )
-  ) {
+  // Before the handler, so a caller with no valid code is metered too. The
+  // anonymous read is the one route still on the in-memory limiter (see
+  // `defaultRateLimitStore`); a signed read is metered by `read` itself,
+  // against the tighter signed bucket, so it is not counted here as well —
+  // that would be a D1 write per read that nothing ever refuses on. Every
+  // other route counts in D1, and its handler adds the player's own bucket
+  // once the code has been checked (issue #186).
+  const limit = RATE_LIMITS[route.name];
+  const key = callerKey(request, `lb-${route.name}`);
+  if (route.name === 'read') {
+    if (
+      request.headers.get('Authorization') === null &&
+      rateLimited(key, resolved.rateLimitStore, now, limit)
+    ) {
+      return json(429, { error: 'rate_limited' });
+    }
+  } else if (await rateLimitedShared(env.DB, key, now, limit)) {
     return json(429, { error: 'rate_limited' });
   }
   return route.handler(request, env, resolved, now);

@@ -30,16 +30,20 @@ export function isCrossSite(request) {
   }
 }
 
-/** Per-isolate best-effort rate limiter — not shared across isolates or
- *  deploys, which is fine for "slow down obvious abuse", not a hard cap. */
+/** Per-isolate best-effort limiter. Since issue #186 it serves exactly one
+ *  route — the anonymous weekly-board GET — where the data is public, no
+ *  credential is checked, and a database write per read would double the
+ *  cost of the cheapest route. Every other route uses `rateLimitedShared`.
+ *  Not shared across isolates or deploys: it slows an obvious flood, it is
+ *  not a cap. */
 export function createRateLimitStore() {
   return new Map();
 }
 
 /**
- * Best-effort fixed-window limiter keyed by caller (usually
- * `CF-Connecting-IP`). `store` and `now` are passed in so tests get a fresh,
- * deterministic clock and map.
+ * Best-effort fixed-window limiter over an in-memory `store` (see
+ * `createRateLimitStore`). `store` and `now` are passed in so tests get a
+ * fresh, deterministic clock and map.
  */
 export function rateLimited(key, store, now, { max, windowMs }) {
   // Opportunistic eviction: a long-lived isolate must not keep one entry per
@@ -62,10 +66,45 @@ export function rateLimited(key, store, now, { max, windowMs }) {
   return entry.count > max;
 }
 
-/** The address a limiter keys on, namespaced by `scope` so routes sharing one
- *  store get independent buckets. Unknown callers share one bucket per scope,
- *  which is the conservative choice: better to throttle an unidentifiable
- *  caller than to hand every one of them its own allowance. */
+/**
+ * The shared limiter (issue #186): a fixed window per key in the `rate_limits`
+ * table (schema-0005), so every isolate and colo meters the same count.
+ *
+ * One statement does the whole check. The upsert either opens a window for a
+ * new key, resets an expired one, or increments the live one, and hands back
+ * the count it settled on — so two isolates hitting the same key at the same
+ * instant cannot both read "4" and both write "5". Fixed windows keep the
+ * semantics (and the numbers) of the in-memory limiter this replaced.
+ *
+ * Throws whatever D1 throws. The routers let that reach `handleRequest`,
+ * which answers 503 (issue #185): a limiter that cannot count fails closed.
+ */
+export async function rateLimitedShared(db, key, now, { max, windowMs }) {
+  const row = await db
+    .prepare(
+      'INSERT INTO rate_limits (key, window_start, count) VALUES (?1, ?2, 1) ' +
+        'ON CONFLICT(key) DO UPDATE SET ' +
+        'count = CASE WHEN ?2 - window_start >= ?3 THEN 1 ELSE count + 1 END, ' +
+        'window_start = CASE WHEN ?2 - window_start >= ?3 THEN ?2 ELSE window_start END ' +
+        'RETURNING count',
+    )
+    .bind(key, now, windowMs)
+    .first();
+  return row.count > max;
+}
+
+/** The address a limiter keys on, namespaced by `scope` (the route) so routes
+ *  get independent buckets, and by `ip` so an address bucket can never collide
+ *  with a player bucket. Unknown callers share one bucket per scope, which is
+ *  the conservative choice: better to throttle an unidentifiable caller than
+ *  to hand every one of them its own allowance. */
 export function callerKey(request, scope) {
-  return `${scope}:${request.headers.get('CF-Connecting-IP') ?? 'unknown'}`;
+  return `${scope}:ip:${request.headers.get('CF-Connecting-IP') ?? 'unknown'}`;
+}
+
+/** The player a limiter keys on once a request has authenticated (issue
+ *  #186): the same allowance as the address bucket, so a player cannot exceed
+ *  it by changing address. */
+export function playerKey(scope, playerId) {
+  return `${scope}:player:${playerId}`;
 }

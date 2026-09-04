@@ -22,6 +22,9 @@ test('a database built from every schema file is missing nothing', () => {
   // failure this gate exists for would pass it.
   assert.ok(expectedColumns().has('weekly_scores.score'));
   assert.ok(expectedColumns().has('players.week_start'));
+  // Issue #186: the shared rate limiter's table is part of the expectation,
+  // so a deploy that reads it cannot go live before the migration.
+  assert.ok(expectedColumns().has('rate_limits.count'));
 });
 
 test('the live state of 2026-09-04 — weekly tables never created — fails the gate by name', () => {
