@@ -107,20 +107,20 @@ test('score rises with lower branching, more tiles, more layers, more forced mov
 });
 
 test('bucket thresholds: crafted metrics land in each of the four buckets', () => {
-  // Realistic 144-tile compact-layout values (issue #212 sweep): a loose
-  // butterfly-like deal, a turtle-like one, a fortress-like one, and a deal
-  // tighter than anything v1 ships.
+  // Realistic 144-tile values from the issue #213 sweep of the reworked
+  // layouts: a spider-like deal, a turtle-like one, a bridge-like one, and a
+  // deal tighter than anything v1 ships.
   const easy = metrics({
-    initialFreePairCount: 41, meanBranchingFactor: 15, layerCount: 4, tileCount: 144, forcedMoveRatio: 0.02,
+    initialFreePairCount: 15, meanBranchingFactor: 7.5, layerCount: 5, tileCount: 144, forcedMoveRatio: 0.01,
   });
   const medium = metrics({
-    initialFreePairCount: 25, meanBranchingFactor: 12.5, layerCount: 5, tileCount: 144, forcedMoveRatio: 0.03,
+    initialFreePairCount: 10, meanBranchingFactor: 6.9, layerCount: 4, tileCount: 144, forcedMoveRatio: 0.03,
   });
   const hard = metrics({
-    initialFreePairCount: 10, meanBranchingFactor: 7, layerCount: 4, tileCount: 144, forcedMoveRatio: 0.05,
+    initialFreePairCount: 4, meanBranchingFactor: 5.9, layerCount: 4, tileCount: 144, forcedMoveRatio: 0.03,
   });
   const expert = metrics({
-    initialFreePairCount: 2, meanBranchingFactor: 2, layerCount: 5, tileCount: 144, forcedMoveRatio: 0.5,
+    initialFreePairCount: 1, meanBranchingFactor: 2, layerCount: 5, tileCount: 144, forcedMoveRatio: 0.5,
   });
   assert.equal(bucketDifficulty(easy), 'easy');
   assert.equal(bucketDifficulty(medium), 'medium');
@@ -129,22 +129,24 @@ test('bucket thresholds: crafted metrics land in each of the four buckets', () =
 });
 
 test('the tight-start signal is not saturated across the shipped range (issue #212)', () => {
-  // Every shipped deal opens with 6–62 legal pairs; the score must still fall
-  // as pairs are added anywhere in that range, not only below 12.
+  // Every shipped deal opens with 1–25 legal pairs (issue #213 sweep, layout
+  // medians 4–15); the score must still fall as pairs are added anywhere in
+  // the range the layouts occupy, and clip only past the loosest median.
   const at = (initialFreePairCount: number) =>
     difficultyScore(metrics({ initialFreePairCount, tileCount: 144, layerCount: 4 }));
-  assert.ok(at(12) > at(24));
-  assert.ok(at(24) > at(36));
-  assert.ok(at(36) > at(47));
+  assert.ok(at(3) > at(6));
+  assert.ok(at(6) > at(9));
+  assert.ok(at(9) > at(12));
+  assert.ok(at(12) > at(15));
   assert.ok(at(LOOSE_START_PAIRS) === at(LOOSE_START_PAIRS + 10), 'clips only past the loosest layout');
 });
 
 test('pair density outweighs tile count: a loose 144-tile deal scores below a tight one of any size', () => {
   const loose144 = metrics({
-    initialFreePairCount: 45, meanBranchingFactor: 16, tileCount: 144, layerCount: 4,
+    initialFreePairCount: 15, meanBranchingFactor: 8, tileCount: 144, layerCount: 4,
   });
   const tight144 = metrics({
-    initialFreePairCount: 10, meanBranchingFactor: 7, tileCount: 144, layerCount: 4,
+    initialFreePairCount: 3, meanBranchingFactor: 5, tileCount: 144, layerCount: 4,
   });
   assert.ok(difficultyScore(tight144) - difficultyScore(loose144) > 0.3);
 });

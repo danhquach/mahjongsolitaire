@@ -163,12 +163,13 @@ export function replayMoves(
           break;
         }
         case 'shuffle':
-          // Reproduced, not re-validated. `shuffleBoard` runs the solver on
-          // every candidate until one is solvable, which measured at ~130 ms a
-          // shuffle — far past a Worker's budget. The record names the attempt
-          // that was accepted, so the same permutation is reached directly.
-          // Nothing about the score depends on which candidate it was: every
-          // move after it is still checked for legality on the faces it made.
+          // Reproduced, not searched for: the record names the construction
+          // attempt `shuffleBoard` completed on, so the same faces are dealt
+          // directly (issue #213 made the shuffle a reverse construction, so
+          // this is microseconds either way; before that it skipped a solver
+          // run per rejected candidate). Nothing about the score depends on
+          // which attempt it was: every move after it is still checked for
+          // legality on the faces it made.
           applyShuffle(board, move.seed, move.attempt);
           break;
       }

@@ -3,13 +3,16 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
 
 import { Board } from '../src/board.js';
 import type { Slot } from '../src/board.js';
 import { generateLevel } from '../src/generator.js';
-import { SEED_LAYOUTS } from '../src/layouts.js';
+import { SEED_LAYOUTS, parseLayout } from '../src/layouts.js';
 import { MAX_SHUFFLE_ATTEMPTS, applyShuffle, shuffleBoard } from '../src/shuffle.js';
 import { solve } from '../src/solver.js';
+
+const LAYOUT_DIR = new URL('../../../data/layouts/', import.meta.url);
 
 const slot = (x: number, y: number, z = 0): Slot => ({ x, y, z });
 
@@ -125,6 +128,42 @@ test('shuffle throws, board unchanged, when no face assignment is solvable', () 
     { id: 0, slot: slot(0, 0, 0), face: 'dots-1' },
     { id: 1, slot: slot(0, 0, 1), face: 'dots-1' },
   ]);
-  assert.throws(() => shuffleBoard(board, 9, { maxStates: 1000 }), /no solvable shuffle/);
+  assert.throws(() => shuffleBoard(board, 9), /no solvable shuffle/);
   assert.deepEqual(board.allTiles().map((t) => t.face), ['dots-1', 'dots-1']);
+});
+
+test('issue #213: every shipped layout shuffles at once, at any stage, with or without a parked tile', () => {
+  // The original shuffle drew random permutations and kept the first the
+  // solver accepted. On the dense layouts of decision 0036 a random
+  // permutation is solvable well under one time in ten (0% of 100 on most
+  // layouts before 24 pairs are played), so a shuffle exhausted its budget —
+  // about a minute of solver time — and refused. Reverse construction has to
+  // complete on the first attempt or two and stay solvable with the holder.
+  // Attempts are deterministic per (board, seed); the wall clock is checked
+  // once over all 80 cases (1–7 ms each measured) so a slow runner cannot
+  // flip a single case.
+  const started = Date.now();
+  for (const file of readdirSync(LAYOUT_DIR).filter((f) => f.endsWith('.json'))) {
+    const layout = parseLayout(JSON.parse(readFileSync(new URL(file, LAYOUT_DIR), 'utf8')));
+    for (const played of [0, 8, 24, 48]) {
+      for (const parked of [0, 1]) {
+        const level = generateLevel(layout, 104729);
+        const board = new Board(level.tiles);
+        for (const [a, b] of level.solution.slice(0, played)) {
+          board.remove(a);
+          board.remove(b);
+        }
+        if (parked) board.hold(board.freeTileIds()[0]!);
+        const label = `${layout.id}, ${played} pairs played, ${parked} parked`;
+        const attempt = shuffleBoard(board, 0xbeef);
+        assert.ok(attempt !== null && attempt < 4, `${label}: took ${attempt} attempts`);
+        assert.equal(
+          solve(board.allTiles(), { holder: board.holderSlots() }).verdict,
+          'solvable',
+          `${label}: not solvable after shuffle`,
+        );
+      }
+    }
+  }
+  assert.ok(Date.now() - started < 10_000, `80 shuffles took ${Date.now() - started} ms`);
 });

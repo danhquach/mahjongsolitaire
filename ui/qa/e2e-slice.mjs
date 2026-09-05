@@ -464,9 +464,10 @@ for (const vp of VIEWPORTS) {
   });
   // Issue #79: a fresh profile now boots ladder level 1 (butterfly). This
   // harness's geometry thresholds are calibrated on the Turtle slice, so seed
-  // the ladder position to the first turtle_classic level before the app boots.
+  // the ladder position to the first turtle_classic level before the app boots
+  // (level 21 on the ladder rebuilt for issue #213; it was 47 before).
   await ctx.addInitScript(() => {
-    localStorage.setItem('mahjong.progress.v1', JSON.stringify({ level: 47 }));
+    localStorage.setItem('mahjong.progress.v1', JSON.stringify({ level: 21 }));
     // Issue #105: a never-asked player gets the welcome gate over the board,
     // which swallows every click below. Answer it as a guest up front.
     localStorage.setItem('mahjong.profile.v1', JSON.stringify({ choice: 'guest' }));

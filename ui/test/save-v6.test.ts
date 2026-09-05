@@ -5,8 +5,9 @@
 // carrying one parses, ignoring it, so an in-flight board is not thrown away
 // on upgrade.
 //
-// The version itself is v7 since issue #176. The record's *shape* did not
-// change — these fields are all still here — but every pair is now scored at
+// The version itself has moved on (v7 with issue #176, v9 since issue #213).
+// The record's *shape* did not change with v7 — these fields are all still
+// here — but every pair became scored at
 // the level's band multiplier, so a v6 snapshot holds a score accumulated at
 // the old flat rate. Resuming one would keep those points and then pay a
 // different rate for every match after the reload: one deal scored two ways,
@@ -42,7 +43,7 @@ test('v6 carries hints and undos, and round-trips them', () => {
     undos: 3,
     elapsedMs: 4000,
   });
-  assert.equal(SAVE_VERSION, 8);
+  assert.equal(SAVE_VERSION, 9);
   assert.equal(save.hints, 2);
   assert.equal(save.undos, 3);
   const parsed = parseSave(JSON.parse(JSON.stringify(save)));

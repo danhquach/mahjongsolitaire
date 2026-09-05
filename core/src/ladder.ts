@@ -6,16 +6,17 @@
 // base levels of each decade are the relief.
 //
 // Bands are score windows over `difficultyScore`. Issue #212 rebalanced the
-// score around pair density (initial free pairs and witness-path branching);
-// the 40-seed sweep per layout on 2026-09-04 puts the ten compact portrait
-// layouts' unconstrained medians at spider 0.22, butterfly 0.26, windmill
-// 0.30, cat 0.32, turtle_classic 0.47, pyramid 0.50, terrace 0.54, moon_gate
-// 0.63, fortress 0.67, bridge 0.71. The windows below are drawn over that
-// spread; build-ladder then picks, per level, a seed inside its band window,
-// so a layout whose median sits just outside its window (turtle_classic,
-// medium) still ships only seeds that are in it.
+// score around pair density (initial free pairs and witness-path branching),
+// and issue #213 reworked the ten layouts so far fewer tiles are free at deal
+// time; the 40-seed sweep per layout on 2026-09-05, on the re-normalized score,
+// puts the layouts' unconstrained medians at spider 0.31, windmill 0.34,
+// butterfly 0.37, cat 0.38, turtle_classic 0.40, pyramid 0.43, terrace 0.49,
+// fortress 0.55, bridge 0.58, moon_gate 0.58. The windows below are drawn over
+// that spread; build-ladder then picks, per level, a seed inside its band
+// window, so a layout whose median sits just outside its window (butterfly,
+// easy; pyramid, medium-plus) still ships only seeds that are in it.
 // Medium-plus is decision 0011's "upper half of the Medium score range": the
-// medium window is [0.30, 0.60) and its midpoint 0.45 splits base medium
+// medium window is [0.36, 0.52) and its midpoint 0.44 splits base medium
 // (below) from medium-plus (at or above). Windows are disjoint and ordered, so
 // the ladder ordering criterion — a spike never scores below its decade's
 // base levels, no medium-plus level below the medium median — holds by
@@ -35,10 +36,10 @@ export type LadderBand = 'easy' | 'medium' | 'medium-plus' | 'hard';
 
 /** Score windows per band: min inclusive, max exclusive. */
 export const LADDER_WINDOWS: Record<LadderBand, { readonly min: number; readonly max: number }> = {
-  easy: { min: 0, max: 0.3 },
-  medium: { min: 0.3, max: 0.45 },
-  'medium-plus': { min: 0.45, max: 0.6 },
-  hard: { min: 0.6, max: 0.8 },
+  easy: { min: 0, max: 0.36 },
+  medium: { min: 0.36, max: 0.44 },
+  'medium-plus': { min: 0.44, max: 0.52 },
+  hard: { min: 0.52, max: 0.8 },
 };
 
 /**
@@ -48,7 +49,10 @@ export const LADDER_WINDOWS: Record<LadderBand, { readonly min: number; readonly
  * with a fresh seed; see decision 0015). Assignment follows the 40-seed
  * sweep on the pair-density score (issue #212): the loosest silhouettes serve
  * easy, the densest stacks serve the hard spikes. Spider moved from medium to
- * easy with that sweep — it deals the most initial pairs of any layout.
+ * easy with that sweep — it deals the most initial pairs of any layout. The
+ * exposure rework (issue #213) was tuned so this assignment still holds on
+ * the re-swept score: every pool's layouts stay in score order with the
+ * pools around them.
  */
 export const LADDER_POOLS: Record<LadderBand, readonly string[]> = {
   easy: ['spider', 'butterfly', 'windmill'],
