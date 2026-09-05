@@ -18,6 +18,7 @@ const SCHEMA_FILES = [
   '../schema-0003-weekly-leaderboard.sql',
   '../schema-0004-drop-daily-board.sql',
   '../schema-0005-rate-limits.sql',
+  '../schema-0006-daily-count.sql',
 ];
 
 /**

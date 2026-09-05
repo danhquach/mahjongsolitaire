@@ -276,7 +276,14 @@ export const EMPTY_RECORD = {
   dailyStreak: 0,
   lastDaily: null,
   trophies: 0,
+  dailyCount: 0,
 };
+
+// The three-a-day cap the client enforces in the record (ui/src/profile.ts,
+// issue #227) — kept as a literal, not imported: the two workspaces do not
+// share a module, and this is the same reason `daysBetween` is duplicated
+// above instead of imported from core.
+const DAILY_CHALLENGE_COUNT = 3;
 
 /**
  * A client-supplied record, sanitized field by field — the same tolerance
@@ -299,6 +306,11 @@ export function validateRecord(raw) {
   // also what keeps a pre-#176 record's lifetime total off the first board.
   const weekStart =
     typeof raw.weekStart === 'string' && DATE_KEY.test(raw.weekStart) ? raw.weekStart : null;
+  // Same clamp as the client's parsePlayerRecord (issue #227): non-negative,
+  // capped at the daily challenge count, and forced to 0 without a lastDaily
+  // to anchor it to.
+  const dailyCount =
+    lastDaily === null ? 0 : Math.min(counter(raw.dailyCount), DAILY_CHALLENGE_COUNT);
   return {
     levelsCleared: counter(raw.levelsCleared),
     weekScore: weekStart === null ? 0 : counter(raw.weekScore),
@@ -307,6 +319,7 @@ export function validateRecord(raw) {
     dailyStreak: lastDaily === null ? 0 : counter(raw.dailyStreak),
     lastDaily,
     trophies: counter(raw.trophies),
+    dailyCount,
   };
 }
 
@@ -322,14 +335,27 @@ export function validateRecord(raw) {
  * server's 30-day streak ending yesterday is the truth, continued).
  */
 export function mergeRecords(a, b) {
+  // Keep this in step with ui/src/sync.ts `mergeRecords` — both sides run it
+  // and must agree on every case.
   const streak = (() => {
-    if (a.lastDaily === null) return { dailyStreak: b.dailyStreak, lastDaily: b.lastDaily };
-    if (b.lastDaily === null) return { dailyStreak: a.dailyStreak, lastDaily: a.lastDaily };
+    if (a.lastDaily === null) {
+      return { dailyStreak: b.dailyStreak, lastDaily: b.lastDaily, dailyCount: b.dailyCount };
+    }
+    if (b.lastDaily === null) {
+      return { dailyStreak: a.dailyStreak, lastDaily: a.lastDaily, dailyCount: a.dailyCount };
+    }
     const gap = Math.abs(daysBetween(a.lastDaily, b.lastDaily));
     const later = a.lastDaily >= b.lastDaily ? a : b;
+    // dailyCount (issue #227) is anchored to lastDaily, not to the streak's
+    // gap<=1 grace window: the same date on both sides is the same day's
+    // count, so the larger is the better record of what was credited. Any
+    // other date takes the later side's count outright — maxing across
+    // different dates would carry one day's count into the next.
+    const dailyCount = a.lastDaily === b.lastDaily ? Math.max(a.dailyCount, b.dailyCount) : later.dailyCount;
     return {
       dailyStreak: gap <= 1 ? Math.max(a.dailyStreak, b.dailyStreak) : later.dailyStreak,
       lastDaily: later.lastDaily,
+      dailyCount,
     };
   })();
   // The week score is the one field here that can legitimately go *down*, so
@@ -390,6 +416,7 @@ function rowToProfile(row) {
       dailyStreak: row.daily_streak,
       lastDaily: row.last_daily,
       trophies: row.trophies,
+      dailyCount: row.daily_count,
     },
   };
 }
@@ -486,8 +513,8 @@ async function register(request, env, deps, now, limit) {
       await env.DB.prepare(
         `INSERT INTO players
            (id, code_hash, name, avatar, levels_cleared, week_score, week_start,
-            cleared, daily_streak, last_daily, trophies, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            cleared, daily_streak, last_daily, trophies, daily_count, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           candidateId,
@@ -501,6 +528,7 @@ async function register(request, env, deps, now, limit) {
           record.dailyStreak,
           record.lastDaily,
           record.trophies,
+          record.dailyCount,
           now,
           now,
         )
@@ -545,7 +573,7 @@ async function sync(request, env, deps, now, limit) {
   await env.DB.prepare(
     `UPDATE players
         SET avatar = ?, levels_cleared = ?, week_score = ?, week_start = ?,
-            cleared = ?, daily_streak = ?, last_daily = ?, trophies = ?, updated_at = ?
+            cleared = ?, daily_streak = ?, last_daily = ?, trophies = ?, daily_count = ?, updated_at = ?
       WHERE id = ?`,
   )
     .bind(
@@ -557,6 +585,7 @@ async function sync(request, env, deps, now, limit) {
       merged.dailyStreak,
       merged.lastDaily,
       merged.trophies,
+      merged.dailyCount,
       now,
       auth.row.id,
     )
@@ -615,7 +644,7 @@ async function reset(request, env, deps, now, limit) {
   await env.DB.prepare(
     `UPDATE players
         SET levels_cleared = 0, week_score = 0, week_start = NULL, cleared = '[]',
-            daily_streak = 0, last_daily = NULL, trophies = 0, updated_at = ?
+            daily_streak = 0, last_daily = NULL, trophies = 0, daily_count = 0, updated_at = ?
       WHERE id = ?`,
   )
     .bind(now, auth.row.id)

@@ -1307,10 +1307,13 @@ async function start(): Promise<void> {
       const credit = record.creditDailyChallenge(today);
       const got = charges.grantSplit(1, Math.random);
       const goal = describeChallenge(standing[slot]!.challenge);
+      // A refused credit (issue #227: the day's record cap already reached)
+      // pays no trophy — say nothing about trophies rather than "0 trophies".
+      const trophyClause = credit.credited
+        ? `${credit.trophies === 1 ? '1 trophy' : `${credit.trophies} trophies`}, `
+        : '';
       lines.push(
-        `Daily challenge complete: ${goal.toLowerCase()}. ${
-          credit.trophies === 1 ? '1 trophy' : `${credit.trophies} trophies`
-        }, ${describeGrant(got)}.`,
+        `Daily challenge complete: ${goal.toLowerCase()}. ${trophyClause}${describeGrant(got)}.`,
       );
     }
     pendingDailyPayout = [pendingDailyPayout, ...lines].filter((l) => l !== '').join(' ');

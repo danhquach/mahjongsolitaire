@@ -6,6 +6,9 @@ commit and build time of the running bundle.
 
 ## 2026-09-05
 
+- Daily challenge trophies are now capped at three a day in the record
+  itself, not only in local progress. Clearing local storage and replaying
+  the same day's challenges no longer mints extra trophies (#227).
 - The Profile and Daily panels now close when you tap the dimmed area outside
   them, the way Settings and the leaderboard already did; a tap on the card
   itself still leaves it open (#225).
