@@ -6,6 +6,9 @@ commit and build time of the running bundle.
 
 ## 2026-09-05
 
+- The Profile and Daily panels now close when you tap the dimmed area outside
+  them, the way Settings and the leaderboard already did; a tap on the card
+  itself still leaves it open (#225).
 - The leaderboard now closes when you tap the dimmed area outside it, the way
   Settings and What's new already did; a tap on the board itself still leaves
   it open (#223).

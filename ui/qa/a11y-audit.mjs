@@ -968,6 +968,55 @@ for (const vp of VIEWPORTS) {
     check(!closed.visible, 'Escape closes the panel', closed);
     check(closed.focus === 'btn-daily', 'focus returns to the chip', closed);
     check(!closed.boardInert, 'and the board is live again', closed);
+
+    // A tap on the dimmed backdrop closes it too, like every other dialog
+    // (issue #225); a click on the card itself must not.
+    await page.click('#btn-daily');
+    await page.evaluate(() => document.getElementById('daily-panel-close').parentElement.click());
+    const innerClick = await page.evaluate(() =>
+      document.getElementById('daily-panel').classList.contains('visible'),
+    );
+    check(innerClick, 'clicking inside the Daily card does not close it', { visible: innerClick });
+
+    await page.evaluate(() => document.getElementById('daily-panel').click());
+    const backdrop = await page.evaluate(() => ({
+      visible: document.getElementById('daily-panel').classList.contains('visible'),
+      focus: document.activeElement?.id,
+      boardInert: document.getElementById('a11y-layer').hasAttribute('inert'),
+    }));
+    check(!backdrop.visible, 'tapping the backdrop closes the Daily panel', backdrop);
+    check(backdrop.focus === 'btn-daily', 'focus returns to the chip', backdrop);
+    check(!backdrop.boardInert, 'and the board is live again', backdrop);
+  }
+
+  // --- 5d. Profile (issue #225): opened from the Level chip, it closes on a --
+  //         backdrop tap like every other dialog, and a click on the card
+  //         itself leaves it open.
+  {
+    await page.click('#btn-level');
+    const open = await page.evaluate(() => ({
+      visible: document.getElementById('profile').classList.contains('visible'),
+      focus: document.activeElement?.id,
+      boardInert: document.getElementById('a11y-layer').hasAttribute('inert'),
+    }));
+    check(open.visible && open.focus === 'profile-close', 'the Level chip opens the profile', open);
+    check(open.boardInert, 'the board behind it is inert while it is open', open);
+
+    await page.evaluate(() => document.getElementById('profile-close').parentElement.click());
+    const innerClick = await page.evaluate(() =>
+      document.getElementById('profile').classList.contains('visible'),
+    );
+    check(innerClick, 'clicking inside the profile card does not close it', { visible: innerClick });
+
+    await page.evaluate(() => document.getElementById('profile').click());
+    const backdrop = await page.evaluate(() => ({
+      visible: document.getElementById('profile').classList.contains('visible'),
+      focus: document.activeElement?.id,
+      boardInert: document.getElementById('a11y-layer').hasAttribute('inert'),
+    }));
+    check(!backdrop.visible, 'tapping the backdrop closes the profile', backdrop);
+    check(backdrop.focus === 'btn-level', 'focus returns to the Level chip that opened it', backdrop);
+    check(!backdrop.boardInert, 'and the board is live again', backdrop);
   }
 
   // --- 6. Settings screen is a modal, named, 48dp, and keyboard-escapable. --
