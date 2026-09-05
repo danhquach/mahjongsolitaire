@@ -9,6 +9,12 @@ projection, glyphs within a row by vertical projection, and names come from
 the fixed inventory order (dots 1-9, bamboo 1-9, char 1-9, winds, dragons,
 seasons). The cream is keyed to alpha. A contact sheet is written alongside
 for a visual check.
+
+Output files are named `<face>.png` (`dots-1.png`, `wind-east.png`, ...) so
+the directory can be the shipped set: point <out-dir> at
+`data/glyphs/<set-dir>/`, the path ui/src/glyphs.ts loads from (issue #229,
+decision 0038). The set letter only names the contact sheet. Move the
+contact sheet to docs/design/glyphs/ afterwards — it is not shipped.
 """
 import sys
 from pathlib import Path
@@ -101,7 +107,7 @@ def main(sheet, letter, out_dir):
             bx1, by1 = min(tx1 + PAD, mask.shape[1]), min(ty1 + PAD, mask.shape[0])
             tile = np.dstack([rgb[by0:by1, bx0:bx1], alpha[by0:by1, bx0:bx1] * 255]).astype(np.uint8)
             im = Image.fromarray(tile, "RGBA")
-            fname = f"{letter}-{name}.png"
+            fname = f"{name}.png"
             im.save(out / fname)
             cut.append((fname, im))
             print(f"{fname}: {im.width}x{im.height} at ({bx0},{by0})")

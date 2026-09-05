@@ -1068,14 +1068,14 @@ for (const vp of VIEWPORTS) {
       settingsControls.filter((c) => c.small),
     );
 
-    // Thirteen controls: the profile row (issue #69), six toggles (issue #45
+    // Fourteen controls: the profile row (issue #69), six toggles (issue #45
     // added Highlight free tiles, issue #44 added Reduced motion, issue #59
     // added Show tutorial; the timer toggle was retired 2026-09-01), the
-    // tile-size slider row (issue #139 replaced four radios), the Send
-    // feedback row (issue #118), the two Account rows (issue #201), the
-    // version row (issue #81), and Done. The Daily row moved to the HUD
-    // (issue #136; issue #183 made it the challenge panel).
-    check(settingsControls.length === 13, 'settings screen exposes all thirteen controls', {
+    // tile-size slider row (issue #139 replaced four radios), the Shop row
+    // (issue #229), the Send feedback row (issue #118), the two Account rows
+    // (issue #201), the version row (issue #81), and Done. The Daily row moved
+    // to the HUD (issue #136; issue #183 made it the challenge panel).
+    check(settingsControls.length === 14, 'settings screen exposes all fourteen controls', {
       count: settingsControls.length,
     });
 

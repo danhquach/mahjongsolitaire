@@ -277,6 +277,9 @@ test('merging keeps the best of both and loses nothing', () => {
     lastDaily: null,
     trophies: 7,
     dailyCount: 0,
+    owned: [],
+    looks: { glyphs: 'lantern' },
+    looksAt: null,
   });
 });
 
@@ -362,6 +365,51 @@ test('merging is symmetric, and a side with no Daily history contributes none', 
   const played = withRecord({ dailyStreak: 5, lastDaily: '2026-09-02' });
   assert.deepEqual(mergeRecords(played, EMPTY_RECORD), played);
   assert.deepEqual(mergeRecords(EMPTY_RECORD, played), played);
+});
+
+// --- cosmetics (issue #229, decision 0038) ------------------------------------
+//
+// Owned items are a union, like cleared levels. The look is last-write: the
+// later stamp takes the whole `looks` object, a null stamp loses to any stamp,
+// and equal stamps with different content take the lexicographically greater
+// JSON so the merge stays commutative.
+
+test('owned items are the union of both sides, sorted', () => {
+  const a = withRecord({ owned: ['glyphs-fantasy'] });
+  const b = withRecord({ owned: ['glyphs-calligraphy', 'glyphs-fantasy'] });
+  assert.deepEqual(mergeRecords(a, b).owned, ['glyphs-calligraphy', 'glyphs-fantasy']);
+  assert.deepEqual(mergeRecords(a, b), mergeRecords(b, a));
+});
+
+test('the later look stamp wins the whole look; a null stamp loses to any stamp', () => {
+  const older = withRecord({ looks: { glyphs: 'glyphs-calligraphy' }, looksAt: 1000 });
+  const newer = withRecord({ looks: { glyphs: 'glyphs-fantasy' }, looksAt: 2000 });
+  assert.deepEqual(mergeRecords(older, newer).looks, { glyphs: 'glyphs-fantasy' });
+  assert.equal(mergeRecords(older, newer).looksAt, 2000);
+  assert.deepEqual(mergeRecords(older, newer), mergeRecords(newer, older));
+  assert.deepEqual(mergeRecords(EMPTY_RECORD, older).looks, { glyphs: 'glyphs-calligraphy' });
+  assert.equal(mergeRecords(older, EMPTY_RECORD).looksAt, 1000);
+  assert.equal(mergeRecords(EMPTY_RECORD, EMPTY_RECORD).looksAt, null);
+});
+
+test('equal stamps with different looks resolve the same way from either side', () => {
+  const a = withRecord({ looks: { glyphs: 'glyphs-calligraphy' }, looksAt: 1000 });
+  const b = withRecord({ looks: { glyphs: 'glyphs-fantasy' }, looksAt: 1000 });
+  assert.deepEqual(mergeRecords(a, b), mergeRecords(b, a));
+  assert.equal(mergeRecords(a, b).looksAt, 1000);
+  // Both unstamped but different (a hand-edited record): still commutative.
+  const c = withRecord({ looks: { glyphs: 'glyphs-fantasy' } });
+  assert.deepEqual(mergeRecords(c, EMPTY_RECORD), mergeRecords(EMPTY_RECORD, c));
+  assert.equal(mergeRecords(c, EMPTY_RECORD).looksAt, null);
+});
+
+test('a look is never lost to a merge that only moved counters', () => {
+  const picked = withRecord({ owned: ['glyphs-fantasy'], looks: { glyphs: 'glyphs-fantasy' }, looksAt: 1000 });
+  const played = withRecord({ trophies: 9, levelsCleared: 3 });
+  const merged = mergeRecords(picked, played);
+  assert.deepEqual(merged.looks, { glyphs: 'glyphs-fantasy' });
+  assert.equal(merged.trophies, 9);
+  assert.deepEqual(merged, mergeRecords(played, picked));
 });
 
 // --- reset and close (issue #201) ---------------------------------------------

@@ -268,6 +268,11 @@ function counter(value) {
     : 0;
 }
 
+/** The free glyph set every record starts with (ui/src/profile.ts
+ *  DEFAULT_GLYPH_SET) — the one cosmetic id the server has to know, because
+ *  it is what an absent or malformed look reads as. */
+const DEFAULT_LOOKS = { glyphs: 'lantern' };
+
 export const EMPTY_RECORD = {
   levelsCleared: 0,
   weekScore: 0,
@@ -277,7 +282,39 @@ export const EMPTY_RECORD = {
   lastDaily: null,
   trophies: 0,
   dailyCount: 0,
+  owned: [],
+  looks: DEFAULT_LOOKS,
+  looksAt: null,
 };
+
+// Cosmetics (issue #229, decision 0038). Ids are opaque here — the shop's item
+// table is client code (ui/src/shop.ts), so a build that adds an item must not
+// need a Worker deploy — and the shape is the avatar's (AVATAR_ID, below).
+const COSMETIC_ID = /^[a-z][a-z0-9-]{0,31}$/;
+/** Same cap as ui/src/profile.ts `MAX_OWNED`. */
+const MAX_OWNED = 64;
+
+function isCosmeticId(value) {
+  return typeof value === 'string' && COSMETIC_ID.test(value);
+}
+
+/** Plausible ids only, deduplicated, sorted, capped — the same normalization
+ *  the client applies (ui/src/profile.ts `normalizeOwned`). */
+function normalizeOwned(raw) {
+  if (!Array.isArray(raw)) return [];
+  const ids = new Set();
+  for (const v of raw) if (isCosmeticId(v)) ids.add(v);
+  return Array.from(ids).sort().slice(0, MAX_OWNED);
+}
+
+function parseLooks(raw) {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return DEFAULT_LOOKS;
+  return { glyphs: isCosmeticId(raw.glyphs) ? raw.glyphs : DEFAULT_LOOKS.glyphs };
+}
+
+function parseLooksAt(raw) {
+  return typeof raw === 'number' && Number.isInteger(raw) && raw >= 0 ? raw : null;
+}
 
 // The three-a-day cap the client enforces in the record (ui/src/profile.ts,
 // issue #227) — kept as a literal, not imported: the two workspaces do not
@@ -320,6 +357,9 @@ export function validateRecord(raw) {
     lastDaily,
     trophies: counter(raw.trophies),
     dailyCount,
+    owned: normalizeOwned(raw.owned),
+    looks: parseLooks(raw.looks),
+    looksAt: parseLooksAt(raw.looksAt),
   };
 }
 
@@ -385,7 +425,27 @@ export function mergeRecords(a, b) {
     cleared: Array.from(new Set([...a.cleared, ...b.cleared])).sort((x, y) => x - y),
     ...streak,
     trophies: Math.max(a.trophies, b.trophies),
+    // Cosmetics (issue #229): owned is a union like cleared; the look is
+    // last-write by stamp. Nothing is deducted from trophies for a purchase
+    // — the balance is derived on the device — so the max above stays right.
+    owned: normalizeOwned([...a.owned, ...b.owned]),
+    ...mergeLooks(a, b),
   };
+}
+
+/** Keep in step with ui/src/sync.ts `mergeLooks`: the later stamp takes the
+ *  whole `looks`; null loses to any stamp; a tie with different content takes
+ *  the lexicographically greater JSON, so the result is commutative. */
+function mergeLooks(a, b) {
+  const pick = (r) => ({ looks: r.looks, looksAt: r.looksAt });
+  if (a.looksAt !== b.looksAt) {
+    if (a.looksAt === null) return pick(b);
+    if (b.looksAt === null) return pick(a);
+    return a.looksAt > b.looksAt ? pick(a) : pick(b);
+  }
+  // Equal stamps — including both null, which a hand-edited record can carry
+  // with a non-default look — fall to the content tie-break.
+  return JSON.stringify(a.looks) >= JSON.stringify(b.looks) ? pick(a) : pick(b);
 }
 
 // --- storage -----------------------------------------------------------------
@@ -417,6 +477,12 @@ function rowToProfile(row) {
       lastDaily: row.last_daily,
       trophies: row.trophies,
       dailyCount: row.daily_count,
+      // Parsed through the same tolerance as a client record: a row from
+      // before migration 0007 holds the column defaults ('[]', '{}', NULL),
+      // which read as owning nothing and looking Lantern.
+      owned: normalizeOwned(JSON.parse(row.owned ?? '[]')),
+      looks: parseLooks(JSON.parse(row.looks ?? '{}')),
+      looksAt: parseLooksAt(row.looks_at),
     },
   };
 }
@@ -513,8 +579,9 @@ async function register(request, env, deps, now, limit) {
       await env.DB.prepare(
         `INSERT INTO players
            (id, code_hash, name, avatar, levels_cleared, week_score, week_start,
-            cleared, daily_streak, last_daily, trophies, daily_count, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            cleared, daily_streak, last_daily, trophies, daily_count,
+            owned, looks, looks_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           candidateId,
@@ -529,6 +596,9 @@ async function register(request, env, deps, now, limit) {
           record.lastDaily,
           record.trophies,
           record.dailyCount,
+          JSON.stringify(record.owned),
+          JSON.stringify(record.looks),
+          record.looksAt,
           now,
           now,
         )
@@ -573,7 +643,8 @@ async function sync(request, env, deps, now, limit) {
   await env.DB.prepare(
     `UPDATE players
         SET avatar = ?, levels_cleared = ?, week_score = ?, week_start = ?,
-            cleared = ?, daily_streak = ?, last_daily = ?, trophies = ?, daily_count = ?, updated_at = ?
+            cleared = ?, daily_streak = ?, last_daily = ?, trophies = ?, daily_count = ?,
+            owned = ?, looks = ?, looks_at = ?, updated_at = ?
       WHERE id = ?`,
   )
     .bind(
@@ -586,6 +657,9 @@ async function sync(request, env, deps, now, limit) {
       merged.lastDaily,
       merged.trophies,
       merged.dailyCount,
+      JSON.stringify(merged.owned),
+      JSON.stringify(merged.looks),
+      merged.looksAt,
       now,
       auth.row.id,
     )
@@ -644,7 +718,8 @@ async function reset(request, env, deps, now, limit) {
   await env.DB.prepare(
     `UPDATE players
         SET levels_cleared = 0, week_score = 0, week_start = NULL, cleared = '[]',
-            daily_streak = 0, last_daily = NULL, trophies = 0, daily_count = 0, updated_at = ?
+            daily_streak = 0, last_daily = NULL, trophies = 0, daily_count = 0,
+            owned = '[]', looks = '{}', looks_at = NULL, updated_at = ?
       WHERE id = ?`,
   )
     .bind(now, auth.row.id)

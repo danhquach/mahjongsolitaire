@@ -7,7 +7,8 @@
 //   mahjong.record.v1    what they have done: levels cleared, best and total
 //                        score, which ladder levels are cleared, Daily
 //                        Challenge streak (+ the date it is anchored to),
-//                        trophies
+//                        trophies, and (issue #229) the cosmetics bought with
+//                        them and the ones in use
 //
 // The daily-challenge fields (issue #19, decisions 0016 and 0028) live here rather than
 // on a second record; a record written before #19 parses with them empty.
@@ -195,6 +196,41 @@ export interface PlayerRecord {
    *  `done` flags never reached the record, so clearing that store used to
    *  mint a trophy on every replay of the same date. */
   readonly dailyCount: number;
+  /** Cosmetic items bought with trophies (issue #229, decision 0038): sorted,
+   *  deduplicated, merged by union like `cleared`. Ids are opaque here — the
+   *  shop (shop.ts) prices them — so an item a newer build sells survives a
+   *  round trip through this one. Nothing is ever deducted from `trophies` for
+   *  a purchase; the spendable balance is derived from this list. */
+  readonly owned: readonly string[];
+  /** The cosmetics in use, one id per kind. An id is kept opaquely and resolves
+   *  to the default at render time when this build does not ship it. */
+  readonly looks: Looks;
+  /** Epoch ms of the last change to `looks`, or null if never changed. The
+   *  merge takes the later stamp's whole `looks` (last-write). */
+  readonly looksAt: number | null;
+}
+
+/** The kinds of look a record chooses. Slice 1 of issue #229 ships glyph sets;
+ *  tile backs, felts and avatar frames add keys here under the same stamp. */
+export interface Looks {
+  readonly glyphs: string;
+}
+
+export type LookKind = keyof Looks;
+
+/** The free, drawn glyph set every record starts with (decision 0002's faces). */
+export const DEFAULT_GLYPH_SET = 'lantern';
+
+export const DEFAULT_LOOKS: Looks = { glyphs: DEFAULT_GLYPH_SET };
+
+/** A plausible cosmetic id — the same shape the Worker accepts for an avatar
+ *  id, and the same reason: the server stores it opaquely. */
+const COSMETIC_ID = /^[a-z][a-z0-9-]{0,31}$/;
+/** More owned ids than the shop could ever sell is a hand-edited record. */
+const MAX_OWNED = 64;
+
+export function isCosmeticId(value: unknown): value is string {
+  return typeof value === 'string' && COSMETIC_ID.test(value);
 }
 
 export const EMPTY_RECORD: PlayerRecord = {
@@ -206,9 +242,27 @@ export const EMPTY_RECORD: PlayerRecord = {
   lastDaily: null,
   trophies: 0,
   dailyCount: 0,
+  owned: [],
+  looks: DEFAULT_LOOKS,
+  looksAt: null,
 };
 
 export const RECORD_STORAGE_KEY = 'mahjong.record.v1';
+
+/** The `owned` list as the record stores it: plausible ids only, deduplicated,
+ *  sorted, capped. Shared with the merge in sync.ts, which unions two of them. */
+export function normalizeOwned(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const ids = new Set<string>();
+  for (const v of raw) if (isCosmeticId(v)) ids.add(v);
+  return Array.from(ids).sort().slice(0, MAX_OWNED);
+}
+
+function parseLooks(raw: unknown): Looks {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return DEFAULT_LOOKS;
+  const glyphs = (raw as Record<string, unknown>)['glyphs'];
+  return { glyphs: isCosmeticId(glyphs) ? glyphs : DEFAULT_GLYPH_SET };
+}
 
 /** Per-field tolerance, like parseProfile: counters are non-negative integers
  *  or zero, the cleared set keeps only well-formed (1..LADDER_LENGTH) levels,
@@ -258,6 +312,7 @@ export function parsePlayerRecord(record: unknown): PlayerRecord {
   // `lastDaily` day, gated as today by the local Daily store the same as
   // always.
   const dailyCount = lastDaily === null ? 0 : Math.min(count('dailyCount'), DAILY_CHALLENGE_COUNT);
+  const rawLooksAt = raw['looksAt'];
   return {
     levelsCleared: count('levelsCleared'),
     weekScore: weekStart === null ? 0 : count('weekScore'),
@@ -267,6 +322,12 @@ export function parsePlayerRecord(record: unknown): PlayerRecord {
     lastDaily,
     trophies: count('trophies'),
     dailyCount,
+    // Cosmetics (issue #229): a record from before the shop owns nothing and
+    // looks Lantern, with no stamp — nothing granted, nothing clawed back.
+    owned: normalizeOwned(raw['owned']),
+    looks: parseLooks(raw['looks']),
+    looksAt:
+      typeof rawLooksAt === 'number' && Number.isInteger(rawLooksAt) && rawLooksAt >= 0 ? rawLooksAt : null,
   };
 }
 
@@ -369,6 +430,37 @@ export class RecordStore {
     this.current = record;
     writeRecord(this.storage, this.key, this.current);
     return this.current;
+  }
+
+  /**
+   * Own a cosmetic item (issue #229). Only the addition lives here — whether
+   * the record can *afford* it is the shop's question (shop.ts `purchase`),
+   * asked before this is called. False, and nothing written, for an id that
+   * is not an id or is already owned.
+   */
+  acquire(itemId: string): boolean {
+    if (!isCosmeticId(itemId) || this.current.owned.includes(itemId)) return false;
+    this.current = { ...this.current, owned: normalizeOwned([...this.current.owned, itemId]) };
+    writeRecord(this.storage, this.key, this.current);
+    return true;
+  }
+
+  /**
+   * Choose the look of `kind` (issue #229): the free default, or an item this
+   * record owns — anything else is refused here, not merely hidden by the
+   * shop. A real change stamps `looksAt` with `nowMs`, which is what lets two
+   * devices agree on the more recent pick (sync.ts `mergeRecords`).
+   */
+  setLook(kind: LookKind, id: string, nowMs: number): boolean {
+    const allowed = id === DEFAULT_LOOKS[kind] || this.current.owned.includes(id);
+    if (!allowed || this.current.looks[kind] === id) return false;
+    this.current = {
+      ...this.current,
+      looks: { ...this.current.looks, [kind]: id },
+      looksAt: Math.max(0, Math.floor(nowMs)),
+    };
+    writeRecord(this.storage, this.key, this.current);
+    return true;
   }
 
   /**

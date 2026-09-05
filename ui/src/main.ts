@@ -141,6 +141,10 @@ import {
 } from './profile.js';
 import { SaveStore, captureSave, reopen } from './save.js';
 import { confirmMatches, wipeDevice, wipeProgress } from './account.js';
+import { GLYPH_SETS, SHOP_ITEMS, affordability, glyphSetFor, purchase, trophyBalance } from './shop.js';
+import type { GlyphSet } from './shop.js';
+import { GlyphSetLoader } from './glyphs.js';
+import type { GlyphSetInUse } from './render.js';
 import {
   closeAccount,
   fetchProfile,
@@ -333,6 +337,12 @@ async function start(): Promise<void> {
   const dailyPanelClose = el<HTMLButtonElement>('daily-panel-close');
   const dailyShareButton = el<HTMLButtonElement>('daily-share');
   const dailyShareStatus = el<HTMLElement>('daily-share-status');
+  const shopPanel = el<HTMLDivElement>('shop');
+  const shopButton = el<HTMLButtonElement>('btn-shop');
+  const shopBalance = el<HTMLElement>('shop-balance');
+  const shopGlyphList = el<HTMLElement>('shop-glyphs');
+  const shopStatus = el<HTMLElement>('shop-status');
+  const shopClose = el<HTMLButtonElement>('shop-close');
   const feedbackPanel = el<HTMLDivElement>('feedback');
   const feedbackButton = el<HTMLButtonElement>('btn-feedback');
   const feedbackSummaryInput = el<HTMLInputElement>('feedback-summary');
@@ -502,6 +512,13 @@ async function start(): Promise<void> {
    *  play, not by a mode: there is nowhere else to play. */
   const dailyProgress = new DailyStore(storage);
   let dailyPanelVisible = false;
+
+  // Cosmetics (issue #229): the glyph set the record chose goes on the board
+  // at boot, loading its bitmaps if it is a bought one. The default costs
+  // nothing and the renderer already wears it, so this is a no-op then.
+  const glyphLoader = new GlyphSetLoader();
+  let shopVisible = false;
+  void applyGlyphSet();
 
   // Match / mismatch animation (issue #44). Reduced motion is the OS preference
   // OR the in-app toggle, read per effect so either can be changed mid-session;
@@ -1309,6 +1326,7 @@ async function start(): Promise<void> {
       overlayVisible ||
       changelogVisible ||
       profileVisible ||
+      shopVisible ||
       feedbackVisible ||
       welcomeVisible ||
       confirmVisible ||
@@ -1473,6 +1491,7 @@ async function start(): Promise<void> {
       overlayVisible ||
       changelogVisible ||
       profileVisible ||
+      shopVisible ||
       feedbackVisible ||
       welcomeVisible ||
       confirmVisible ||
@@ -1964,6 +1983,11 @@ async function start(): Promise<void> {
   function adoptRemoteRecord(remote: RemoteProfile): void {
     record.adopt(mergeRecords(record.value, remote.record));
     if (profileVisible) syncProfileControls();
+    // Another device may have bought or picked a look (issue #229). The
+    // balance may have moved, so a Buy waiting for its Confirm is withdrawn.
+    void applyGlyphSet();
+    shopArmed = null;
+    if (shopVisible) renderShop();
   }
 
   /** Push the record up after a win, if sync is on. Fire-and-forget by
@@ -2075,6 +2099,7 @@ async function start(): Promise<void> {
       record.adopt(mergeRecords(record.value, remote.record));
       syncProfileControls();
       syncProfileRow();
+      void applyGlyphSet();
       setSyncStatus(`Profile restored — welcome back, ${remote.name}.`);
       announcer.say(`Profile restored. Welcome back, ${remote.name}.`);
       // Send this device's side up so the server holds the merge too.
@@ -2457,6 +2482,262 @@ async function start(): Promise<void> {
   // Same backdrop dismissal as every other dialog (issue #225).
   dailyPanel.addEventListener('click', (ev) => {
     if (ev.target === dailyPanel) closeDailyPanel();
+  });
+
+  // --- cosmetics shop (issue #229, decision 0038) --------------------------------
+  //
+  // Trophies buy looks. The record owns items and chooses a look (profile.ts);
+  // prices and the derived balance are shop.ts; the bitmaps a bought glyph set
+  // draws from are glyphs.ts. This is the panel and the wiring between them.
+
+  /** The renderer's view of a glyph set: its textures if they are loaded, else
+   *  null — which draws the default. `applyGlyphSet` is what loads them. */
+  function glyphSetInUse(set: GlyphSet): GlyphSetInUse {
+    return { id: set.id, textures: set.dir === null ? null : (glyphLoader.peek(set.dir) ?? null) };
+  }
+
+  /**
+   * Put the record's chosen glyph set on the board, loading its bitmaps first
+   * if they are not in yet. A set that fails to load leaves the board as it
+   * is — the player keeps the set they had, and the shop says so if it is
+   * open. The pick is re-read after the load: a player who switched again
+   * while a slow set was downloading must not have the slow one land on top.
+   */
+  async function applyGlyphSet(): Promise<void> {
+    const set = glyphSetFor(record.value.looks.glyphs);
+    if (renderer.glyphSetId === set.id) return;
+    if (set.dir !== null) {
+      try {
+        await glyphLoader.get(set.dir);
+      } catch {
+        setShopStatus(`Couldn't load the ${set.label} set. Check your connection and try again.`);
+        return;
+      }
+      if (glyphSetFor(record.value.looks.glyphs).id !== set.id) return;
+    }
+    renderer.setGlyphSet(glyphSetInUse(set));
+    redraw();
+  }
+
+  /** Publish a purchase or a pick, if sync is on. Same fire-and-forget shape
+   *  as the avatar's push: the record carries both. */
+  function syncCosmetics(): void {
+    if (syncCredentials === null) return;
+    void pushRecord(syncCredentials, {
+      avatar: profile.value.avatar,
+      record: record.value,
+    }).then((result) => {
+      if (result.ok) adoptRemoteRecord(result.value);
+    });
+  }
+
+  function setShopStatus(text: string): void {
+    shopStatus.textContent = text;
+  }
+
+  /** The Buy that is waiting for its Confirm tap, by item id. One at a time:
+   *  arming another disarms it, and so does a record change from elsewhere
+   *  (`adoptRemoteRecord`) — a Confirm must never outlive the balance it was
+   *  offered on, so the render also re-checks affordability before showing it. */
+  let shopArmed: string | null = null;
+
+  /** Four faces that show a set's range: a pip grid, canes, a numeral and a
+   *  Dragon. Baked by the renderer from the set's own textures (render.ts
+   *  `tileImageIn`), so the preview is what the board would draw. */
+  const SHOP_PREVIEW_FACES = ['dots-5', 'bamboo-3', 'char-7', 'dragon-green'];
+
+  /** Every glyph-set row, the free default first. */
+  const SHOP_GLYPH_ROWS: readonly { set: GlyphSet; price: number; description: string }[] = [
+    { set: GLYPH_SETS['lantern']!, price: 0, description: 'The drawn faces every board starts with.' },
+    ...SHOP_ITEMS.filter((item) => item.kind === 'glyphs').map((item) => ({
+      set: GLYPH_SETS[item.id]!,
+      price: item.price,
+      description: item.description,
+    })),
+  ];
+
+  function renderShop(): void {
+    const balance = trophyBalance(record.value);
+    shopBalance.textContent =
+      `${balance} ${balance === 1 ? 'trophy' : 'trophies'} to spend` +
+      (record.value.trophies === balance ? '' : ` · ${record.value.trophies} earned`);
+    const inUse = glyphSetFor(record.value.looks.glyphs).id;
+    shopGlyphList.replaceChildren(
+      ...SHOP_GLYPH_ROWS.map(({ set, price, description }) => {
+        const li = document.createElement('li');
+        li.className = 'shop-item';
+        const standing = set.dir === null ? { state: 'owned' as const } : affordability(record.value, set.id);
+        const state = set.id === inUse ? 'in-use' : standing.state;
+        li.dataset['state'] = state;
+
+        const head = document.createElement('div');
+        head.className = 'shop-head';
+        const name = document.createElement('strong');
+        name.textContent = set.label;
+        const priceEl = document.createElement('span');
+        priceEl.className = 'shop-price';
+        priceEl.textContent =
+          state === 'in-use' || state === 'owned'
+            ? price === 0
+              ? 'Free'
+              : 'Owned'
+            : `${price} ${price === 1 ? 'trophy' : 'trophies'}`;
+        head.append(name, priceEl);
+        const desc = document.createElement('span');
+        desc.className = 'shop-desc';
+        desc.textContent = description;
+
+        const preview = document.createElement('div');
+        preview.className = 'shop-preview';
+        preview.setAttribute('aria-hidden', 'true');
+        if (set.dir === null || glyphLoader.peek(set.dir) !== undefined) {
+          const view = glyphSetInUse(set);
+          for (const face of SHOP_PREVIEW_FACES) {
+            const img = document.createElement('img');
+            img.alt = '';
+            img.src = renderer.tileImageIn(face, view);
+            preview.append(img);
+          }
+        } else {
+          preview.textContent = 'Loading preview…';
+          ensurePreview(set);
+        }
+
+        const actions = document.createElement('div');
+        actions.className = 'shop-actions';
+        const label = `${set.label} glyph set`;
+        if (state === 'in-use') {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = 'In use';
+          button.setAttribute('aria-pressed', 'true');
+          button.setAttribute('aria-label', `${label}, in use`);
+          actions.append(button);
+        } else if (state === 'owned') {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = 'Use';
+          button.setAttribute('aria-label', `Use the ${label}`);
+          button.addEventListener('click', () => chooseGlyphSet(set));
+          actions.append(button);
+        } else if (shopArmed === set.id && standing.state === 'affordable') {
+          const confirm = document.createElement('button');
+          confirm.type = 'button';
+          confirm.dataset['confirm'] = set.id;
+          confirm.textContent = `Confirm ${price} ${price === 1 ? 'trophy' : 'trophies'}`;
+          confirm.setAttribute('aria-label', `Confirm: buy the ${label} for ${price} trophies`);
+          confirm.addEventListener('click', () => buyGlyphSet(set, price));
+          const cancel = document.createElement('button');
+          cancel.type = 'button';
+          cancel.className = 'secondary';
+          cancel.textContent = 'Cancel';
+          cancel.addEventListener('click', () => {
+            shopArmed = null;
+            renderShop();
+            shopGlyphList.querySelector<HTMLButtonElement>(`[data-buy="${set.id}"]`)?.focus();
+          });
+          actions.append(confirm, cancel);
+        } else {
+          const buy = document.createElement('button');
+          buy.type = 'button';
+          buy.dataset['buy'] = set.id;
+          buy.textContent = `Buy for ${price} ${price === 1 ? 'trophy' : 'trophies'}`;
+          buy.setAttribute('aria-label', `Buy the ${label} for ${price} trophies`);
+          if (standing.state === 'locked') {
+            buy.disabled = true;
+            const short = document.createElement('span');
+            short.className = 'shop-short';
+            short.textContent = `${standing.short} more needed`;
+            actions.append(buy, short);
+          } else {
+            buy.addEventListener('click', () => {
+              shopArmed = set.id;
+              renderShop();
+              shopGlyphList.querySelector<HTMLButtonElement>(`[data-confirm="${set.id}"]`)?.focus();
+            });
+            actions.append(buy);
+          }
+        }
+
+        li.append(head, desc, preview, actions);
+        return li;
+      }),
+    );
+  }
+
+  /** Fetch a set's bitmaps for its preview and re-render once they are in.
+   *  A failure is reported and the row keeps its placeholder; reopening the
+   *  shop tries again (glyphs.ts does not cache failures). */
+  function ensurePreview(set: GlyphSet): void {
+    if (set.dir === null) return;
+    void glyphLoader.get(set.dir).then(
+      () => {
+        if (shopVisible) renderShop();
+      },
+      () => setShopStatus(`Couldn't load the ${set.label} preview. Check your connection and try again.`),
+    );
+  }
+
+  function chooseGlyphSet(set: GlyphSet): void {
+    if (!record.setLook('glyphs', set.id, Date.now())) return;
+    shopArmed = null;
+    setShopStatus('');
+    renderShop();
+    void applyGlyphSet();
+    syncCosmetics();
+    announcer.say(`${set.label} glyph set in use.`);
+    shopGlyphList.querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.focus();
+  }
+
+  function buyGlyphSet(set: GlyphSet, price: number): void {
+    shopArmed = null;
+    if (!purchase(record, set.id)) {
+      // The balance moved under the confirm (a sync landed): say so, re-render.
+      setShopStatus(`Not enough trophies for the ${set.label} set.`);
+      renderShop();
+      return;
+    }
+    setShopStatus(`Bought the ${set.label} set. Tap Use to put it on the board.`);
+    renderShop();
+    syncCosmetics();
+    announcer.say(`Bought the ${set.label} glyph set for ${price} trophies. ${trophyBalance(record.value)} left to spend.`);
+    shopGlyphList.querySelector<HTMLButtonElement>(`[aria-label="Use the ${set.label} glyph set"]`)?.focus();
+  }
+
+  function openShop(): void {
+    if (shopVisible) return;
+    // Opened from inside Settings: that panel steps aside rather than stacking,
+    // the same as the profile.
+    closeSettings();
+    shopArmed = null;
+    setShopStatus('');
+    renderShop();
+    shopVisible = true;
+    shopPanel.classList.add('visible');
+    setBackgroundInert(true);
+    // Done is the focus target like every other panel, but the card is taller
+    // than a phone: letting the focus scroll it would open the shop at its
+    // foot, balance and first row out of view.
+    shopClose.focus({ preventScroll: true });
+    shopPanel.querySelector('.card')?.scrollTo({ top: 0 });
+    const balance = trophyBalance(record.value);
+    announcer.say(`Shop. ${balance} ${balance === 1 ? 'trophy' : 'trophies'} to spend.`);
+  }
+
+  function closeShop(): void {
+    if (!shopVisible) return;
+    shopVisible = false;
+    shopArmed = null;
+    shopPanel.classList.remove('visible');
+    setBackgroundInert(false);
+    settingsButton.focus();
+  }
+
+  shopButton.addEventListener('click', () => openShop());
+  shopClose.addEventListener('click', closeShop);
+  // Same backdrop dismissal as every other dialog.
+  shopPanel.addEventListener('click', (ev) => {
+    if (ev.target === shopPanel) closeShop();
   });
 
   // --- feedback form (issue #118) ----------------------------------------------
@@ -3020,6 +3301,7 @@ async function start(): Promise<void> {
       else if (feedbackVisible) closeFeedback();
       else if (changelogVisible) closeChangelog();
       else if (dailyPanelVisible) closeDailyPanel();
+      else if (shopVisible) closeShop();
       else if (profileVisible) closeProfile();
       else if (settingsVisible) closeSettings();
     });

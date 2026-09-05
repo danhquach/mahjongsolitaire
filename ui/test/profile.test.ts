@@ -280,3 +280,80 @@ test('recordWin leaves the Daily fields alone', () => {
     trophies: 1,
   });
 });
+
+// --- cosmetics (issue #229, decision 0038) ------------------------------------
+
+test('a pre-#229 record owns nothing, looks Lantern, and has no look stamp', () => {
+  const record = parsePlayerRecord({ trophies: 30 });
+  assert.deepEqual(record.owned, []);
+  assert.deepEqual(record.looks, { glyphs: 'lantern' });
+  assert.equal(record.looksAt, null);
+  assert.deepEqual(EMPTY_RECORD.owned, []);
+  assert.deepEqual(EMPTY_RECORD.looks, { glyphs: 'lantern' });
+  assert.equal(EMPTY_RECORD.looksAt, null);
+});
+
+test('owned ids are kept opaquely, sorted, deduplicated and filtered to plausible ids', () => {
+  const record = parsePlayerRecord({
+    owned: ['glyphs-fantasy', 'glyphs-calligraphy', 'glyphs-fantasy', 'Not An Id', 7, 'future-item'],
+  });
+  // An id this build does not sell survives: a newer build's purchase must
+  // round-trip through an older device untouched.
+  assert.deepEqual(record.owned, ['future-item', 'glyphs-calligraphy', 'glyphs-fantasy']);
+  assert.deepEqual(parsePlayerRecord({ owned: 'glyphs-fantasy' }).owned, []);
+});
+
+test('looks keep an unknown set id opaquely; garbage falls back to the default', () => {
+  assert.deepEqual(parsePlayerRecord({ looks: { glyphs: 'glyphs-fantasy' }, looksAt: 5 }).looks, {
+    glyphs: 'glyphs-fantasy',
+  });
+  assert.equal(parsePlayerRecord({ looks: { glyphs: 'glyphs-fantasy' }, looksAt: 5 }).looksAt, 5);
+  assert.deepEqual(parsePlayerRecord({ looks: { glyphs: 'not an id!' } }).looks, { glyphs: 'lantern' });
+  assert.deepEqual(parsePlayerRecord({ looks: 'glyphs-fantasy' }).looks, { glyphs: 'lantern' });
+  // A stamp is a non-negative integer or nothing.
+  assert.equal(parsePlayerRecord({ looksAt: -1 }).looksAt, null);
+  assert.equal(parsePlayerRecord({ looksAt: 1.5 }).looksAt, null);
+  assert.equal(parsePlayerRecord({ looksAt: '5' }).looksAt, null);
+});
+
+test('acquire adds an item once and persists; acquiring it again writes nothing', () => {
+  const storage = fakeStorage();
+  const record = new RecordStore(storage);
+  assert.equal(record.acquire('glyphs-fantasy'), true);
+  assert.deepEqual(record.value.owned, ['glyphs-fantasy']);
+  assert.equal(record.acquire('glyphs-fantasy'), false);
+  assert.equal(record.acquire('glyphs-calligraphy'), true);
+  assert.deepEqual(record.value.owned, ['glyphs-calligraphy', 'glyphs-fantasy']);
+  assert.deepEqual(new RecordStore(storage).value.owned, ['glyphs-calligraphy', 'glyphs-fantasy']);
+  // An id that is not an id is refused, not stored.
+  assert.equal(record.acquire('Not An Id'), false);
+});
+
+test('setLook takes the default or an owned item, stamps the change, and refuses anything else', () => {
+  const storage = fakeStorage();
+  const record = new RecordStore(storage);
+  assert.equal(record.setLook('glyphs', 'glyphs-fantasy', NOW), false, 'not owned');
+  assert.equal(record.value.looksAt, null);
+  record.acquire('glyphs-fantasy');
+  assert.equal(record.setLook('glyphs', 'glyphs-fantasy', NOW), true);
+  assert.deepEqual(record.value.looks, { glyphs: 'glyphs-fantasy' });
+  assert.equal(record.value.looksAt, NOW);
+  // Same pick again: nothing changes, the stamp does not move.
+  assert.equal(record.setLook('glyphs', 'glyphs-fantasy', NOW + 1), false);
+  assert.equal(record.value.looksAt, NOW);
+  // Back to the free default is always allowed.
+  assert.equal(record.setLook('glyphs', 'lantern', NOW + 2), true);
+  assert.deepEqual(new RecordStore(storage).value.looks, { glyphs: 'lantern' });
+  assert.equal(new RecordStore(storage).value.looksAt, NOW + 2);
+});
+
+test('recordWin and creditDailyChallenge leave the cosmetics alone', () => {
+  const record = new RecordStore(fakeStorage());
+  record.acquire('glyphs-fantasy');
+  record.setLook('glyphs', 'glyphs-fantasy', NOW);
+  record.recordWin(100, { level: 1 }, NOW);
+  record.creditDailyChallenge('2026-09-03');
+  assert.deepEqual(record.value.owned, ['glyphs-fantasy']);
+  assert.deepEqual(record.value.looks, { glyphs: 'glyphs-fantasy' });
+  assert.equal(record.value.looksAt, NOW);
+});

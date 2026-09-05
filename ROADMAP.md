@@ -122,6 +122,8 @@ Scope note: spec §11.1–11.2 tests run continuously in Phases 1–4 (see their
 
 Active Mind mode → themes/tile-set monetization → cloud save/sync → trophies/leaderboards → special tiles. Sequence by soft-launch learnings (retention gap vs monetization gap).
 
+**Tile sets, pulled forward as earned cosmetics (issue #229, 2026-09-05).** Two purchasable glyph sets ship behind a Shop row in Settings, paid for with Daily trophies rather than IAP (decision 0038) — the themes/tile-set item above stays for whatever is *sold*, not earned. Tile backs, felts and avatar frames are the ticket's later slices once their art lands.
+
 ~~**Holder — temporary tile store (issue #43).**~~ **Pulled into Phase 3, 2026-08-31.** The condition this entry set was met: PM answered the three open questions (4 slots, always available, no score penalty) while #18 had not started, so the ladder is calibrated *with* the holder rather than re-bucketed after it. Shipped as decision 0008, then re-priced the same day by decision 0009 (one-way, and a full holder loses the level) — still before #18 started, so the condition holds.
 
 ## 7. Top risks on the roadmap itself
