@@ -71,10 +71,27 @@ export function boardBounds(slots: readonly Slot[]): Rect {
 }
 
 /**
- * Painter's order for rendering: layer by layer bottom-up; within a layer
- * top-to-bottom then left-to-right, so each tile's down-right bevel is
- * overdrawn by its right/lower neighbors and upper layers cover lower ones.
+ * Reading order over the lattice: layer by layer bottom-up; within a layer
+ * top-to-bottom then left-to-right. The near-pair hint groups same-face tiles
+ * in this order (game.ts). It was the render order until issue #220 — see
+ * drawOrder for why it could not stay so.
  */
 export function paintOrder(a: Slot, b: Slot): number {
   return a.z - b.z || a.y - b.y || a.x - b.x;
+}
+
+/**
+ * Painter's order for rendering (issue #220): layer by layer bottom-up; within
+ * a layer by x + y, the depth of an oblique projection whose extrusion runs
+ * down-right. A tile's side face reaches less than a half-unit right and down
+ * of its top face, so on the lattice the same-layer neighbours it can extrude
+ * into are exactly (x+2, y±1..2) and (x±1..0, y+2) — every one of them has a
+ * larger x + y, so every one paints later and covers the side, which is what
+ * two blocks standing on the same table look like. Row-major order got this
+ * wrong for a right-hand neighbour half a row up: the tile painted after it and
+ * laid its side across the neighbour's face, so the neighbour read as sitting
+ * underneath. Ties (x + y equal, faces never overlapping) break on x.
+ */
+export function drawOrder(a: Slot, b: Slot): number {
+  return a.z - b.z || a.x + a.y - (b.x + b.y) || a.x - b.x;
 }

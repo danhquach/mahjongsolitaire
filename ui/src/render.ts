@@ -7,11 +7,14 @@
 //
 //   shadow sprite → side bands (base outward → inward) → top face → ink
 //
-// per tile, tiles themselves in paintOrder. A tile's shadow therefore lands on
-// the already-painted lower layers down-right of it and is overpainted by its
-// own right/lower same-layer neighbours, which is exactly right: neighbours at
-// equal height cast nothing on each other (the darker outline separates those),
-// while an upper layer detaches from the stack below it.
+// per tile, tiles themselves in drawOrder. A tile's shadow and side reach only
+// right and down of its face, and drawOrder paints every same-layer neighbour
+// in that direction after it (issue #220 — row-major order did not, for a
+// right-hand neighbour half a row up, which then wore this tile's shadow and
+// side across its corner and read as sitting underneath). So a shadow lands
+// only on the already-painted layers below, which is exactly right: neighbours
+// at equal height cast nothing on each other (the darker outline separates
+// those), while an upper layer detaches from the stack below it.
 
 import { ColorMatrixFilter, Container, Graphics, Rectangle, Sprite, Text } from 'pixi.js';
 import type { Application, Texture } from 'pixi.js';
@@ -51,7 +54,7 @@ import {
   pipMetrics,
 } from './pips.js';
 import type { Game } from './game.js';
-import { SIDE_DEPTH, TILE_H, TILE_W, boardBounds, paintOrder, tileRect } from './geometry.js';
+import { SIDE_DEPTH, TILE_H, TILE_W, boardBounds, drawOrder, tileRect } from './geometry.js';
 import type { Rect } from './geometry.js';
 import { BOARD_MARGIN, fitScale } from './hud-fit.js';
 import type { BoardExtent } from './hud-fit.js';
@@ -422,7 +425,7 @@ export class BoardRenderer {
     // baked shadow textures alive across every redraw.
     this.boardLayer.removeChildren().forEach((c) => c.destroy({ children: true }));
     this.tileNodes.clear();
-    const tiles = [...game.board.presentTiles()].sort((a, b) => paintOrder(a.slot, b.slot));
+    const tiles = [...game.board.presentTiles()].sort((a, b) => drawOrder(a.slot, b.slot));
     for (const tile of tiles) {
       const flashed = state.flash.includes(tile.id);
       const hinted = state.hint.includes(tile.id);
@@ -466,7 +469,7 @@ export class BoardRenderer {
     const g = new Graphics();
     // Side extrusion down-right, one tile's depth on every layer so a tall
     // stack does not read as a thicker slab; right/lower neighbors and upper
-    // layers paint over it (paintOrder), leaving only the exposed edges.
+    // layers paint over it (drawOrder), leaving only the exposed edges.
     // Shaded in bands, base first: each band overpaints the darker one
     // behind it, so what survives is light at the face and dark at the base.
     const bands = shade.sideBands;

@@ -8,6 +8,7 @@ import {
   TILE_H,
   TILE_W,
   boardBounds,
+  drawOrder,
   paintOrder,
   rectContains,
   rectDistance,
@@ -70,4 +71,32 @@ test('paintOrder: layers bottom-up, then rows, then columns', () => {
     { x: 0, y: 2, z: 0 },
     { x: 2, y: 0, z: 1 },
   ]);
+});
+
+// --- drawOrder (issue #220) -----------------------------------------------------
+
+test('drawOrder: within a layer, the tile a side face extrudes into is painted after it', () => {
+  // A side extrudes down-right of the face by less than a half-unit. On the
+  // half-unit lattice the same-layer neighbours it can reach are exactly these
+  // (footprints may not overlap, so dx = 2 for a right-hand neighbour and
+  // dy = 2 for one below); every one of them must paint later than the tile.
+  const tile = { x: 10, y: 16, z: 1 };
+  const reached = [
+    { x: 12, y: 15, z: 1 }, // right, half a row up — the bamboo-3 / char-8 case
+    { x: 12, y: 16, z: 1 }, // right, aligned
+    { x: 12, y: 17, z: 1 }, // right, half a row down
+    { x: 9, y: 18, z: 1 }, // below, half a column left
+    { x: 10, y: 18, z: 1 }, // below, aligned
+    { x: 11, y: 18, z: 1 }, // below, half a column right
+  ];
+  for (const n of reached) {
+    assert.ok(drawOrder(tile, n) < 0, `${JSON.stringify(n)} must paint after the tile it covers`);
+  }
+});
+
+test('drawOrder: layers bottom-up first, and a total order on the lattice', () => {
+  assert.ok(drawOrder({ x: 20, y: 20, z: 0 }, { x: 0, y: 0, z: 1 }) < 0);
+  // Equal x+y ties break on x, so two distinct slots never compare equal.
+  assert.ok(drawOrder({ x: 0, y: 2, z: 0 }, { x: 2, y: 0, z: 0 }) < 0);
+  assert.equal(drawOrder({ x: 3, y: 4, z: 2 }, { x: 3, y: 4, z: 2 }), 0);
 });
