@@ -23,6 +23,8 @@ import {
   refusalMessage,
   reportText,
   sendFeedback,
+  BUILD_HEADER,
+  buildHeaderValue,
 } from '../src/feedback-form.js';
 
 const INPUT = {
@@ -114,6 +116,22 @@ test('sendFeedback: 202 -> sent', async () => {
   const payload = buildFeedbackPayload(INPUT);
   const result = await sendFeedback(payload, (async () => new Response('{}', { status: 202 })) as typeof fetch);
   assert.equal(result, 'sent');
+});
+
+test('sendFeedback sends the build header the Worker gates attachments on (issue #191)', async () => {
+  const payload = buildFeedbackPayload({ ...INPUT, version: 'v0.1.0+ab12cd3 \u00b7 2026-09-02' });
+  let init: RequestInit | undefined;
+  await sendFeedback(payload, (async (_input: RequestInfo | URL, i?: RequestInit) => {
+    init = i;
+    return new Response('{}', { status: 202 });
+  }) as typeof fetch);
+  assert.equal(new Headers(init?.headers).get(BUILD_HEADER), 'v0.1.0+ab12cd3 2026-09-02');
+});
+
+test('buildHeaderValue keeps printable ASCII only and is never empty', () => {
+  assert.equal(buildHeaderValue('v0.1.0+ab12cd3 \u00b7 2026-09-02'), 'v0.1.0+ab12cd3 2026-09-02');
+  assert.equal(buildHeaderValue('\u00b7\u00b7'), 'unknown');
+  assert.equal(buildHeaderValue(''), 'unknown');
 });
 
 test('sendFeedback: 503 -> unavailable', async () => {

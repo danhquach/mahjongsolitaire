@@ -250,6 +250,16 @@ export function canSend(summary: string, body: string): boolean {
 
 export type SendResult = 'sent' | 'unavailable' | 'failed';
 
+/** The Worker opens its attachment allowance only to a request carrying this
+ *  header (issue #191; `BUILD_HEADER` in worker/index.mjs). Its value is the
+ *  build label the report already carries in `context.version`, kept to
+ *  printable ASCII: header values are bytes, and the label's middle dot is
+ *  not one that survives every hop. */
+export const BUILD_HEADER = 'X-Lantern-Tiles-Build';
+export function buildHeaderValue(version: string): string {
+  return version.replace(/[^\x21-\x7e]+/g, ' ').trim() || 'unknown';
+}
+
 /** POST to the Worker endpoint. `fetchImpl` is injected so tests never touch
  *  the network. 202 -> 'sent'; a network error or 503 (key not configured,
  *  see worker/index.mjs) -> 'unavailable', so the caller offers the mailto
@@ -262,7 +272,10 @@ export async function sendFeedback(
   try {
     response = await fetchImpl('/api/feedback', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        [BUILD_HEADER]: buildHeaderValue(payload.context.version),
+      },
       body: JSON.stringify(payload),
     });
   } catch {

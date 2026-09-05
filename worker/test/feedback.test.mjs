@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { handleFeedback, sweep, sweepRateLimits } from '../index.mjs';
+import { BUILD_HEADER, handleFeedback, sweep, sweepRateLimits } from '../index.mjs';
 import { QUOTA_WINDOW_MS } from '../http.mjs';
 import { createDb } from './d1.mjs';
 
@@ -249,8 +249,15 @@ function base64OfSize(bytes) {
 const PNG = { name: 'shot.png', type: 'image/png', content: base64OfSize(300) };
 const MP4 = { name: 'clip.mp4', type: 'video/mp4', content: base64OfSize(500) };
 
-function reqWithAttachments(attachments, init) {
-  return req({ summary: 'Tiles overlap', body: 'See attached.', context: VALID_CONTEXT, attachments }, init);
+/** The game's build header (issue #191): the attachment allowance is only
+ *  open to a request that carries it, so every attachment test sends it. */
+const FROM_CLIENT = { [BUILD_HEADER]: 'v0.1.0+ab12cd3 2026-09-02' };
+
+function reqWithAttachments(attachments, init = {}) {
+  return req(
+    { summary: 'Tiles overlap', body: 'See attached.', context: VALID_CONTEXT, attachments },
+    { ...init, headers: { ...FROM_CLIENT, ...init.headers } },
+  );
 }
 
 async function sendAndCapture(request) {
@@ -357,11 +364,59 @@ test('three images that individually fit but total over 25 MB are 413', async ()
 test('a body over 36 MB is 413 before parsing, via Content-Length', async () => {
   const request = new Request('https://lantern-tiles.example.workers.dev/api/feedback', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'Content-Length': String(37 * 1024 * 1024) },
+    headers: { 'content-type': 'application/json', 'Content-Length': String(37 * 1024 * 1024), ...FROM_CLIENT },
     body: '{}',
   });
   const res = await handleFeedback(request, validEnv(), {});
   assert.equal(res.status, 413);
+});
+
+// --- the build header gate (issue #191) ------------------------------------------
+
+test('without the build header the cap is 8 KB before parsing, via Content-Length', async () => {
+  // 20 KB says it carries attachments; nothing about the body is read.
+  const request = new Request('https://lantern-tiles.example.workers.dev/api/feedback', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'Content-Length': String(20 * 1024) },
+    body: '{}',
+  });
+  const res = await handleFeedback(request, validEnv(), {});
+  assert.equal(res.status, 413);
+  assert.deepEqual(await res.json(), { error: 'payload_too_large' });
+});
+
+test('without the build header a real attachment body over 8 KB is 413, with it 202', async () => {
+  const attachments = [{ ...PNG, content: base64OfSize(12 * 1024) }];
+  const bare = req({ summary: 'Tiles overlap', body: 'See attached.', context: VALID_CONTEXT, attachments });
+  assert.equal(bare.headers.get(BUILD_HEADER), null);
+  const refused = await handleFeedback(bare, validEnv(), { fetch: okFetch() });
+  assert.equal(refused.status, 413);
+  const accepted = await handleFeedback(reqWithAttachments(attachments), validEnv(), { fetch: okFetch() });
+  assert.equal(accepted.status, 202);
+});
+
+test('without the build header even a tiny attachment is an invalid payload', async () => {
+  const bare = req({ summary: 'Tiles overlap', body: 'See attached.', context: VALID_CONTEXT, attachments: [PNG] });
+  const res = await handleFeedback(bare, validEnv(), { fetch: okFetch() });
+  assert.equal(res.status, 400);
+  assert.deepEqual(await res.json(), { error: 'invalid_payload' });
+});
+
+test('a blank or over-long build header does not open the allowance', async () => {
+  for (const value of ['', '   ', 'v'.repeat(301)]) {
+    const res = await handleFeedback(
+      reqWithAttachments([PNG], { headers: { [BUILD_HEADER]: value } }),
+      validEnv(),
+      { fetch: okFetch() },
+    );
+    assert.equal(res.status, 400, JSON.stringify(value).slice(0, 20));
+  }
+});
+
+test('a text-only report needs no build header', async () => {
+  const bare = req({ summary: 'hi', body: 'hello', context: VALID_CONTEXT });
+  const res = await handleFeedback(bare, validEnv(), { fetch: okFetch() });
+  assert.equal(res.status, 202);
 });
 
 test('a text-only body over 8 KB is still 413 even though the attachment allowance is larger', async () => {
