@@ -1317,6 +1317,24 @@
         width: 38px;
         height: auto;
       }
+      /* A felt's preview (slice 2): the felt itself, with one face-down
+         Lantern back sitting on it — the pairing the felt has to hold. */
+      #shop .shop-swatch {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 120px;
+        height: 52px;
+        border-radius: 6px;
+      }
+      #shop .shop-swatch-back {
+        width: 30px;
+        height: 40px;
+        border-radius: 3px;
+        box-sizing: border-box;
+        border: 2px solid;
+        box-shadow: 2px 3px 0 rgba(0, 0, 0, 0.35);
+      }
       #shop .shop-actions {
         display: flex;
         flex-wrap: wrap;
@@ -2130,6 +2148,14 @@
                 A glyph set redraws every tile face in a new style. The pips, numerals and
                 colours stay the same, so a board reads exactly as before. Bought sets are
                 yours to switch between any time.
+              </p>
+              <fieldset>
+                <legend>Board felts</legend>
+                <ul id="shop-felts" class="shop-list"></ul>
+              </fieldset>
+              <p class="record-hint">
+                A felt recolours the table under the tiles and nothing else. Milestone levels
+                and the Daily keep their own colours whatever felt you own.
               </p>
               <span id="shop-status" aria-live="polite"></span>
               <button id="shop-close" type="button">Done</button>

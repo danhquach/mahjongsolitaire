@@ -68,8 +68,8 @@ Content, left to right:
 felt-lantern: base #14532d, plain. This is the current default, include it for reference.
 felt-forest: base #052e16, faint tone-on-tone diagonal weave.
 felt-teal: base #134e4a, faint tone-on-tone hexagon tile pattern.
-felt-slate: base #1e293b, plain with a faint tone-on-tone diamond lattice.
-felt-walnut: base #3f2a1d, faint tone-on-tone wood-grain lines running vertically.
+felt-slate: base #334155, plain with a faint tone-on-tone diamond lattice. (Was #1e293b until 2026-09-05: that sat 21 RGB units from the reserved Daily indigo, and ui/test/depth.test.ts refused it.)
+felt-walnut: base #4a3728, faint tone-on-tone wood-grain lines running vertically. (Was #3f2a1d until 2026-09-05: 39 RGB units from the reserved Milestone burgundy, under the 40 ui/test/depth.test.ts demands.)
 felt-ink: base #18181b, plain, no pattern.
 
 Rules: no base may be near burgundy #4c0519 or near indigo #1e1b4b, those are reserved. Do not add any motif, emblem, animal or object. No text inside the swatches.

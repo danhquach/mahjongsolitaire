@@ -321,9 +321,13 @@ export class BoardRenderer {
    *  face-down back all follow. The holder's tile-picture cache is dropped —
    *  those bakes carry the old border and side. The caller redraws. */
   setPalette(palette: BoardPalette): void {
-    if (palette.id === this.palette.id) return;
+    // Same id, different felt (issue #229 slice 2): only the table changes,
+    // so the tile pictures are kept (the tile key carries the id, not the felt).
+    if (palette.id === this.palette.id && palette.felt === this.palette.felt) {
+      return;
+    }
+    if (palette.id !== this.palette.id) this.tileImages.clear();
     this.palette = palette;
-    this.tileImages.clear();
     this.app.renderer.background.color = palette.felt;
   }
 

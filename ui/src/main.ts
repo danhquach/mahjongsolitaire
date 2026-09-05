@@ -99,8 +99,8 @@ import type { Cue } from './feedback.js';
 import { faceStyle } from './faces.js';
 import { Game, nearPairs } from './game.js';
 import { HolderStrip } from './holder.js';
-import { BOARD_FELT, PALETTES, cssColor } from './depth.js';
-import type { BoardPalette } from './depth.js';
+import { BOARD_FELT, FELTS, PALETTES, cssColor, feltFor, withFelt } from './depth.js';
+import type { BoardPalette, Felt } from './depth.js';
 import { SIDE_DEPTH, TILE_H, TILE_W, tileRect } from './geometry.js';
 import type { Rect } from './geometry.js';
 import { hitTest } from './hit-test.js';
@@ -139,6 +139,7 @@ import {
   liveStreak,
   weekScoreNow,
 } from './profile.js';
+import type { LookKind } from './profile.js';
 import { SaveStore, captureSave, reopen } from './save.js';
 import { confirmMatches, wipeDevice, wipeProgress } from './account.js';
 import { GLYPH_SETS, SHOP_ITEMS, affordability, glyphSetFor, purchase, trophyBalance } from './shop.js';
@@ -341,6 +342,7 @@ async function start(): Promise<void> {
   const shopButton = el<HTMLButtonElement>('btn-shop');
   const shopBalance = el<HTMLElement>('shop-balance');
   const shopGlyphList = el<HTMLElement>('shop-glyphs');
+  const shopFeltList = el<HTMLElement>('shop-felts');
   const shopStatus = el<HTMLElement>('shop-status');
   const shopClose = el<HTMLButtonElement>('shop-close');
   const feedbackPanel = el<HTMLDivElement>('feedback');
@@ -437,9 +439,12 @@ async function start(): Promise<void> {
   }
 
   /** The palette the deal on the table wears (issue #67): the decade
-   *  milestone's (decision 0011's spike levels), else the default. */
+   *  milestone's (decision 0011's spike levels), else the default under the
+   *  felt the record chose (issue #229 slice 2) — a bought felt never touches
+   *  the spike's burgundy, whose look carries meaning. */
   function paletteInPlay(): BoardPalette {
-    return bandForLevel(progress.level).spike ? PALETTES.milestone : PALETTES.lantern;
+    if (bandForLevel(progress.level).spike) return PALETTES.milestone;
+    return withFelt(PALETTES.lantern, feltFor(record.value.looks.felt));
   }
 
   /** Hand the renderer the palette in force and paint the play column's felt
@@ -496,17 +501,19 @@ async function start(): Promise<void> {
 
   const renderer = new BoardRenderer(app, layout.slots);
   const announcer = new Announcer(el<HTMLElement>('a11y-status'));
+
+  // The player (issue #69): identity and record, both local-first — the game
+  // never needs a network or an account for either. The record comes before
+  // the first palette: the felt it chose (issue #229) is part of it.
+  const profile = new ProfileStore(storage);
+  const record = new RecordStore(storage);
+
   // The booted deal's palette (issue #67) — a milestone level boots into its
-  // own colours, not the default's.
+  // own colours, not the default's, and an ordinary one into the record's felt.
   applyPalette();
 
   const settings = new SettingsStore(storage);
   const feedback = new Feedback(() => settings.value, webAudioPlayer(), navigatorVibrate());
-
-  // The player (issue #69): identity and record, both local-first — the game
-  // never needs a network or an account for either.
-  const profile = new ProfileStore(storage);
-  const record = new RecordStore(storage);
 
   /** Today's progress against today's three challenges (issue #183). Fed by
    *  play, not by a mode: there is nowhere else to play. */
@@ -1986,6 +1993,7 @@ async function start(): Promise<void> {
     // Another device may have bought or picked a look (issue #229). The
     // balance may have moved, so a Buy waiting for its Confirm is withdrawn.
     void applyGlyphSet();
+    applyPalette();
     shopArmed = null;
     if (shopVisible) renderShop();
   }
@@ -2099,7 +2107,9 @@ async function start(): Promise<void> {
       record.adopt(mergeRecords(record.value, remote.record));
       syncProfileControls();
       syncProfileRow();
+      // The restored record may pick a glyph set and a felt (issue #229).
       void applyGlyphSet();
+      applyPalette();
       setSyncStatus(`Profile restored — welcome back, ${remote.name}.`);
       announcer.say(`Profile restored. Welcome back, ${remote.name}.`);
       // Send this device's side up so the server holds the merge too.
@@ -2546,14 +2556,96 @@ async function start(): Promise<void> {
    *  `tileImageIn`), so the preview is what the board would draw. */
   const SHOP_PREVIEW_FACES = ['dots-5', 'bamboo-3', 'char-7', 'dragon-green'];
 
+  /** One row of the shop, whatever kind of look it sells. `spoken` is how the
+   *  row's buttons name it ("Calligraphy glyph set", "Forest felt"), so a
+   *  screen reader hears the kind as well as the name. */
+  interface ShopRow {
+    readonly kind: LookKind;
+    readonly id: string;
+    readonly label: string;
+    readonly spoken: string;
+    readonly price: number;
+    readonly description: string;
+    /** What the row shows of the look; the free default has a price of 0. */
+    readonly preview: (into: HTMLElement) => void;
+    /** Put the look on the board once the record has taken the pick. */
+    readonly apply: () => void;
+  }
+
+  function glyphPreview(set: GlyphSet): (into: HTMLElement) => void {
+    return (into) => {
+      if (set.dir === null || glyphLoader.peek(set.dir) !== undefined) {
+        const view = glyphSetInUse(set);
+        for (const face of SHOP_PREVIEW_FACES) {
+          const img = document.createElement('img');
+          img.alt = '';
+          img.src = renderer.tileImageIn(face, view);
+          into.append(img);
+        }
+      } else {
+        into.textContent = 'Loading preview…';
+        ensurePreview(set);
+      }
+    };
+  }
+
+  /** A felt's preview is the felt itself with a face-down Lantern back on it —
+   *  the one pairing the felt has to hold (3:1, ui/test/depth.test.ts). */
+  function feltPreview(felt: Felt): (into: HTMLElement) => void {
+    return (into) => {
+      const swatch = document.createElement('span');
+      swatch.className = 'shop-swatch';
+      swatch.style.background = cssColor(felt.color);
+      const back = document.createElement('span');
+      back.className = 'shop-swatch-back';
+      back.style.background = cssColor(PALETTES.lantern.back);
+      back.style.borderColor = cssColor(PALETTES.lantern.backKeyline);
+      swatch.append(back);
+      into.append(swatch);
+    };
+  }
+
   /** Every glyph-set row, the free default first. */
-  const SHOP_GLYPH_ROWS: readonly { set: GlyphSet; price: number; description: string }[] = [
+  const SHOP_GLYPH_ROWS: readonly ShopRow[] = [
     { set: GLYPH_SETS['lantern']!, price: 0, description: 'The drawn faces every board starts with.' },
     ...SHOP_ITEMS.filter((item) => item.kind === 'glyphs').map((item) => ({
       set: GLYPH_SETS[item.id]!,
       price: item.price,
       description: item.description,
     })),
+  ].map(({ set, price, description }) => ({
+    kind: 'glyphs',
+    id: set.id,
+    label: set.label,
+    spoken: `${set.label} glyph set`,
+    price,
+    description,
+    preview: glyphPreview(set),
+    apply: () => void applyGlyphSet(),
+  }));
+
+  /** Every felt row, the free default first (issue #229 slice 2). */
+  const SHOP_FELT_ROWS: readonly ShopRow[] = [
+    { felt: FELTS['lantern']!, price: 0, description: 'The green table every board starts on.' },
+    ...SHOP_ITEMS.filter((item) => item.kind === 'felt').map((item) => ({
+      felt: feltFor(item.id),
+      price: item.price,
+      description: item.description,
+    })),
+  ].map(({ felt, price, description }) => ({
+    kind: 'felt',
+    id: felt.id,
+    label: felt.label,
+    spoken: `${felt.label} felt`,
+    price,
+    description,
+    preview: feltPreview(felt),
+    apply: applyPalette,
+  }));
+
+  const SHOP_LISTS: readonly { list: HTMLElement; rows: readonly ShopRow[]; inUse: () => string }[] = [
+    { list: shopGlyphList, rows: SHOP_GLYPH_ROWS, inUse: () => glyphSetFor(record.value.looks.glyphs).id },
+    { list: shopFeltList, rows: SHOP_FELT_ROWS, inUse: () => feltFor(record.value.looks.felt).id },
   ];
 
   function renderShop(): void {
@@ -2561,108 +2653,98 @@ async function start(): Promise<void> {
     shopBalance.textContent =
       `${balance} ${balance === 1 ? 'trophy' : 'trophies'} to spend` +
       (record.value.trophies === balance ? '' : ` · ${record.value.trophies} earned`);
-    const inUse = glyphSetFor(record.value.looks.glyphs).id;
-    shopGlyphList.replaceChildren(
-      ...SHOP_GLYPH_ROWS.map(({ set, price, description }) => {
-        const li = document.createElement('li');
-        li.className = 'shop-item';
-        const standing = set.dir === null ? { state: 'owned' as const } : affordability(record.value, set.id);
-        const state = set.id === inUse ? 'in-use' : standing.state;
-        li.dataset['state'] = state;
+    for (const { list, rows, inUse } of SHOP_LISTS) {
+      const current = inUse();
+      list.replaceChildren(...rows.map((row) => shopRow(row, row.id === current)));
+    }
+  }
 
-        const head = document.createElement('div');
-        head.className = 'shop-head';
-        const name = document.createElement('strong');
-        name.textContent = set.label;
-        const priceEl = document.createElement('span');
-        priceEl.className = 'shop-price';
-        priceEl.textContent =
-          state === 'in-use' || state === 'owned'
-            ? price === 0
-              ? 'Free'
-              : 'Owned'
-            : `${price} ${price === 1 ? 'trophy' : 'trophies'}`;
-        head.append(name, priceEl);
-        const desc = document.createElement('span');
-        desc.className = 'shop-desc';
-        desc.textContent = description;
+  function trophies(n: number): string {
+    return `${n} ${n === 1 ? 'trophy' : 'trophies'}`;
+  }
 
-        const preview = document.createElement('div');
-        preview.className = 'shop-preview';
-        preview.setAttribute('aria-hidden', 'true');
-        if (set.dir === null || glyphLoader.peek(set.dir) !== undefined) {
-          const view = glyphSetInUse(set);
-          for (const face of SHOP_PREVIEW_FACES) {
-            const img = document.createElement('img');
-            img.alt = '';
-            img.src = renderer.tileImageIn(face, view);
-            preview.append(img);
-          }
-        } else {
-          preview.textContent = 'Loading preview…';
-          ensurePreview(set);
-        }
+  function shopRow(row: ShopRow, inUse: boolean): HTMLLIElement {
+    const li = document.createElement('li');
+    li.className = 'shop-item';
+    const standing = row.price === 0 ? { state: 'owned' as const } : affordability(record.value, row.id);
+    const state = inUse ? 'in-use' : standing.state;
+    li.dataset['state'] = state;
 
-        const actions = document.createElement('div');
-        actions.className = 'shop-actions';
-        const label = `${set.label} glyph set`;
-        if (state === 'in-use') {
-          const button = document.createElement('button');
-          button.type = 'button';
-          button.textContent = 'In use';
-          button.setAttribute('aria-pressed', 'true');
-          button.setAttribute('aria-label', `${label}, in use`);
-          actions.append(button);
-        } else if (state === 'owned') {
-          const button = document.createElement('button');
-          button.type = 'button';
-          button.textContent = 'Use';
-          button.setAttribute('aria-label', `Use the ${label}`);
-          button.addEventListener('click', () => chooseGlyphSet(set));
-          actions.append(button);
-        } else if (shopArmed === set.id && standing.state === 'affordable') {
-          const confirm = document.createElement('button');
-          confirm.type = 'button';
-          confirm.dataset['confirm'] = set.id;
-          confirm.textContent = `Confirm ${price} ${price === 1 ? 'trophy' : 'trophies'}`;
-          confirm.setAttribute('aria-label', `Confirm: buy the ${label} for ${price} trophies`);
-          confirm.addEventListener('click', () => buyGlyphSet(set, price));
-          const cancel = document.createElement('button');
-          cancel.type = 'button';
-          cancel.className = 'secondary';
-          cancel.textContent = 'Cancel';
-          cancel.addEventListener('click', () => {
-            shopArmed = null;
-            renderShop();
-            shopGlyphList.querySelector<HTMLButtonElement>(`[data-buy="${set.id}"]`)?.focus();
-          });
-          actions.append(confirm, cancel);
-        } else {
-          const buy = document.createElement('button');
-          buy.type = 'button';
-          buy.dataset['buy'] = set.id;
-          buy.textContent = `Buy for ${price} ${price === 1 ? 'trophy' : 'trophies'}`;
-          buy.setAttribute('aria-label', `Buy the ${label} for ${price} trophies`);
-          if (standing.state === 'locked') {
-            buy.disabled = true;
-            const short = document.createElement('span');
-            short.className = 'shop-short';
-            short.textContent = `${standing.short} more needed`;
-            actions.append(buy, short);
-          } else {
-            buy.addEventListener('click', () => {
-              shopArmed = set.id;
-              renderShop();
-              shopGlyphList.querySelector<HTMLButtonElement>(`[data-confirm="${set.id}"]`)?.focus();
-            });
-            actions.append(buy);
-          }
-        }
+    const head = document.createElement('div');
+    head.className = 'shop-head';
+    const name = document.createElement('strong');
+    name.textContent = row.label;
+    const priceEl = document.createElement('span');
+    priceEl.className = 'shop-price';
+    priceEl.textContent =
+      state === 'in-use' || state === 'owned' ? (row.price === 0 ? 'Free' : 'Owned') : trophies(row.price);
+    head.append(name, priceEl);
+    const desc = document.createElement('span');
+    desc.className = 'shop-desc';
+    desc.textContent = row.description;
 
-        li.append(head, desc, preview, actions);
-        return li;
-      }),
-    );
+    const preview = document.createElement('div');
+    preview.className = 'shop-preview';
+    preview.setAttribute('aria-hidden', 'true');
+    row.preview(preview);
+
+    const actions = document.createElement('div');
+    actions.className = 'shop-actions';
+    if (state === 'in-use') {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = 'In use';
+      button.setAttribute('aria-pressed', 'true');
+      button.setAttribute('aria-label', `${row.spoken}, in use`);
+      actions.append(button);
+    } else if (state === 'owned') {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = 'Use';
+      button.setAttribute('aria-label', `Use the ${row.spoken}`);
+      button.addEventListener('click', () => chooseLook(row));
+      actions.append(button);
+    } else if (shopArmed === row.id && standing.state === 'affordable') {
+      const confirm = document.createElement('button');
+      confirm.type = 'button';
+      confirm.dataset['confirm'] = row.id;
+      confirm.textContent = `Confirm ${trophies(row.price)}`;
+      confirm.setAttribute('aria-label', `Confirm: buy the ${row.spoken} for ${row.price} trophies`);
+      confirm.addEventListener('click', () => buyLook(row));
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'secondary';
+      cancel.textContent = 'Cancel';
+      cancel.addEventListener('click', () => {
+        shopArmed = null;
+        renderShop();
+        shopPanel.querySelector<HTMLButtonElement>(`[data-buy="${row.id}"]`)?.focus();
+      });
+      actions.append(confirm, cancel);
+    } else {
+      const buy = document.createElement('button');
+      buy.type = 'button';
+      buy.dataset['buy'] = row.id;
+      buy.textContent = `Buy for ${trophies(row.price)}`;
+      buy.setAttribute('aria-label', `Buy the ${row.spoken} for ${row.price} trophies`);
+      if (standing.state === 'locked') {
+        buy.disabled = true;
+        const short = document.createElement('span');
+        short.className = 'shop-short';
+        short.textContent = `${standing.short} more needed`;
+        actions.append(buy, short);
+      } else {
+        buy.addEventListener('click', () => {
+          shopArmed = row.id;
+          renderShop();
+          shopPanel.querySelector<HTMLButtonElement>(`[data-confirm="${row.id}"]`)?.focus();
+        });
+        actions.append(buy);
+      }
+    }
+
+    li.append(head, desc, preview, actions);
+    return li;
   }
 
   /** Fetch a set's bitmaps for its preview and re-render once they are in.
@@ -2678,30 +2760,30 @@ async function start(): Promise<void> {
     );
   }
 
-  function chooseGlyphSet(set: GlyphSet): void {
-    if (!record.setLook('glyphs', set.id, Date.now())) return;
+  function chooseLook(row: ShopRow): void {
+    if (!record.setLook(row.kind, row.id, Date.now())) return;
     shopArmed = null;
     setShopStatus('');
     renderShop();
-    void applyGlyphSet();
+    row.apply();
     syncCosmetics();
-    announcer.say(`${set.label} glyph set in use.`);
-    shopGlyphList.querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.focus();
+    announcer.say(`${row.spoken} in use.`);
+    shopPanel.querySelector<HTMLButtonElement>(`[aria-label="${row.spoken}, in use"]`)?.focus();
   }
 
-  function buyGlyphSet(set: GlyphSet, price: number): void {
+  function buyLook(row: ShopRow): void {
     shopArmed = null;
-    if (!purchase(record, set.id)) {
+    if (!purchase(record, row.id)) {
       // The balance moved under the confirm (a sync landed): say so, re-render.
-      setShopStatus(`Not enough trophies for the ${set.label} set.`);
+      setShopStatus(`Not enough trophies for the ${row.spoken}.`);
       renderShop();
       return;
     }
-    setShopStatus(`Bought the ${set.label} set. Tap Use to put it on the board.`);
+    setShopStatus(`Bought the ${row.spoken}. Tap Use to put it on the board.`);
     renderShop();
     syncCosmetics();
-    announcer.say(`Bought the ${set.label} glyph set for ${price} trophies. ${trophyBalance(record.value)} left to spend.`);
-    shopGlyphList.querySelector<HTMLButtonElement>(`[aria-label="Use the ${set.label} glyph set"]`)?.focus();
+    announcer.say(`Bought the ${row.spoken} for ${row.price} trophies. ${trophyBalance(record.value)} left to spend.`);
+    shopPanel.querySelector<HTMLButtonElement>(`[aria-label="Use the ${row.spoken}"]`)?.focus();
   }
 
   function openShop(): void {

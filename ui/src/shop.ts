@@ -13,6 +13,7 @@
 
 import { DEFAULT_GLYPH_SET } from './profile.js';
 import type { LookKind, PlayerRecord, RecordStore } from './profile.js';
+import { FELTS } from './depth.js';
 
 export interface ShopItem {
   readonly id: string;
@@ -37,6 +38,44 @@ export const SHOP_ITEMS: readonly ShopItem[] = [
     kind: 'glyphs',
     label: 'Fantasy',
     description: 'Carved-jade emblems: gem pips, staves and storybook dragons.',
+    price: 60,
+  },
+  // Board felts (slice 2, decision 0039): the table under the tiles, nothing
+  // else. Colours live with the palette in depth.ts (FELTS); the shop only
+  // prices them.
+  {
+    id: 'felt-forest',
+    kind: 'felt',
+    label: FELTS['felt-forest']!.label,
+    description: 'Deep evergreen, darker than the lantern green.',
+    price: 10,
+  },
+  {
+    id: 'felt-ink',
+    kind: 'felt',
+    label: FELTS['felt-ink']!.label,
+    description: 'Near-black, so the tiles carry all the colour.',
+    price: 10,
+  },
+  {
+    id: 'felt-teal',
+    kind: 'felt',
+    label: FELTS['felt-teal']!.label,
+    description: 'Dark sea teal.',
+    price: 25,
+  },
+  {
+    id: 'felt-slate',
+    kind: 'felt',
+    label: FELTS['felt-slate']!.label,
+    description: 'Cool blue-grey slate.',
+    price: 25,
+  },
+  {
+    id: 'felt-walnut',
+    kind: 'felt',
+    label: FELTS['felt-walnut']!.label,
+    description: 'Warm dark walnut, like a wooden table.',
     price: 60,
   },
 ];
