@@ -6,6 +6,9 @@ commit and build time of the running bundle.
 
 ## 2026-09-05
 
+- The leaderboard now closes when you tap the dimmed area outside it, the way
+  Settings and What's new already did; a tap on the board itself still leaves
+  it open (#223).
 - Taps no longer stutter on a full board. The board used to be torn down and
   redrawn from scratch after every tap, and the very first tap of a session
   also paid for setting up the sound; now only the tiles that changed are
