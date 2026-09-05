@@ -8,10 +8,12 @@
 // and the holder is never a decision). Size, depth and forced moves are minor
 // terms: every shipped layout is a full 144-tile set, so tile count is a
 // constant across the ladder and must not dominate. Normalizers are set from
-// the 40-seed sweep of the ten compact portrait layouts (2026-09-04): initial
-// pairs span 6–62, witness-path branching 5.5–21. Holder-aware calibration
-// (decisions 0008/0009) stays deferred. Everything here is a pure function of
-// the level, so bucket assignment is deterministic per (layoutId, seed).
+// the 40-seed sweep of the ten shipped layouts, re-taken after the exposure
+// rework (issue #213, 2026-09-05): initial pairs span 1–25 with layout medians
+// 4–15, witness-path branching 4.2–11.3 with medians 5.9–7.5. Holder-aware
+// calibration (decisions 0008/0009) stays deferred. Everything here is a pure
+// function of the level, so bucket assignment is deterministic per
+// (layoutId, seed).
 
 import { Board } from './board.js';
 import type { Tile, TileId } from './board.js';
@@ -71,14 +73,19 @@ function unit(value: number): number {
 }
 
 /**
- * Initial free pairs at which the tight-start signal bottoms out. The old
+ * Initial free pairs at which the tight-start signal bottoms out. The original
  * value, 12, was below every shipped deal (issue #212): the signal read zero
- * for the whole ladder. 48 sits above the median of the loosest layout, so
- * only the loosest seeds clip.
+ * for the whole ladder. Issue #212 set it to 48, just above the loosest
+ * layout's median of the time; the exposure rework (issue #213) cut every
+ * layout's opening to 4–15 pairs at the median, so the normalizer follows the
+ * same rule on the new sweep: 16 sits just above the loosest layout's median
+ * (Spider, 15), so only the loosest seeds clip.
  */
-export const LOOSE_START_PAIRS = 48;
-/** Witness-path branching (above the forced floor of 1) that reads as fully loose. */
-export const LOOSE_PATH_BRANCHING = 16;
+export const LOOSE_START_PAIRS = 16;
+/** Witness-path branching (above the forced floor of 1) that reads as fully
+ *  loose: 8 sits above the loosest layout's median branching (7.5) on the
+ *  same sweep. */
+export const LOOSE_PATH_BRANCHING = 8;
 
 /** Pair-density-dominant weights (sum to 1) over normalized signals. */
 export function difficultyScore(m: DifficultyMetrics): number {
@@ -94,8 +101,8 @@ export function difficultyScore(m: DifficultyMetrics): number {
  *  easy below the medium window, medium across medium and medium-plus, hard
  *  across the hard window, expert above the v1 ceiling. */
 function bucketFromScore(score: number): DifficultyBucket {
-  if (score < 0.3) return 'easy';
-  if (score < 0.6) return 'medium';
+  if (score < 0.36) return 'easy';
+  if (score < 0.52) return 'medium';
   if (score < 0.8) return 'hard';
   return 'expert';
 }

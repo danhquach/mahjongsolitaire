@@ -107,8 +107,15 @@ import type { KeyValueStorage } from './storage.js';
  *  hold — because the leaderboard verifies a run by replaying its history
  *  (decision 0030). A v7 record's moves omit both, so a deal resumed from one
  *  would finish with a history the server cannot replay and its clear would
- *  never reach the board. Same clean break: the in-flight deal restarts. */
-export const SAVE_VERSION = 8;
+ *  never reach the board. Same clean break: the in-flight deal restarts.
+ *
+ *  v9 (issue #213): the ten layouts were reworked in place again — deeper,
+ *  narrower stacks so far fewer tiles are free at deal time — under the same
+ *  ids. As with the v4→v5 break (decision 0015), a v8 record's `(layoutId,
+ *  seed)` regenerates a different deal on the new geometry, so its snapshot
+ *  would be silently incoherent. The in-flight deal restarts; level progress
+ *  (stored separately) keeps. */
+export const SAVE_VERSION = 9;
 /** The slot key is deliberately *not* versioned with the record: the `version`
  *  field inside is what decides whether a record can be trusted, and renaming
  *  the key would only orphan the old bytes instead of overwriting them. */

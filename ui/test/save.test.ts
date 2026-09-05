@@ -228,17 +228,16 @@ test('a ratio of 0 conceals nothing — it is not read as “no ratio given”',
 test('resume restores a mid-pair holder, and the undo stack behind it', () => {
   const level = generateValidatedLevel(TURTLE, SAMPLE_SEED);
   const game = new Game(level);
-  for (const [a, b] of level.solution.slice(0, 5)) {
-    reveal(game, a, 0);
-    game.tap(free(a), 0);
-    reveal(game, b, 0);
-    game.tap(free(b), 0);
-  }
-  reveal(game, level.solution[5]![0], 0);
-  game.tap(free(level.solution[5]![0]), 0); // first half of a pair: parked
+  // `park`, not a bare tap: a face-down tile whose partner is already held
+  // clears on the peek itself (issue #165), so a second tap would misfire.
+  level.solution.slice(0, 5).forEach(([a, b], i) => {
+    park(game, a, i * 10);
+    park(game, b, i * 10 + 5);
+  });
+  park(game, level.solution[5]![0], 50); // first half of a pair: parked
   assert.notEqual(game.holderSlots()[0], null);
 
-  const resumed = forceQuit(game)!;
+  const resumed = forceQuit(game, { shuffles: 0, hints: 0, undos: 0, elapsedMs: 100 })!;
   assert.deepEqual(resumed.holderSlots(), game.holderSlots());
   assert.equal(resumed.undoDepth, game.undoDepth);
   // The parked tile is still returnable after the quit (issue #100); the

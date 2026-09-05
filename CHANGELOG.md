@@ -6,6 +6,15 @@ commit and build time of the running bundle.
 
 ## 2026-09-05
 
+- Every layout has been rebuilt as a deeper, tighter stack: far fewer tiles
+  are free when a board is dealt (at most 30, against up to 64 before), so a
+  matching pair is no longer always in view and parking a tile in the holder
+  becomes a real decision from the medium band up. The silhouettes keep their
+  names and shapes, the ladder has been re-dealt on the new boards, and levels
+  you have cleared stay cleared. A game in progress restarts on the new
+  geometry. Shuffle now deals the new faces the way a level is dealt, so it
+  answers at once on any board instead of searching for up to a minute and
+  sometimes giving up on the denser ones (#213).
 - A mistyped or out-of-date link now lands on a proper page — "That page
   doesn't exist", with a button back to the game — instead of a line of raw
   text (#210).

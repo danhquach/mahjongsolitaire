@@ -45,7 +45,6 @@ import { hashString } from './rng.js';
 import { ScoreKeeper } from './scoring.js';
 import type { MatchScore, ScoreSnapshot } from './scoring.js';
 import { shuffleBoard } from './shuffle.js';
-import type { SolveOptions } from './solver.js';
 
 /** What every move records. `prevSelection` / `prevScores` are no longer
  *  replayed by `undo` (issue #100: matches are permanent, and a return leaves
@@ -82,10 +81,10 @@ export interface ReturnMove extends MoveBase {
   readonly slotIndex: number;
 }
 
-/** The Shuffle booster, with the seed that re-faced the board and the attempt
- *  the solver accepted (issue #187). Occupancy is untouched; only faces
- *  change, and `applyShuffle(board, seed, attempt)` reproduces them at this
- *  point in the sequence without paying for the solver again. */
+/** The Shuffle booster, with the seed that re-faced the board and the
+ *  construction attempt that completed (issue #187). Occupancy is untouched;
+ *  only faces change, and `applyShuffle(board, seed, attempt)` reproduces them
+ *  at this point in the sequence. */
 export interface ShuffleMove extends MoveBase {
   readonly kind: 'shuffle';
   readonly seed: number;
@@ -264,12 +263,12 @@ export class MoveStack {
    * assignment exists, so an impossible shuffle costs the player nothing.
    * Clears the selection: the face under it just changed.
    */
-  shuffle(seed: number, nowMs: number = this.latestMs(), options: SolveOptions = {}): boolean {
+  shuffle(seed: number, nowMs: number = this.latestMs()): boolean {
     const prevSelection = this.selected;
     const prevScores = this.scores.snapshot();
     let attempt: number | null;
     try {
-      attempt = shuffleBoard(this.board, seed, options);
+      attempt = shuffleBoard(this.board, seed);
     } catch {
       return false;
     }
