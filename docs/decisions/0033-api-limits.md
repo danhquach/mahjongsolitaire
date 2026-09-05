@@ -42,7 +42,9 @@ How to read it:
   Feedback attachments have their own caps inside the body (3 files, 10 MB an
   image, 25 MB a video, 25 MB in all → `413 attachment_too_large`, 0020).
 - **Per address** is a fixed window keyed by `CF-Connecting-IP`, checked before
-  any code is looked at (0029). **Per player** is the same window keyed by the
+  any code is looked at (0029). An IPv4 caller keys on its address; an IPv6
+  caller keys on its /64 prefix, because every IPv6 connection owns at least
+  a /64 and the full address would give one caller 2^64 buckets (#209). **Per player** is the same window keyed by the
   authenticated player, checked after. **Per day** is the identity's quota
   (0032): the player's where there is one, the address's and everyone's for
   registration. All three answer `429 rate_limited`.
