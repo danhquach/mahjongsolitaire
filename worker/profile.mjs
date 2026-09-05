@@ -271,7 +271,11 @@ function counter(value) {
 /** The free glyph set every record starts with (ui/src/profile.ts
  *  DEFAULT_GLYPH_SET) — the one cosmetic id the server has to know, because
  *  it is what an absent or malformed look reads as. */
-const DEFAULT_LOOKS = { glyphs: 'lantern' };
+/** Keys sorted, like ui/src/profile.ts `DEFAULT_LOOKS` and `parseLooks`. */
+const DEFAULT_LOOKS = { felt: 'lantern', glyphs: 'lantern' };
+/** Same bounds as ui/src/profile.ts `LOOK_KIND` / `MAX_LOOKS`. */
+const LOOK_KIND = /^[a-z]{1,16}$/;
+const MAX_LOOKS = 8;
 
 export const EMPTY_RECORD = {
   levelsCleared: 0,
@@ -307,9 +311,20 @@ function normalizeOwned(raw) {
   return Array.from(ids).sort().slice(0, MAX_OWNED);
 }
 
+/** Keep in step with ui/src/profile.ts `parseLooks`: every known kind gets
+ *  its default when missing or malformed, a well-formed kind this build does
+ *  not know is kept as it came (a newer client's pick must survive the round
+ *  trip), and the keys come out sorted so the merge's JSON tie-break sees the
+ *  same text for the same picks. */
 function parseLooks(raw) {
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return DEFAULT_LOOKS;
-  return { glyphs: isCosmeticId(raw.glyphs) ? raw.glyphs : DEFAULT_LOOKS.glyphs };
+  const picks = { ...DEFAULT_LOOKS };
+  if (raw !== null && typeof raw === 'object' && !Array.isArray(raw)) {
+    const entries = Object.entries(raw)
+      .filter(([kind, id]) => LOOK_KIND.test(kind) && isCosmeticId(id))
+      .slice(0, MAX_LOOKS);
+    for (const [kind, id] of entries) picks[kind] = id;
+  }
+  return Object.fromEntries(Object.keys(picks).sort().map((k) => [k, picks[k]]));
 }
 
 function parseLooksAt(raw) {

@@ -41,6 +41,7 @@ import {
   tileShade,
 } from '../src/depth.js';
 import type { BoardPalette } from '../src/depth.js';
+import { DEFAULT_FELT, FELTS, feltFor, withFelt } from '../src/depth.js';
 import { faceStyle } from '../src/faces.js';
 import { SIDE_DEPTH, TILE_H, TILE_W } from '../src/geometry.js';
 
@@ -429,4 +430,52 @@ test('every palette keeps the soft-felt / strong-back rule (issue #82)', () => {
 test('cssColor pads to six hex digits', () => {
   assert.equal(cssColor(0x14532d), '#14532d');
   assert.equal(cssColor(0x000a0b), '#000a0b');
+});
+
+// --- purchasable felts (issue #229 slice 2, decision 0039) ----------------------
+
+/** Lantern under every felt it can wear — what the ordinary board can look like. */
+const EVERY_FELTED_LANTERN: readonly BoardPalette[] = Object.values(FELTS).map((felt) => withFelt(LANTERN, felt));
+
+test('a felt changes the felt and nothing else; the default felt is Lantern’s own', () => {
+  assert.equal(withFelt(LANTERN, FELTS[DEFAULT_FELT]!), LANTERN, 'the default is the palette itself');
+  for (const felt of Object.values(FELTS)) {
+    const worn = withFelt(LANTERN, felt);
+    assert.equal(worn.felt, felt.color, felt.id);
+    assert.deepEqual({ ...worn, felt: LANTERN.felt }, LANTERN, `${felt.id}: only the felt may differ`);
+    assert.equal(felt.label.length > 0, true, felt.id);
+    assert.match(felt.id, /^[a-z][a-z0-9-]{0,31}$/);
+  }
+  assert.equal(feltFor('felt-from-the-future').id, DEFAULT_FELT);
+  assert.equal(feltFor('felt-walnut').id, 'felt-walnut');
+});
+
+test('Lantern’s back holds 3:1 against every felt, on any undimmed layer (issue #82 per felt)', () => {
+  for (const palette of EVERY_FELTED_LANTERN) {
+    let worst = { ratio: Infinity, where: '' };
+    for (const { z, topZ, dimmed } of everyShade()) {
+      if (dimmed) continue;
+      const factor = 1 - LAYER_FACE_STEP * depthSteps(z, topZ);
+      const ratio = contrastRatio(scaleColor(palette.back, factor), palette.felt);
+      if (ratio < worst.ratio) worst = { ratio, where: `z=${z} topZ=${topZ}` };
+    }
+    assert.ok(
+      worst.ratio >= MIN_NON_TEXT_CONTRAST,
+      `felt ${cssColor(palette.felt)}: worst back-vs-felt contrast ${worst.ratio.toFixed(2)}:1 at ${worst.where}`,
+    );
+    // And the soft-felt / strong-back rule: every felt is the dark variant.
+    assert.ok(relativeLuminance(palette.back) > relativeLuminance(palette.felt) * 4, cssColor(palette.felt));
+  }
+});
+
+test('no felt sits near the reserved Milestone burgundy or Daily indigo (decision 0017)', () => {
+  const reserved = [PALETTES.milestone.felt, 0x1e1b4b];
+  const channels = (c: number) => [c >> 16, (c >> 8) & 0xff, c & 0xff];
+  const distance = (a: number, b: number) =>
+    Math.hypot(...channels(a).map((v, i) => v - channels(b)[i]!));
+  for (const felt of Object.values(FELTS)) {
+    for (const taken of reserved) {
+      assert.ok(distance(felt.color, taken) > 40, `${felt.id} ${cssColor(felt.color)} is near ${cssColor(taken)}`);
+    }
+  }
 });

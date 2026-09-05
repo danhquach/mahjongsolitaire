@@ -109,6 +109,48 @@ export const PALETTES: Record<PaletteId, BoardPalette> = {
   },
 };
 
+/**
+ * A purchasable board felt (issue #229 slice 2, decision 0039): a plain, dark,
+ * low-saturation surface the ordinary Lantern palette wears under its tiles.
+ * Only the felt changes — the border, side, back and keyline stay Lantern's —
+ * so the one proof a felt owes is that Lantern's back still holds 3:1 against
+ * it on every undimmed layer (ui/test/depth.test.ts runs it per felt). The
+ * milestone palette keeps its own felt whatever is owned (the spike's look is
+ * game meaning, decision 0011), and so does the Daily board.
+ */
+export interface Felt {
+  readonly id: string;
+  readonly label: string;
+  readonly color: number;
+}
+
+/** The free felt every record starts with: Lantern's own. */
+export const DEFAULT_FELT = 'lantern';
+
+/** Every felt this build can paint, by id. Bases from the brief in
+ *  docs/design/cosmetics-prompts.md; none may sit near the reserved Milestone
+ *  burgundy or Daily indigo (decision 0017). */
+export const FELTS: Readonly<Record<string, Felt>> = {
+  [DEFAULT_FELT]: { id: DEFAULT_FELT, label: 'Lantern', color: BOARD_FELT },
+  'felt-forest': { id: 'felt-forest', label: 'Forest', color: 0x052e16 },
+  'felt-ink': { id: 'felt-ink', label: 'Ink', color: 0x18181b },
+  'felt-teal': { id: 'felt-teal', label: 'Teal', color: 0x134e4a },
+  'felt-slate': { id: 'felt-slate', label: 'Slate', color: 0x334155 },
+  'felt-walnut': { id: 'felt-walnut', label: 'Walnut', color: 0x4a3728 },
+};
+
+/** The felt a record's `looks.felt` names — Lantern's for an id this build
+ *  does not ship (a newer build's pick, kept opaquely, has nothing to paint). */
+export function feltFor(id: string): Felt {
+  return FELTS[id] ?? FELTS[DEFAULT_FELT]!;
+}
+
+/** `palette` wearing `felt` instead of its own. Same id: the tiles are drawn
+ *  identically, only the table under them changes. */
+export function withFelt(palette: BoardPalette, felt: Felt): BoardPalette {
+  return palette.felt === felt.color ? palette : { ...palette, felt: felt.color };
+}
+
 /** `#rrggbb` for CSS, from a packed RGB colour. */
 export function cssColor(color: number): string {
   return `#${color.toString(16).padStart(6, '0')}`;

@@ -210,18 +210,33 @@ export interface PlayerRecord {
   readonly looksAt: number | null;
 }
 
-/** The kinds of look a record chooses. Slice 1 of issue #229 ships glyph sets;
- *  tile backs, felts and avatar frames add keys here under the same stamp. */
+/** The kinds of look a record chooses, one id each, all under the one
+ *  `looksAt` stamp. Slice 1 of issue #229 shipped glyph sets, slice 2 the
+ *  felt; tile backs and avatar frames add keys here. A key this build does
+ *  not know is kept opaquely (`parseLooks`), so a newer build's pick of a kind
+ *  this one has never heard of survives a round trip through this device. */
 export interface Looks {
   readonly glyphs: string;
+  readonly felt: string;
+  readonly [kind: string]: string;
 }
 
-export type LookKind = keyof Looks;
+export type LookKind = 'glyphs' | 'felt';
 
 /** The free, drawn glyph set every record starts with (decision 0002's faces). */
 export const DEFAULT_GLYPH_SET = 'lantern';
+/** The free felt every record starts with: the Lantern palette's own
+ *  (depth.ts `DEFAULT_FELT`, kept as a literal so profile.ts stays free of the
+ *  renderer's palette). */
+export const DEFAULT_FELT = 'lantern';
 
-export const DEFAULT_LOOKS: Looks = { glyphs: DEFAULT_GLYPH_SET };
+/** Keys in sorted order, like `parseLooks` leaves them and `setLook` keeps them. */
+export const DEFAULT_LOOKS: Looks = { felt: DEFAULT_FELT, glyphs: DEFAULT_GLYPH_SET };
+
+/** A look kind is a short lowercase word; more kinds than the shop could ever
+ *  sell is a hand-edited record. */
+const LOOK_KIND = /^[a-z]{1,16}$/;
+const MAX_LOOKS = 8;
 
 /** A plausible cosmetic id — the same shape the Worker accepts for an avatar
  *  id, and the same reason: the server stores it opaquely. */
@@ -258,10 +273,20 @@ export function normalizeOwned(raw: unknown): string[] {
   return Array.from(ids).sort().slice(0, MAX_OWNED);
 }
 
-function parseLooks(raw: unknown): Looks {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return DEFAULT_LOOKS;
-  const glyphs = (raw as Record<string, unknown>)['glyphs'];
-  return { glyphs: isCosmeticId(glyphs) ? glyphs : DEFAULT_GLYPH_SET };
+/** Every kind this build knows gets its default when missing or malformed;
+ *  a well-formed kind it does not know is kept as it came (the Worker does the
+ *  same, worker/profile.mjs `parseLooks`). Keys are sorted so two devices
+ *  serialise the same picks identically — the merge's tie-break compares the
+ *  JSON (sync.ts `mergeLooks`). */
+export function parseLooks(raw: unknown): Looks {
+  const picks: Record<string, string> = { ...DEFAULT_LOOKS };
+  if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+    const entries = Object.entries(raw as Record<string, unknown>)
+      .filter(([kind, id]) => LOOK_KIND.test(kind) && isCosmeticId(id))
+      .slice(0, MAX_LOOKS);
+    for (const [kind, id] of entries) picks[kind] = id as string;
+  }
+  return Object.fromEntries(Object.keys(picks).sort().map((k) => [k, picks[k]!])) as Looks;
 }
 
 /** Per-field tolerance, like parseProfile: counters are non-negative integers

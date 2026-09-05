@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { EMPTY_RECORD, RecordStore } from '../src/profile.js';
+import { DEFAULT_FELT, FELTS, LANTERN } from '../src/depth.js';
 import type { PlayerRecord } from '../src/profile.js';
 import {
   GLYPH_SETS,
@@ -19,12 +20,17 @@ import {
 
 const withRecord = (patch: Partial<PlayerRecord>): PlayerRecord => ({ ...EMPTY_RECORD, ...patch });
 
-test('the shop sells the two drawn glyph sets at the issue’s proposed prices', () => {
+test('the shop sells the two drawn glyph sets and five felts at the issue’s proposed prices', () => {
   assert.deepEqual(
     SHOP_ITEMS.map((i) => [i.id, i.kind, i.price]),
     [
       ['glyphs-calligraphy', 'glyphs', 25],
       ['glyphs-fantasy', 'glyphs', 60],
+      ['felt-forest', 'felt', 10],
+      ['felt-ink', 'felt', 10],
+      ['felt-teal', 'felt', 25],
+      ['felt-slate', 'felt', 25],
+      ['felt-walnut', 'felt', 60],
     ],
   );
   // Every item has something to show and say.
@@ -45,6 +51,22 @@ test('every purchasable glyph set has art metadata, and the default is free and 
     assert.equal(set!.label, item.label);
   }
   assert.equal(SHOP_ITEMS.some((i) => i.id === 'lantern'), false);
+});
+
+test('every purchasable felt is a colour the palette can paint, and the default is free and not for sale', () => {
+  for (const item of SHOP_ITEMS.filter((i) => i.kind === 'felt')) {
+    const felt = FELTS[item.id];
+    assert.ok(felt, `${item.id} has a felt`);
+    assert.equal(felt!.label, item.label);
+  }
+  assert.equal(FELTS[DEFAULT_FELT]!.color, LANTERN.felt);
+  assert.equal(SHOP_ITEMS.some((i) => i.id === DEFAULT_FELT), false);
+  // Every felt for sale is for sale once, and every felt on the palette table
+  // other than the default is for sale (no orphan colours).
+  assert.deepEqual(
+    Object.keys(FELTS).filter((id) => id !== DEFAULT_FELT).sort(),
+    SHOP_ITEMS.filter((i) => i.kind === 'felt').map((i) => i.id).sort(),
+  );
 });
 
 test('glyphSetFor resolves a shipped id and falls back to Lantern for anything else', () => {
@@ -92,6 +114,21 @@ test('purchase spends the balance once, refuses a short balance and a repeat, an
   assert.equal(purchase(record, 'glyphs-calligraphy'), true, 'exactly affordable');
   assert.equal(trophyBalance(record.value), 0);
   // Buying picks nothing: the look is a separate, deliberate tap.
-  assert.deepEqual(record.value.looks, { glyphs: 'lantern' });
+  assert.deepEqual(record.value.looks, { felt: 'lantern', glyphs: 'lantern' });
   assert.equal(purchase(record, 'not-for-sale'), false);
+});
+
+test('a felt is bought and chosen like a glyph set, and the two kinds spend one balance', () => {
+  const record = new RecordStore();
+  record.adopt(withRecord({ trophies: 35 }));
+  assert.equal(record.setLook('felt', 'felt-forest', 1), false, 'not owned yet');
+  assert.equal(purchase(record, 'felt-forest'), true);
+  assert.equal(trophyBalance(record.value), 25);
+  assert.deepEqual(affordability(record.value, 'glyphs-fantasy'), { state: 'locked', short: 35 });
+  assert.equal(purchase(record, 'glyphs-calligraphy'), true, 'the felt spent from the same balance');
+  assert.equal(trophyBalance(record.value), 0);
+  assert.equal(record.setLook('felt', 'felt-forest', 1), true);
+  assert.deepEqual(record.value.looks, { felt: 'felt-forest', glyphs: 'lantern' });
+  assert.equal(record.setLook('felt', 'felt-walnut', 2), false, 'not owned');
+  assert.equal(record.setLook('felt', DEFAULT_FELT, 2), true, 'the free default is always allowed');
 });
