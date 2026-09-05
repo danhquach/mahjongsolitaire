@@ -7,11 +7,14 @@
 //
 //   shadow sprite → side bands (base outward → inward) → top face → ink
 //
-// per tile, tiles themselves in paintOrder. A tile's shadow therefore lands on
-// the already-painted lower layers down-right of it and is overpainted by its
-// own right/lower same-layer neighbours, which is exactly right: neighbours at
-// equal height cast nothing on each other (the darker outline separates those),
-// while an upper layer detaches from the stack below it.
+// per tile, tiles themselves in drawOrder. A tile's shadow and side reach only
+// right and down of its face, and drawOrder paints every same-layer neighbour
+// in that direction after it (issue #220 — row-major order did not, for a
+// right-hand neighbour half a row up, which then wore this tile's shadow and
+// side across its corner and read as sitting underneath). So a shadow lands
+// only on the already-painted layers below, which is exactly right: neighbours
+// at equal height cast nothing on each other (the darker outline separates
+// those), while an upper layer detaches from the stack below it.
 
 import { ColorMatrixFilter, Container, Graphics, Rectangle, Sprite, Text } from 'pixi.js';
 import type { Application, Texture } from 'pixi.js';
@@ -24,10 +27,10 @@ import {
   SHADOW_DX,
   SHADOW_DY,
   SHADOW_PAD,
-  SHADOW_RINGS,
   SHADOW_UP_LEFT_RATIO,
   depthSteps,
   scaleColor,
+  shadowRings,
   tileShade,
 } from './depth.js';
 import type { BoardPalette } from './depth.js';
@@ -51,7 +54,7 @@ import {
   pipMetrics,
 } from './pips.js';
 import type { Game } from './game.js';
-import { SIDE_DEPTH, TILE_H, TILE_W, boardBounds, paintOrder, tileRect } from './geometry.js';
+import { SIDE_DEPTH, TILE_H, TILE_W, boardBounds, drawOrder, tileRect } from './geometry.js';
 import type { Rect } from './geometry.js';
 import { BOARD_MARGIN, fitScale } from './hud-fit.js';
 import type { BoardExtent } from './hud-fit.js';
@@ -230,7 +233,9 @@ export class BoardRenderer {
   private bounds: Rect;
   /** Topmost layer of the loaded layout — the depth ladder's bright end. */
   private topZ: number;
-  private readonly shadowTexture: Texture;
+  /** Baked drop shadows by tile height (issue #220): one texture per layer z
+   *  a tile has been drawn at, ground first. Lazily filled, never dropped. */
+  private readonly shadowTextures = new Map<number, Texture>();
   private viewScale = 1;
   /** Tile Size setting (issue #14): a fraction of the fit-to-viewport scale. */
   private sizeFactor = 1;
@@ -250,7 +255,6 @@ export class BoardRenderer {
   ) {
     this.bounds = boardBounds(layoutSlots);
     this.topZ = Math.max(...layoutSlots.map((s) => s.z));
-    this.shadowTexture = this.bakeShadow();
     this.viewport.addChild(this.boardLayer);
     app.stage.addChild(this.viewport);
   }
@@ -312,19 +316,31 @@ export class BoardRenderer {
     return this.bounds;
   }
 
+  /** The baked shadow for a tile at layer `z`, baking it on first use. */
+  private shadowTextureFor(z: number): Texture {
+    let texture = this.shadowTextures.get(z);
+    if (!texture) {
+      texture = this.bakeShadow(z);
+      this.shadowTextures.set(z, texture);
+    }
+    return texture;
+  }
+
   /**
-   * Bake the soft drop shadow once, at construction, into a texture reused as
-   * one sprite per tile (issue #45). Every tile has the same silhouette, so
-   * one texture covers the whole board; 144 sprites of it batch into a single
-   * draw call. The ticket rules out a per-frame filter on a full board, and
-   * rebuilding the ring stack as geometry per tile would be ~1000 rounded
-   * rects per redraw for a result that never changes.
+   * Bake the soft drop shadow for one tile height into a texture reused as
+   * one sprite per tile on that layer (issue #45). Every tile has the same
+   * silhouette, so one texture per layer covers the board — five at most —
+   * and the sprites of each batch into a single draw call. The ticket rules
+   * out a per-frame filter on a full board, and rebuilding the ring stack as
+   * geometry per tile would be ~1000 rounded rects per redraw for a result
+   * that never changes. The frame is the full-reach size on every layer, so
+   * the sprite placement is the same whatever the rings inside it reach.
    */
-  private bakeShadow(): Texture {
+  private bakeShadow(z: number): Texture {
     const g = new Graphics();
     // Largest and faintest first: the rings accumulate toward the silhouette,
     // so the darkest point is the contact edge and it fades outward.
-    for (const ring of SHADOW_RINGS) {
+    for (const ring of shadowRings(z)) {
       const back = ring.grow * SHADOW_UP_LEFT_RATIO;
       g.roundRect(
         SHADOW_PAD + SHADOW_DX - back,
@@ -405,11 +421,11 @@ export class BoardRenderer {
     // one a new deal's redraw would otherwise carry into the fresh board.
     this.boardLayer.filters = null;
     this.currentDesaturation = 0;
-    // `{ children: true }` leaves textures alone, which is what keeps the one
-    // baked shadow texture alive across every redraw.
+    // `{ children: true }` leaves textures alone, which is what keeps the
+    // baked shadow textures alive across every redraw.
     this.boardLayer.removeChildren().forEach((c) => c.destroy({ children: true }));
     this.tileNodes.clear();
-    const tiles = [...game.board.presentTiles()].sort((a, b) => paintOrder(a.slot, b.slot));
+    const tiles = [...game.board.presentTiles()].sort((a, b) => drawOrder(a.slot, b.slot));
     for (const tile of tiles) {
       const flashed = state.flash.includes(tile.id);
       const hinted = state.hint.includes(tile.id);
@@ -446,14 +462,14 @@ export class BoardRenderer {
     const r = tileRect(tile.slot);
     const shade = tileShade(tile.slot.z, this.topZ, dimmed, this.palette);
 
-    const shadow = new Sprite(this.shadowTexture);
+    const shadow = new Sprite(this.shadowTextureFor(tile.slot.z));
     shadow.position.set(r.x - SHADOW_PAD, r.y - SHADOW_PAD);
     node.addChild(shadow);
 
     const g = new Graphics();
     // Side extrusion down-right, one tile's depth on every layer so a tall
     // stack does not read as a thicker slab; right/lower neighbors and upper
-    // layers paint over it (paintOrder), leaving only the exposed edges.
+    // layers paint over it (drawOrder), leaving only the exposed edges.
     // Shaded in bands, base first: each band overpaints the darker one
     // behind it, so what survives is light at the face and dark at the base.
     const bands = shade.sideBands;

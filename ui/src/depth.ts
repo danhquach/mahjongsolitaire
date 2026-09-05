@@ -153,7 +153,8 @@ export const DIMMED_STEPS = 3;
 export const SIDE_BAND_FACTORS: readonly number[] = [0.52, 0.95, 1.22];
 
 /**
- * Soft drop shadow, baked once into a texture and blitted per tile.
+ * Soft drop shadow at full reach — the stack a tile three or more layers up
+ * casts. Baked once per height into a texture and blitted per tile.
  *
  * Each entry grows the tile silhouette by `grow` board px and paints it black
  * at `alpha`; drawn largest-first they accumulate to ~0.42 alpha at the
@@ -161,6 +162,11 @@ export const SIDE_BAND_FACTORS: readonly number[] = [0.52, 0.95, 1.22];
  * Issue #86 deepened and widened the stack: with the face ladder softened, the
  * cast shadow is the cue that detaches a raised tile from the layer below,
  * and its reach has to clear the larger LAYER_LIFT visibly.
+ *
+ * Lower tiles cast a shorter version of this stack (`shadowRings`, issue
+ * #220): a ground tile rests on the felt and gets a tight contact shadow, so
+ * shadow length means height rather than "this tile happens to be at the
+ * board's edge where nothing overpaints it".
  */
 // Same alpha on every ring is deliberate, not a copy-paste: the ramp comes from
 // how many rings overlap at a given distance, not from the per-ring value.
@@ -174,6 +180,31 @@ export const SHADOW_RINGS: readonly { readonly grow: number; readonly alpha: num
   { grow: 2.5, alpha: 0.065 },
   { grow: 1, alpha: 0.065 },
 ];
+
+/**
+ * Shadow reach by height above the felt (issue #220), as the outermost ring's
+ * grow in board px: a ground tile casts SHADOW_REACH_GROUND, each layer up
+ * adds SHADOW_REACH_PER_LAYER, capped at the full SHADOW_RINGS stack. Keyed
+ * on the tile's absolute z, not its depth below the layout's top: a ground
+ * tile rests on the felt whether the layout is two layers deep or five, and a
+ * shadow that grew with the layout would float a flat board.
+ *
+ * Ground: offset + reach stays under SIDE_DEPTH, so the shadow hugs the block
+ * (a tile on the table, not hovering above it). One up: offset + reach clears
+ * SIDE_DEPTH, so the shadow lands on the layer below — the detaching cue #86
+ * bought, kept where it is true.
+ */
+export const SHADOW_REACH_GROUND = 4;
+export const SHADOW_REACH_PER_LAYER = 4;
+
+/** The ring stack a tile at layer `z` casts: SHADOW_RINGS scaled to its
+ *  height's reach. Same alphas, so the ramp keeps its shape at every size. */
+export function shadowRings(z: number): readonly { readonly grow: number; readonly alpha: number }[] {
+  const full = SHADOW_RINGS[0]!.grow;
+  const reach = Math.min(full, SHADOW_REACH_GROUND + SHADOW_REACH_PER_LAYER * Math.max(0, z));
+  const factor = reach / full;
+  return SHADOW_RINGS.map((r) => ({ grow: r.grow * factor, alpha: r.alpha }));
+}
 
 /** Shadow offset in board px. The lift is up-left, so the light is too. */
 export const SHADOW_DX = 4;
