@@ -360,10 +360,11 @@ async function flightProbe(pair) {
 
 /**
  * The same frame sampling as flightProbe, but over a plain park tap and its
- * undo — full-board redraws with no pair-clear sequence. This is the control:
- * draw() tears the board down and rebuilds all 144 tiles on every tap, which
- * costs far more than the animation does, so an absolute frame-time floor
- * would be measuring the renderer rather than the effects (issue #44 / #93).
+ * undo — a redraw with no pair-clear sequence. This is the control for the
+ * flight's frame budget (issue #44 / #93), and since issue #58 it carries an
+ * absolute floor of its own: draw() now rebuilds only the tiles that changed
+ * (it used to tear down and rebuild all 144 on every tap), so a plain tap on
+ * a full board has to hold 60fps by itself.
  */
 async function baselineProbe() {
   const slice = window.__slice;
@@ -414,6 +415,9 @@ async function baselineProbe() {
     tapped: true,
     median: intervals[Math.floor(intervals.length / 2)] ?? 0,
     p95: intervals[Math.floor(intervals.length * 0.95)] ?? 0,
+    // The single slowest interval — with 23 samples p95 is the second-worst,
+    // which is exactly the frame the tap itself lands in slipping through.
+    worst: intervals[intervals.length - 1] ?? 0,
   };
 }
 
@@ -728,12 +732,22 @@ for (const vp of VIEWPORTS) {
       check(flight.durationMs < 1300, 'SEQUENCE UNDER 1300ms', {
         durationMs: Math.round(flight.durationMs),
       });
-      // Two questions, because they have different answers. Does the
-      // animation itself hold 60fps? — the median frame across the flight.
-      // Does it make a tap *worse*? — its worst frame against the worst frame
-      // of a plain select tap, which pays the same full-board redraw and
-      // animates nothing. The redraw spike is pre-existing (issue #45's
-      // renderer) and is the larger of the two by some margin.
+      // Three questions, because they have different answers. Does a plain
+      // tap on a full board hold 60fps? — its p95 frame, absolute (issue #58:
+      // the redraw is incremental, and the audio setup that used to land in
+      // the first tap is paid from idle time). Does the animation itself hold
+      // 60fps? — the median frame across the flight. Does it make a tap
+      // *worse*? — its worst frame against the plain tap's worst frame.
+      check(baseline.p95 <= 16.7, 'FRAME BUDGET: 60fps ON A PLAIN TAP', {
+        p95: +baseline.p95.toFixed(2),
+        median: +baseline.median.toFixed(2),
+      });
+      // The tap's own frame, which p95 lets through. Two frames' worth is the
+      // ceiling: the full rebuild cost 150–250ms here, so a regression cannot
+      // hide under it, while a stray GC pause of a few ms can.
+      check(baseline.worst <= 33.4, 'FRAME BUDGET: A PLAIN TAP DROPS AT MOST ONE FRAME', {
+        worst: +baseline.worst.toFixed(2),
+      });
       check(flight.median <= 16.7, 'FRAME BUDGET: 60fps THROUGH THE FLIGHT', {
         median: +flight.median.toFixed(2),
         p95: +flight.p95.toFixed(2),

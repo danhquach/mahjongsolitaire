@@ -226,8 +226,14 @@ export class BoardRenderer {
   /** Carries the fit transform; the board layer below it works in board px. */
   private readonly viewport = new Container();
   private readonly boardLayer = new Container();
-  /** This frame's tile containers, by id — the shake target (issue #44). */
+  /** The board's tile containers, by id — the shake target (issue #44). Kept
+   *  across redraws (issue #58): a node is rebuilt only when what it shows
+   *  changes, see `tileKeys`. */
   private readonly tileNodes = new Map<TileId, Container>();
+  /** What each kept node was built from — every input to `buildTile` plus the
+   *  renderer state it reads (topZ, palette). A redraw compares the key it
+   *  would build now against this and leaves a matching node alone. */
+  private readonly tileKeys = new Map<TileId, string>();
   /** Data-URL cache for the holder strip's tile pictures (issue #66). */
   private readonly tileImages = new Map<string, string>();
   private bounds: Rect;
@@ -266,7 +272,20 @@ export class BoardRenderer {
     this.bounds = boardBounds(layoutSlots);
     this.topZ = Math.max(...layoutSlots.map((s) => s.z));
     this.tileImages.clear();
+    // A new layout is a new deal: nothing on the board layer is worth keeping
+    // (issue #58), and until the caller's redraw nothing should resolve to a
+    // container drawn at the old layout's geometry.
+    this.dropTileNodes();
     this.layoutToViewport();
+  }
+
+  /** Destroy every kept tile container (issue #58). `{ children: true }`
+   *  leaves textures alone, which is what keeps the baked shadow textures
+   *  alive across a rebuild. */
+  private dropTileNodes(): void {
+    for (const node of this.tileNodes.values()) node.destroy({ children: true });
+    this.tileNodes.clear();
+    this.tileKeys.clear();
   }
 
   /** Swap the board palette (issue #67): felt, outline, side shading and the
@@ -413,19 +432,33 @@ export class BoardRenderer {
     };
   }
 
-  /** Redraw the whole board (144 tiles is well within budget — spike showed
-   *  ~0.2ms/frame with every tile animating). */
+  /**
+   * Bring the board layer up to date with the game (issue #58: incrementally).
+   *
+   * Building a tile's container is cheap; what is not is the render pass after
+   * a rebuild, which re-uploads every tile's geometry and re-rasterises every
+   * glyph's Text texture — a whole frame gone on a full board, on every tap,
+   * for a change that touched one or two tiles. So a tile whose picture would
+   * come out identical keeps the node it already has: each node is remembered
+   * with the key of everything it was built from, and only tiles whose key
+   * differs (or which left the board) are torn down and rebuilt. The children
+   * are put back in drawOrder whenever anything changed, since a rebuilt or new
+   * node has to land at its place in the painter's order.
+   *
+   * Effects that nudge a node in place (shake, flip, cascade, pulse — see
+   * effects.ts) are unaffected: a kept node simply keeps animating, and every
+   * effect resets the transforms it set when it disposes.
+   */
   draw(game: Game, state: DrawState): void {
     // Reset the loss desaturation (issue #121): a live SlumpEffect reapplies
     // it on its very next tick, so this only ever drops a *stale* filter —
     // one a new deal's redraw would otherwise carry into the fresh board.
     this.boardLayer.filters = null;
     this.currentDesaturation = 0;
-    // `{ children: true }` leaves textures alone, which is what keeps the
-    // baked shadow textures alive across every redraw.
-    this.boardLayer.removeChildren().forEach((c) => c.destroy({ children: true }));
-    this.tileNodes.clear();
     const tiles = [...game.board.presentTiles()].sort((a, b) => drawOrder(a.slot, b.slot));
+    const present = new Set<TileId>();
+    const ordered: Container[] = [];
+    let changed = false;
     for (const tile of tiles) {
       const flashed = state.flash.includes(tile.id);
       const hinted = state.hint.includes(tile.id);
@@ -433,9 +466,39 @@ export class BoardRenderer {
       // be dimmed — the dim must never fight the hint cue.
       const dimmed = state.dimBlocked && !hinted && !flashed && !game.board.isFree(tile.id);
       const hidden = game.isFaceHidden(tile.id);
-      const node = this.buildTile(tile, { flashed, hinted, dimmed, hidden });
-      this.tileNodes.set(tile.id, node);
-      this.boardLayer.addChild(node);
+      // Slot and face pin the tile itself (a new deal reuses ids on other
+      // slots; Shuffle changes faces in place); topZ and the palette are the
+      // renderer state tileShade reads.
+      const key =
+        `${tile.slot.x},${tile.slot.y},${tile.slot.z}|${tile.face}|` +
+        `${+flashed}${+hinted}${+dimmed}${+hidden}|${this.topZ}|${this.palette.id}`;
+      let node = this.tileNodes.get(tile.id);
+      if (node === undefined || this.tileKeys.get(tile.id) !== key) {
+        // `{ children: true }` leaves textures alone, which is what keeps the
+        // baked shadow textures alive across every rebuild.
+        node?.destroy({ children: true });
+        node = this.buildTile(tile, { flashed, hinted, dimmed, hidden });
+        this.tileNodes.set(tile.id, node);
+        this.tileKeys.set(tile.id, key);
+        changed = true;
+      }
+      present.add(tile.id);
+      ordered.push(node);
+    }
+    for (const [id, node] of this.tileNodes) {
+      if (present.has(id)) continue;
+      node.destroy({ children: true });
+      this.tileNodes.delete(id);
+      this.tileKeys.delete(id);
+      changed = true;
+    }
+    if (changed) {
+      // Kept nodes never change order among themselves (a tile's slot is fixed
+      // for as long as its key matches), so a single re-add in drawOrder is
+      // all the reordering there is to do — and it moves containers, not
+      // geometry or textures.
+      this.boardLayer.removeChildren();
+      if (ordered.length > 0) this.boardLayer.addChild(...ordered);
     }
   }
 
@@ -625,9 +688,11 @@ export class BoardRenderer {
     return url;
   }
 
-  /** This frame's container for a tile, for effects that nudge it in place.
-   *  Undefined once a redraw has dropped the tile (matched, undone, shuffled),
-   *  which is how a stale shake retires itself. */
+  /** The tile's current container, for effects that nudge it in place — the
+   *  same instance across every redraw that leaves the tile's picture alone
+   *  (issue #58), a fresh one after a redraw that changed it. Undefined once a
+   *  redraw has dropped the tile (matched, undone, shuffled), which is how a
+   *  stale shake retires itself. */
   tileNode(id: TileId): Container | undefined {
     return this.tileNodes.get(id);
   }
