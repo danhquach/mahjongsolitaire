@@ -37,7 +37,8 @@
 
 import { callerKey, isCrossSite, json, playerKey, quotaExceeded, rateLimitedShared } from './http.mjs';
 
-const MAX_BODY_BYTES = 16 * 1024;
+/** Exported, with `RATE_LIMITS`, for worker/test/api-limits.test.mjs (issue #191). */
+export const MAX_BODY_BYTES = 16 * 1024;
 /** Mirrors ui/src/profile.ts NAME_MAX_LENGTH — the client clamps, the server
  *  is the backstop for a caller that is not the client. */
 const NAME_MAX_LENGTH = 20;
@@ -83,7 +84,7 @@ const MAX_COUNTER = 1e12;
  * playtest number: exhausting it locks new players out until the window
  * turns, so it is high, and raising it costs nothing.
  */
-const RATE_LIMITS = {
+export const RATE_LIMITS = {
   register: { max: 5, windowMs: 60 * 60 * 1000, perDay: 10, perDayGlobal: 1000 },
   read: { max: 10, windowMs: 10 * 60 * 1000 },
   sync: { max: 60, windowMs: 10 * 60 * 1000, perDay: 200 },

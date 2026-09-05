@@ -28,6 +28,13 @@
 // native V8 work with no per-byte JavaScript loop (decision 0020 has the
 // CPU-time reasoning). The caps below are the server-side backstop for the
 // ones the client enforces in ui/src/feedback-form.ts — keep them in step.
+//
+// Issue #191: the attachment allowance is only open to a request that carries
+// the game's build header (`BUILD_HEADER`, sent by ui/src/feedback-form.ts).
+// Without it the route is the 8 KB text route, decided before the body is
+// read. Every route's caps, limits and quotas are tabled in
+// docs/decisions/0033-api-limits.md; worker/test/api-limits.test.mjs holds
+// that table to the constants exported below.
 
 import { callerKey, isCrossSite, json, rateLimitedShared } from './http.mjs';
 import { handleLeaderboard, pruneSubmissions } from './leaderboard.mjs';
@@ -56,6 +63,19 @@ const PROVIDER_TIMEOUT_MS = 5000;
 const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const CONTEXT_FIELD_MAX = 300;
+/** The header the game's feedback form sends with its build label (issue
+ *  #191). Not a credential — anyone who reads the client can send it — but a
+ *  request that does not know the contract never gets the 36 MB read: the
+ *  route decides its cap from this header before touching the body. */
+export const BUILD_HEADER = 'X-Lantern-Tiles-Build';
+
+/** The feedback route's limits, exported for the API-limits table test. */
+export const FEEDBACK_LIMITS = {
+  MAX_BODY_BYTES,
+  MAX_BODY_BYTES_WITH_ATTACHMENTS,
+  RATE_LIMIT_MAX,
+  RATE_LIMIT_WINDOW_MS,
+};
 
 function isNonEmptyString(value, maxLen) {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= maxLen;
@@ -186,8 +206,15 @@ export async function handleFeedback(request, env, deps = {}) {
     return json(429, { error: 'rate_limited' });
   }
 
+  // The cap is decided before the body is read (issue #191): only a request
+  // that carries the game's build header may be the large one. Anything else
+  // is a text report, whatever it says it is carrying.
+  const build = request.headers.get(BUILD_HEADER);
+  const fromClient = build !== null && build.trim().length > 0 && build.length <= CONTEXT_FIELD_MAX;
+  const maxBodyBytes = fromClient ? MAX_BODY_BYTES_WITH_ATTACHMENTS : MAX_BODY_BYTES;
+
   const contentLength = request.headers.get('Content-Length');
-  if (contentLength !== null && Number(contentLength) > MAX_BODY_BYTES_WITH_ATTACHMENTS) {
+  if (contentLength !== null && Number(contentLength) > maxBodyBytes) {
     return json(413, { error: 'payload_too_large' });
   }
   // Without a trustworthy Content-Length the body is read before it is
@@ -196,7 +223,7 @@ export async function handleFeedback(request, env, deps = {}) {
   // then decoded — one string, one parse.
   const rawBytes = await request.arrayBuffer();
   const rawLength = rawBytes.byteLength;
-  if (rawLength > MAX_BODY_BYTES_WITH_ATTACHMENTS) {
+  if (rawLength > maxBodyBytes) {
     return json(413, { error: 'payload_too_large' });
   }
 
@@ -213,6 +240,12 @@ export async function handleFeedback(request, env, deps = {}) {
   // above exists only for bodies that actually carry attachments.
   if (payload.attachments.length === 0 && rawLength > MAX_BODY_BYTES) {
     return json(413, { error: 'payload_too_large' });
+  }
+  // And attachments exist only for the client's own flow (issue #191): a small
+  // one that fit under the text cap without the header is refused too, so the
+  // header is the rule and not just the size switch.
+  if (payload.attachments.length > 0 && !fromClient) {
+    return json(400, { error: 'invalid_payload' });
   }
 
   const apiKey = env.RESEND_API_KEY;

@@ -117,3 +117,10 @@ Three facts shaped what actually ships:
   asserts the JPEG left without its EXIF and the MP4 left byte-for-byte;
   `ui/qa/a11y-audit.mjs` checks the Add and Remove controls are named and
   ≥ 48dp.
+
+## Update (2026-09-04, issue #191)
+
+The 36 MB allowance is now open only to a request carrying the game's build
+header (`X-Lantern-Tiles-Build`); without it the route keeps 0019's 8 KB cap,
+decided before the body is read. See [0033](0033-api-limits.md), which also
+tables every route's caps, limits and quotas.

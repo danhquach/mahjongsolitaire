@@ -115,13 +115,14 @@ const MIN_ELAPSED_MS = 20_000;
  *  UTF-16 units rather than bytes — the real byte ceiling is `MAX_BODY_BYTES`,
  *  checked on the request itself before anything is parsed. */
 const MAX_HISTORY_CHARS = 64 * 1024;
-const MAX_BODY_BYTES = 96 * 1024;
+/** Exported, with `RATE_LIMITS`, for worker/test/api-limits.test.mjs (issue #191). */
+export const MAX_BODY_BYTES = 96 * 1024;
 
 /** How many entries the board shows, and how many either side of the player. */
 export const BOARD_TOP = 10;
 export const BOARD_NEIGHBOURS = 3;
 
-const RATE_LIMITS = {
+export const RATE_LIMITS = {
   submit: { max: 20, windowMs: 10 * 60 * 1000 },
   // Reading is public and cheap, but an authenticated read is a credential
   // check, and this must not be a roomier door to that check than the

@@ -24,7 +24,7 @@ What is in the game today (see [CHANGELOG.md](CHANGELOG.md) for the day-by-day r
 
 - **[Product & technical spec](mahjong-solitaire-spec.md)** — rules, level generation, monetization, QA strategy
 - **[Roadmap](ROADMAP.md)** — phases, exit criteria, playtest checkpoints
-- **[Decision records](docs/decisions/)** — 23 ADRs from tech stack (0001) to tile-face art (0023)
+- **[Decision records](docs/decisions/)** — 33 ADRs from tech stack (0001) to API limits (0033)
 - **[Layouts](docs/layouts.md)** — the layout JSON format
 - **[Playtest kit](docs/playtest/)** — facilitator script and tester instructions
 
@@ -32,7 +32,7 @@ What is in the game today (see [CHANGELOG.md](CHANGELOG.md) for the day-by-day r
 
 - **Core** (`/core`): pure TypeScript — board lattice, generator, solver, rules, scoring, daily seeds, ladder. Deterministic, zero platform deps, fully unit-tested. [Decision 0001](docs/decisions/0001-tech-stack.md).
 - **UI** (`/ui`): Vite + TypeScript, Canvas rendering with a DOM/ARIA overlay for screen readers.
-- **Backend** (`/worker`): a Cloudflare Worker serving the static bundle plus `/api/feedback`, `/api/profile/*` and `/api/leaderboard/weekly`, backed by D1 (SQLite). [Decisions 0019](docs/decisions/0019-feedback-worker-endpoint.md), [0021](docs/decisions/0021-profile-sync-own-backend.md), [0022](docs/decisions/0022-daily-leaderboard-first.md).
+- **Backend** (`/worker`): a Cloudflare Worker serving the static bundle plus `/api/feedback`, `/api/profile/*` and `/api/leaderboard/weekly`, backed by D1 (SQLite). [Decisions 0019](docs/decisions/0019-feedback-worker-endpoint.md), [0021](docs/decisions/0021-profile-sync-own-backend.md), [0022](docs/decisions/0022-daily-leaderboard-first.md). Every route's body cap, rate limit and daily quota is tabled in [decision 0033](docs/decisions/0033-api-limits.md), and a Worker test holds that table to the code.
 - **Distribution:** web build for playtesting; Capacitor wrappers for the App Store / Play Store are planned (Phase 4–6).
 
 ## Repository layout
