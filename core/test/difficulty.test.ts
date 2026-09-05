@@ -10,6 +10,7 @@ import {
   assessDifficulty,
   bucketDifficulty,
   difficultyScore,
+  LOOSE_START_PAIRS,
   scoreDifficulty,
 } from '../src/difficulty.js';
 import type { DifficultyMetrics } from '../src/difficulty.js';
@@ -106,14 +107,17 @@ test('score rises with lower branching, more tiles, more layers, more forced mov
 });
 
 test('bucket thresholds: crafted metrics land in each of the four buckets', () => {
+  // Realistic 144-tile compact-layout values (issue #212 sweep): a loose
+  // butterfly-like deal, a turtle-like one, a fortress-like one, and a deal
+  // tighter than anything v1 ships.
   const easy = metrics({
-    initialFreePairCount: 8, meanBranchingFactor: 6, layerCount: 1, tileCount: 16, forcedMoveRatio: 0.1,
+    initialFreePairCount: 41, meanBranchingFactor: 15, layerCount: 4, tileCount: 144, forcedMoveRatio: 0.02,
   });
   const medium = metrics({
-    initialFreePairCount: 10, meanBranchingFactor: 12, layerCount: 5, tileCount: 144, forcedMoveRatio: 0.02,
+    initialFreePairCount: 25, meanBranchingFactor: 12.5, layerCount: 5, tileCount: 144, forcedMoveRatio: 0.03,
   });
   const hard = metrics({
-    initialFreePairCount: 8, meanBranchingFactor: 8, layerCount: 5, tileCount: 144, forcedMoveRatio: 0.05,
+    initialFreePairCount: 10, meanBranchingFactor: 7, layerCount: 4, tileCount: 144, forcedMoveRatio: 0.05,
   });
   const expert = metrics({
     initialFreePairCount: 2, meanBranchingFactor: 2, layerCount: 5, tileCount: 144, forcedMoveRatio: 0.5,
@@ -122,6 +126,27 @@ test('bucket thresholds: crafted metrics land in each of the four buckets', () =
   assert.equal(bucketDifficulty(medium), 'medium');
   assert.equal(bucketDifficulty(hard), 'hard');
   assert.equal(bucketDifficulty(expert), 'expert');
+});
+
+test('the tight-start signal is not saturated across the shipped range (issue #212)', () => {
+  // Every shipped deal opens with 6–62 legal pairs; the score must still fall
+  // as pairs are added anywhere in that range, not only below 12.
+  const at = (initialFreePairCount: number) =>
+    difficultyScore(metrics({ initialFreePairCount, tileCount: 144, layerCount: 4 }));
+  assert.ok(at(12) > at(24));
+  assert.ok(at(24) > at(36));
+  assert.ok(at(36) > at(47));
+  assert.ok(at(LOOSE_START_PAIRS) === at(LOOSE_START_PAIRS + 10), 'clips only past the loosest layout');
+});
+
+test('pair density outweighs tile count: a loose 144-tile deal scores below a tight one of any size', () => {
+  const loose144 = metrics({
+    initialFreePairCount: 45, meanBranchingFactor: 16, tileCount: 144, layerCount: 4,
+  });
+  const tight144 = metrics({
+    initialFreePairCount: 10, meanBranchingFactor: 7, tileCount: 144, layerCount: 4,
+  });
+  assert.ok(difficultyScore(tight144) - difficultyScore(loose144) > 0.3);
 });
 
 // --- assessDifficulty: determinism per seed --------------------------------------

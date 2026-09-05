@@ -4,6 +4,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { assessDifficulty } from '@mahjongsolitaire/core';
 import type { GeneratedLevel, TileId } from '@mahjongsolitaire/core';
 import { Game } from '../src/game.js';
 import type { Hit } from '../src/hit-test.js';
@@ -33,8 +34,13 @@ const ROW: GeneratedLevel = {
   ],
 };
 
-test('a small deal is easy, so nothing is concealed by default', () => {
+test('a four-tile deal conceals nothing by default at any bucket ratio', () => {
+  // The bucket fallback in the Game constructor is not what the ladder uses
+  // (main.ts and save.ts pass the band's concealed set). Under the pair-density
+  // score (issue #212) this tiny deal reads as tight — bucket 'hard' — and
+  // floor(4 × 0.15) is still 0, so no tile is dealt face-down either way.
   const game = new Game(ROW);
+  assert.equal(assessDifficulty(ROW).bucket, 'hard');
   for (const t of game.board.allTiles()) assert.equal(game.isFaceHidden(t.id), false);
 });
 

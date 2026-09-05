@@ -28,8 +28,8 @@ so the button never showed a different shape.
 
    | Band | Pool |
    |---|---|
-   | easy | butterfly, windmill |
-   | medium | spider, cat, turtle_classic |
+   | easy | butterfly, windmill (+ spider since [0035](0035-pair-density-scorer.md)) |
+   | medium | spider, cat, turtle_classic (spider moved to easy by 0035) |
    | medium-plus | pyramid, terrace |
    | hard | fortress, moon_gate, bridge |
 
@@ -48,7 +48,9 @@ so the button never showed a different shape.
    below 0.592, medium [0.592, 0.624), medium-plus [0.624, 0.650) (the upper
    half of the medium range), hard [0.650, 0.8). The release gates re-ran
    green: 10,000 seeds × 10 layouts solvable, `ladder.test.ts` windows and
-   ordering criteria.
+   ordering criteria. *(Windows superseded by
+   [0035](0035-pair-density-scorer.md): the score is pair-density weighted
+   now and the windows are 0.30 / 0.45 / 0.60 / 0.80.)*
 
 5. **Existing saves are invalidated by a version bump** (`SAVE_VERSION` 4→5):
    a v4 record's `(layoutId, seed)` regenerates a *different* deal on the new
