@@ -999,14 +999,14 @@ for (const vp of VIEWPORTS) {
       settingsControls.filter((c) => c.small),
     );
 
-    // Eleven controls: the profile row (issue #69), six toggles (issue #45
+    // Thirteen controls: the profile row (issue #69), six toggles (issue #45
     // added Highlight free tiles, issue #44 added Reduced motion, issue #59
     // added Show tutorial; the timer toggle was retired 2026-09-01), the
     // tile-size slider row (issue #139 replaced four radios), the Send
-    // feedback row (issue #118), the version row (issue #81), and Done. The
-    // Daily row moved to the HUD (issue #136; issue #183 made it the
-    // challenge panel).
-    check(settingsControls.length === 11, 'settings screen exposes all eleven controls', {
+    // feedback row (issue #118), the two Account rows (issue #201), the
+    // version row (issue #81), and Done. The Daily row moved to the HUD
+    // (issue #136; issue #183 made it the challenge panel).
+    check(settingsControls.length === 13, 'settings screen exposes all thirteen controls', {
       count: settingsControls.length,
     });
 
@@ -1046,6 +1046,94 @@ for (const vp of VIEWPORTS) {
     check(!closed.visible, 'Escape closes the settings screen', closed);
     check(closed.focus === 'btn-settings', 'focus returns to the settings button', closed);
     check(!closed.boardInert, 'closing settings gives the board back', closed);
+  }
+
+  // --- 6a. Reset progress / Close account (issue #201): each Settings row -----
+  //         opens an alertdialog that says the action cannot be undone, keeps
+  //         the destructive button disabled until the display name is typed,
+  //         and hands focus back to the row on Escape. Nothing is confirmed
+  //         here — the action reloads the page.
+  {
+    await page.click('#btn-settings');
+    await page.click('#btn-close-account');
+    const open = await page.evaluate(() => {
+      const panel = document.getElementById('confirm');
+      return {
+        visible: panel.classList.contains('visible'),
+        settingsVisible: document.getElementById('settings').classList.contains('visible'),
+        role: panel.getAttribute('role'),
+        modal: panel.getAttribute('aria-modal'),
+        labelled: panel.getAttribute('aria-labelledby'),
+        described: panel.getAttribute('aria-describedby'),
+        title: document.getElementById('confirm-title').textContent,
+        text: document.getElementById('confirm-text').textContent,
+        label: document.getElementById('confirm-name-label').textContent,
+        focus: document.activeElement?.id,
+        goDisabled: document.getElementById('confirm-go').disabled,
+        goText: document.getElementById('confirm-go').textContent,
+        boardInert: document.getElementById('a11y-layer').hasAttribute('inert'),
+        announced: document.getElementById('a11y-status').textContent,
+        goH: Math.round(document.getElementById('confirm-go').getBoundingClientRect().height),
+        inputH: Math.round(document.getElementById('confirm-name-input').getBoundingClientRect().height),
+      };
+    });
+    check(open.visible && !open.settingsVisible, 'the Close account row opens the confirmation and Settings steps aside', open);
+    check(
+      open.role === 'alertdialog' &&
+        open.modal === 'true' &&
+        open.labelled === 'confirm-title' &&
+        open.described === 'confirm-text',
+      'the confirmation is a labelled, described alertdialog',
+      open,
+    );
+    check(open.title === 'Close account?' && /cannot be undone\./.test(open.text), 'the text says plainly that it cannot be undone', open);
+    check(/^Type your name \(.+\) to confirm$/.test(open.label), 'the name field is labelled with the name to type', open);
+    check(open.focus === 'confirm-name-input' && open.boardInert, 'focus lands in the name field and the board is inert', open);
+    check(open.goDisabled && open.goText === 'Close account', 'the destructive button starts disabled', open);
+    check(open.goH >= MIN_TOUCH_TARGET && open.inputH >= MIN_TOUCH_TARGET, 'the field and the button are 48dp', open);
+    check(open.announced.startsWith('Close account? '), 'opening announces the title and the warning', open);
+
+    // The wrong name keeps it disabled; the right one (case aside) arms it.
+    await page.fill('#confirm-name-input', 'not the name');
+    const wrong = await page.evaluate(() => document.getElementById('confirm-go').disabled);
+    check(wrong === true, 'a name that does not match leaves the button disabled', { wrong });
+    const name = await page.evaluate(() => window.__slice.profile().name);
+    await page.fill('#confirm-name-input', name.toUpperCase());
+    const right = await page.evaluate(() => document.getElementById('confirm-go').disabled);
+    check(right === false, 'typing the display name arms the button', { name, right });
+
+    // Escape cancels and puts focus back on the Settings row that opened it.
+    await page.keyboard.press('Escape');
+    const cancelled = await page.evaluate(() => ({
+      visible: document.getElementById('confirm').classList.contains('visible'),
+      settingsVisible: document.getElementById('settings').classList.contains('visible'),
+      focus: document.activeElement?.id,
+    }));
+    check(!cancelled.visible && cancelled.settingsVisible, 'Escape cancels back into Settings', cancelled);
+    check(cancelled.focus === 'btn-close-account', 'focus returns to the row that opened it', cancelled);
+
+    // The Reset row is the same dialog with its own words.
+    await page.click('#btn-reset-progress');
+    const reset = await page.evaluate(() => ({
+      title: document.getElementById('confirm-title').textContent,
+      text: document.getElementById('confirm-text').textContent,
+      goText: document.getElementById('confirm-go').textContent,
+      goDisabled: document.getElementById('confirm-go').disabled,
+      value: document.getElementById('confirm-name-input').value,
+    }));
+    check(
+      reset.title === 'Reset progress?' && /cannot be undone\./.test(reset.text) && reset.goText === 'Reset progress',
+      'the Reset row opens the same dialog with its own words',
+      reset,
+    );
+    check(reset.goDisabled && reset.value === '', 'reopening clears the typed name and disarms the button', reset);
+    await page.click('#confirm-cancel');
+    const back = await page.evaluate(() => ({
+      visible: document.getElementById('confirm').classList.contains('visible'),
+      focus: document.activeElement?.id,
+    }));
+    check(!back.visible && back.focus === 'btn-reset-progress', 'Cancel returns to the Reset row', back);
+    await page.keyboard.press('Escape');
   }
 
   // --- 6b. What's new opens at the top, closes on a backdrop tap like every -

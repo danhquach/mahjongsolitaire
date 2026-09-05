@@ -89,6 +89,11 @@ export const RATE_LIMITS = {
   read: { max: 10, windowMs: 10 * 60 * 1000 },
   sync: { max: 60, windowMs: 10 * 60 * 1000, perDay: 200 },
   name: { max: 20, windowMs: 10 * 60 * 1000, perDay: 20 },
+  // Issue #201: a player resets or closes their own account a handful of times
+  // ever. Both routes delete only the caller's rows, so the numbers are for
+  // consistency with the other writes (decision 0032), not for a threat.
+  reset: { max: 5, windowMs: 10 * 60 * 1000, perDay: 5 },
+  close: { max: 5, windowMs: 10 * 60 * 1000, perDay: 5 },
 };
 
 /** The one key every registration shares (issue #189). `global` is neither
@@ -590,6 +595,57 @@ async function read(request, env, deps, now, limit) {
   return json(200, { profile: rowToProfile(auth.row) });
 }
 
+/**
+ * Issue #201, "Reset progress": the record goes back to `EMPTY_RECORD` and
+ * every standing and stored run goes, while the row itself — id, code, name,
+ * avatar — stays. The record is *replaced*, not merged: the next sync from a
+ * device that has not reset yet would otherwise merge the old progress
+ * straight back (`mergeRecords` never regresses), so the client wipes its own
+ * copy before it syncs again, and a second device that syncs first restores
+ * whatever it still holds. That is the merge rule working as designed, and
+ * the confirmation text says so.
+ */
+async function reset(request, env, deps, now, limit) {
+  const auth = await authenticate(request, env.DB);
+  if (auth.error) return auth.error;
+  const limited = await playerLimited(env.DB, 'reset', auth.row.id, now, limit);
+  if (limited) return limited;
+  await env.DB.prepare('DELETE FROM weekly_submissions WHERE player_id = ?').bind(auth.row.id).run();
+  await env.DB.prepare('DELETE FROM weekly_scores WHERE player_id = ?').bind(auth.row.id).run();
+  await env.DB.prepare(
+    `UPDATE players
+        SET levels_cleared = 0, week_score = 0, week_start = NULL, cleared = '[]',
+            daily_streak = 0, last_daily = NULL, trophies = 0, updated_at = ?
+      WHERE id = ?`,
+  )
+    .bind(now, auth.row.id)
+    .run();
+  return json(200, { profile: { ...rowToProfile(auth.row), record: { ...EMPTY_RECORD } } });
+}
+
+/**
+ * Issue #201, "Close account": the player's row and everything that references
+ * it. Runs and standings first (the `REFERENCES` clauses), then the limiter's
+ * rows for this player — they are keyed by the public id, which is about to
+ * mean nothing — then the row. Idempotent from the caller's side: once the
+ * row is gone the code no longer authenticates, so a retry is a plain 401, and
+ * the client treats that as "already closed". The address-keyed limiter rows
+ * are left alone: they belong to the address, not the account.
+ */
+async function close(request, env, deps, now, limit) {
+  const auth = await authenticate(request, env.DB);
+  if (auth.error) return auth.error;
+  const limited = await playerLimited(env.DB, 'close', auth.row.id, now, limit);
+  if (limited) return limited;
+  await env.DB.prepare('DELETE FROM weekly_submissions WHERE player_id = ?').bind(auth.row.id).run();
+  await env.DB.prepare('DELETE FROM weekly_scores WHERE player_id = ?').bind(auth.row.id).run();
+  // Including the `close` and `close-day` rows `playerLimited` wrote a moment
+  // ago: nothing keyed by this id may outlive the id.
+  await env.DB.prepare('DELETE FROM rate_limits WHERE key LIKE ?').bind(`%:player:${auth.row.id}`).run();
+  await env.DB.prepare('DELETE FROM players WHERE id = ?').bind(auth.row.id).run();
+  return json(200, { status: 'closed' });
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** A registration that never synced afterwards is a profile nobody uses: an
  *  abandoned first launch, or a throwaway. A month is long enough for a real
@@ -644,9 +700,13 @@ export async function handleProfile(request, env, deps = {}) {
         ? { name: 'sync', handler: sync, allowed: post }
         : pathname === '/api/profile/name'
           ? { name: 'name', handler: rename, allowed: post }
-          : pathname === '/api/profile'
-            ? { name: 'read', handler: read, allowed: request.method === 'GET' }
-            : null;
+          : pathname === '/api/profile/reset'
+            ? { name: 'reset', handler: reset, allowed: post }
+            : pathname === '/api/profile'
+              ? request.method === 'DELETE'
+                ? { name: 'close', handler: close, allowed: true }
+                : { name: 'read', handler: read, allowed: request.method === 'GET' }
+              : null;
   if (route === null) return json(404, { error: 'not_found' });
   if (!route.allowed) return json(405, { error: 'method_not_allowed' });
 

@@ -765,3 +765,136 @@ test('a player with a standing on any board is never reaped, however idle', asyn
   assert.deepEqual(playerIds(env), [ranked]);
   assert.ok(!playerIds(env).includes(unranked));
 });
+
+// --- reset and close (issue #201) --------------------------------------------
+
+/** A registered, synced player with a standing and a stored run on the board,
+ *  and a spent minutes bucket on the limiter — everything a row can own. */
+async function playerWithEverything(env, deps) {
+  const { json } = await registerPlayer(env, deps);
+  const code = json.code;
+  const record = { ...EMPTY_RECORD, levelsCleared: 3, weekScore: 900, weekStart: WEEK, cleared: [1, 2, 3], trophies: 2 };
+  const synced = await handleProfile(
+    request('POST', '/api/profile/sync', { body: { record }, headers: bearer(code) }),
+    env,
+    deps,
+  );
+  assert.equal(synced.status, 200);
+  const now = deps.now();
+  env.DB.raw
+    .prepare(
+      `INSERT INTO weekly_scores (week_start, player_id, score, runs, created_at, updated_at)
+       VALUES (?, ?, 900, 1, ?, ?)`,
+    )
+    .run(WEEK, json.playerId, now, now);
+  env.DB.raw
+    .prepare(
+      `INSERT INTO weekly_submissions (week_start, player_id, score, elapsed_ms, history, created_at)
+       VALUES (?, ?, 900, 60000, '[]', ?)`,
+    )
+    .run(WEEK, json.playerId, now);
+  return { playerId: json.playerId, code };
+}
+
+const rowsFor = (env, table, playerId) =>
+  env.DB.raw.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE player_id = ?`).get(playerId).n;
+const limiterRowsFor = (env, playerId) =>
+  env.DB.raw.prepare('SELECT COUNT(*) AS n FROM rate_limits WHERE key LIKE ?').get(`%:player:${playerId}`).n;
+
+test('reset empties the record and the board, and keeps the account, name and code', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const { playerId, code } = await playerWithEverything(env, deps);
+
+  const response = await handleProfile(request('POST', '/api/profile/reset', { headers: bearer(code) }), env, deps);
+  assert.equal(response.status, 200);
+  const { profile } = await response.json();
+  assert.equal(profile.playerId, playerId);
+  assert.equal(profile.name, 'Alex');
+  assert.deepEqual(profile.record, EMPTY_RECORD);
+
+  // The row says the same as the response, and the code still opens it.
+  const read = await handleProfile(request('GET', '/api/profile', { headers: bearer(code) }), env, deps);
+  assert.equal(read.status, 200);
+  assert.deepEqual((await read.json()).profile.record, EMPTY_RECORD);
+  assert.equal(rowsFor(env, 'weekly_scores', playerId), 0);
+  assert.equal(rowsFor(env, 'weekly_submissions', playerId), 0);
+  assert.deepEqual(playerIds(env), [playerId]);
+});
+
+test('reset is a write like any other: a code is required and the method is POST', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const noCode = await handleProfile(request('POST', '/api/profile/reset'), env, deps);
+  assert.equal(noCode.status, 401);
+  const wrongMethod = await handleProfile(request('GET', '/api/profile/reset'), env, deps);
+  assert.equal(wrongMethod.status, 405);
+});
+
+test('closing deletes the row and everything that references it, and the code stops working', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const { playerId, code } = await playerWithEverything(env, deps);
+  const bystander = await registerPlayer(env, deps, { name: 'Sam' });
+  assert.ok(limiterRowsFor(env, playerId) > 0, 'the sync above spent a player bucket');
+
+  const response = await handleProfile(request('DELETE', '/api/profile', { headers: bearer(code) }), env, deps);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { status: 'closed' });
+
+  assert.deepEqual(playerIds(env), [bystander.json.playerId], 'only the caller is gone');
+  assert.equal(rowsFor(env, 'weekly_scores', playerId), 0);
+  assert.equal(rowsFor(env, 'weekly_submissions', playerId), 0);
+  assert.equal(limiterRowsFor(env, playerId), 0, 'the player-keyed limiter rows go with the id');
+  assert.ok(
+    env.DB.raw.prepare("SELECT COUNT(*) AS n FROM rate_limits WHERE key LIKE '%:ip:%'").get().n > 0,
+    'the address-keyed rows stay — they belong to the address',
+  );
+
+  // A retry, or a second device with the same code, is a plain 401 — the same
+  // answer as a code that never existed.
+  const again = await handleProfile(request('DELETE', '/api/profile', { headers: bearer(code) }), env, deps);
+  assert.equal(again.status, 401);
+  const read = await handleProfile(request('GET', '/api/profile', { headers: bearer(code) }), env, deps);
+  assert.equal(read.status, 401);
+});
+
+test('closing needs a code; GET on the same path is still the read and POST is still refused', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const noCode = await handleProfile(request('DELETE', '/api/profile'), env, deps);
+  assert.equal(noCode.status, 401);
+  const wrongMethod = await handleProfile(request('POST', '/api/profile', { body: {} }), env, deps);
+  assert.equal(wrongMethod.status, 405);
+});
+
+test('a player may reset or close five times a day, and the two quotas are separate', async () => {
+  const env = { DB: createDb() };
+  const { json } = await registerPlayer(env, makeDeps());
+  const code = json.code;
+  const start = 1_700_000_000_000;
+  // One request an hour clears the minutes bucket (5 / 10 min) so only the
+  // day's quota is under test.
+  for (let i = 0; i < 5; i++) {
+    const ok = await handleProfile(
+      request('POST', '/api/profile/reset', { headers: bearer(code) }),
+      env,
+      makeDeps({ now: () => start + i * 60 * 60 * 1000 }),
+    );
+    assert.equal(ok.status, 200, `reset ${i + 1}`);
+  }
+  const sixth = await handleProfile(
+    request('POST', '/api/profile/reset', { headers: bearer(code) }),
+    env,
+    makeDeps({ now: () => start + 5 * 60 * 60 * 1000 }),
+  );
+  assert.equal(sixth.status, 429);
+  // Five resets have not spent the close quota, and the row is still there to
+  // close: that is a different route, a different scope, a different row.
+  const closed = await handleProfile(
+    request('DELETE', '/api/profile', { headers: bearer(code) }),
+    env,
+    makeDeps({ now: () => start + 5 * 60 * 60 * 1000 }),
+  );
+  assert.equal(closed.status, 200);
+});

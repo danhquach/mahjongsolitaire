@@ -11,6 +11,7 @@ import { EMPTY_RECORD } from '../src/profile.js';
 import type { PlayerRecord } from '../src/profile.js';
 import {
   SYNC_STORAGE_KEY,
+  closeAccount,
   fetchProfile,
   forgetCredentials,
   formatCode,
@@ -21,6 +22,7 @@ import {
   pushRecord,
   readCredentials,
   registerProfile,
+  resetAccount,
   writeCredentials,
 } from '../src/sync.js';
 import type { KeyValueStorage } from '../src/storage.js';
@@ -330,4 +332,35 @@ test('merging is symmetric, and a side with no Daily history contributes none', 
   const played = withRecord({ dailyStreak: 5, lastDaily: '2026-09-02' });
   assert.deepEqual(mergeRecords(played, EMPTY_RECORD), played);
   assert.deepEqual(mergeRecords(EMPTY_RECORD, played), played);
+});
+
+// --- reset and close (issue #201) ---------------------------------------------
+
+test('resetting posts to its own route with the code and no body, and takes the empty record back', async () => {
+  const { fetchImpl, calls } = stubFetch({ status: 200, body: { profile: { ...REMOTE, record: EMPTY_RECORD } } });
+  const result = await resetAccount(CREDENTIALS, { fetchImpl });
+  assert.ok(result.ok);
+  assert.deepEqual(result.value.record, EMPTY_RECORD);
+  assert.equal(calls[0]!.url, '/api/profile/reset');
+  assert.equal(calls[0]!.method, 'POST');
+  assert.equal(calls[0]!.headers['Authorization'], `Bearer ${CREDENTIALS.code}`);
+  assert.equal(calls[0]!.body, undefined);
+});
+
+test('closing sends DELETE to the profile route with the code', async () => {
+  const { fetchImpl, calls } = stubFetch({ status: 200, body: { status: 'closed' } });
+  const result = await closeAccount(CREDENTIALS, { fetchImpl });
+  assert.ok(result.ok);
+  assert.equal(calls[0]!.url, '/api/profile');
+  assert.equal(calls[0]!.method, 'DELETE');
+  assert.equal(calls[0]!.headers['Authorization'], `Bearer ${CREDENTIALS.code}`);
+});
+
+test('a refused reset or close is the usual taxonomy, so the device is left alone', async () => {
+  const offline = await resetAccount(CREDENTIALS, { fetchImpl: stubFetch(new Error('down')).fetchImpl });
+  assert.deepEqual(offline, { ok: false, reason: 'offline' });
+  const gone = await closeAccount(CREDENTIALS, { fetchImpl: stubFetch({ status: 401 }).fetchImpl });
+  assert.deepEqual(gone, { ok: false, reason: 'unauthorized' });
+  const limited = await closeAccount(CREDENTIALS, { fetchImpl: stubFetch({ status: 429 }).fetchImpl });
+  assert.deepEqual(limited, { ok: false, reason: 'rate_limited' });
 });

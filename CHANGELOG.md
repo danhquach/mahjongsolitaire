@@ -6,6 +6,13 @@ commit and build time of the running bundle.
 
 ## 2026-09-04
 
+- Settings has an **Account** section with two actions of your own: **Reset
+  progress** starts the ladder over (levels, this week's score, streak and your
+  place on the leaderboard go; your name and avatar stay), and **Close account**
+  deletes your profile and everything tied to it from our servers and forgets
+  the sign-in on this device, leaving the game as freshly installed. Both say
+  plainly that they cannot be undone, and neither goes ahead until you have
+  typed your display name (#201).
 - The tutorial's "Free tiles" step no longer puts its card over one of the two
   tiles it points at. On a board where the only visible pair spans both halves,
   the step now highlights the pair without the ring instead of ringing a tile

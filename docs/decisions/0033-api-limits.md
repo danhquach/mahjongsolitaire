@@ -29,6 +29,8 @@ back only by the address limiter.
 | `GET /api/profile` | — | 10 / 10 min | 10 / 10 min | — |
 | `POST /api/profile/sync` | 16 KB | 60 / 10 min | 60 / 10 min | 200 |
 | `POST /api/profile/name` | 16 KB | 20 / 10 min | 20 / 10 min | 20 |
+| `POST /api/profile/reset` | — | 5 / 10 min | 5 / 10 min | 5 |
+| `DELETE /api/profile` | — | 5 / 10 min | 5 / 10 min | 5 |
 | `POST /api/leaderboard/weekly` | 96 KB | 20 / 10 min | 20 / 10 min | — (300 runs a week, 0027) |
 | `GET /api/leaderboard/weekly` | — | 60 / 10 min anonymous, 10 / 10 min signed | — | — |
 | `DELETE /api/leaderboard/weekly` | — | 10 / 10 min | 10 / 10 min | 10 |
