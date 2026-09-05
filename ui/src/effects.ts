@@ -57,9 +57,11 @@ class ShakeEffect implements Effect {
 
   advance(dtMs: number): boolean {
     this.t += dtMs;
-    // Re-resolved every frame: a redraw rebuilds the board's containers, so the
-    // one this effect started on is already gone by the next frame. A tile that
-    // has left the board entirely simply ends the effect.
+    // Re-resolved every frame: a redraw that changes this tile's picture (a
+    // flash, a hint) rebuilds its container, so the one this effect started on
+    // may be gone by the next frame (since issue #58 an unchanged tile keeps
+    // its node, and the shake simply carries on). A tile that has left the
+    // board entirely ends the effect.
     const node = this.tileNode(this.id);
     if (!node) return false;
     node.position.set(shakeOffset(this.t), 0);
@@ -276,12 +278,14 @@ class PulseEffect implements Effect {
         const node = this.tileNode(id);
         if (!node) continue;
         let outline = this.outlines.get(id);
-        // A resize redraw destroys every tile container with
-        // `destroy({children:true})`, which takes the outline down with it —
-        // `outline.destroyed` catches that. The node itself is also a fresh
-        // instance at that point (`tileNode(id)` now resolves to the new
+        // A redraw that changes this tile's picture destroys its container
+        // with `destroy({children:true})`, which takes the outline down with
+        // it — `outline.destroyed` catches that. The node itself is also a
+        // fresh instance at that point (`tileNode(id)` now resolves to the new
         // container), so re-adding a *live* outline to it would be wrong too;
         // simplest correct fix is to always rebuild when either has changed.
+        // (Since issue #58 an unchanged tile keeps its node across redraws,
+        // so this fires only when the tile itself was redrawn.)
         if (outline && (outline.destroyed || outline.parent !== node)) {
           if (!outline.destroyed) outline.destroy();
           outline = undefined;

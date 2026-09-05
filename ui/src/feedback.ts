@@ -32,6 +32,9 @@ export type Cue = 'select' | 'match' | 'mismatch' | 'win' | 'fail' | 'stuck';
 
 export interface CuePlayer {
   play(cue: Cue): void;
+  /** Pay any one-time setup now, off the input path (issue #58). Optional:
+   *  a player with nothing to set up leaves it out. */
+  warm?(): void;
 }
 
 export type Vibrate = (pattern: number | readonly number[]) => void;
@@ -62,10 +65,14 @@ const HAPTICS: Record<Cue, number | readonly number[]> = {
 };
 
 /**
- * WebAudio cue player. The AudioContext is created lazily on the first cue:
- * browsers refuse to start one before a user gesture, and a tap is always the
- * first cue. A context that will not start (or an unsupported browser) leaves
- * the game silent rather than broken.
+ * WebAudio cue player. Creating the AudioContext is the single most expensive
+ * thing a tap can do — ~165ms of the first tap of a session, measured for
+ * issue #58 (it was mistaken there for a text-rasterisation spike). So it is
+ * created by `warm()`, which the app calls once from idle time after boot,
+ * and only as a fallback on the first cue if nothing warmed it. A context
+ * made before any gesture starts suspended; `play` resumes it, which is cheap.
+ * A context that will not start (or an unsupported browser) leaves the game
+ * silent rather than broken.
  */
 export function webAudioPlayer(): CuePlayer {
   const Ctor: typeof AudioContext | undefined =
@@ -73,6 +80,14 @@ export function webAudioPlayer(): CuePlayer {
   let ctx: AudioContext | null = null;
 
   return {
+    warm(): void {
+      if (!Ctor || ctx !== null) return;
+      try {
+        ctx = new Ctor();
+      } catch {
+        // Same silence as a failed play(); the next cue tries once more.
+      }
+    },
     play(cue: Cue): void {
       if (!Ctor) return;
       try {
@@ -124,6 +139,14 @@ export class Feedback {
     private readonly player: CuePlayer | undefined = undefined,
     private readonly vibrate: Vibrate | undefined = undefined,
   ) {}
+
+  /** Set the audible channel up ahead of its first cue (issue #58) — only
+   *  while audio is on, so a player who has it off never pays for a context
+   *  they will not hear. Switching audio on later plays a cue, which sets up
+   *  on that gesture instead. */
+  warm(): void {
+    if (this.settings().audio) this.player?.warm?.();
+  }
 
   /** Both channels at once — the default for a cue that has one moment. */
   cue(cue: Cue): void {

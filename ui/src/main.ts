@@ -3547,6 +3547,14 @@ async function start(): Promise<void> {
     window.setTimeout(() => announcer.say(`Daily bonus: ${describeGrant(loginGrant)}.`), 1500);
   }
 
+  // Set the audio up in idle time, not on the first tap (issue #58): creating
+  // the AudioContext costs a whole frame and change, and it used to land
+  // inside the first tap's handler. Idle callback where there is one, else a
+  // timeout well after the boot frames have painted.
+  const warmAudio = (): void => feedback.warm();
+  if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(warmAudio);
+  else window.setTimeout(warmAudio, 500);
+
   // Debug handle for scripted end-to-end QA (Playwright drives real pointer
   // events through it — see ui/qa/). Read-only accessors; harmless in a
   // playtest build.

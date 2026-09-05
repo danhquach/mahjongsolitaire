@@ -134,3 +134,26 @@ test('the stuck cue is silent on both channels when both toggles are off', () =>
   assert.deepEqual(played, []);
   assert.equal(vibrated.length, 0);
 });
+
+// Issue #58: the audible channel's one-time setup (the AudioContext) is paid
+// from idle time via warm(), never on the first tap — and only when audio is
+// on, so an audio-off player never pays for a context they will not hear.
+test('warm sets the player up when audio is on', () => {
+  let warmed = 0;
+  const player: CuePlayer = { play: () => undefined, warm: () => warmed++ };
+  new Feedback(() => BASE, player).warm();
+  assert.equal(warmed, 1);
+});
+
+test('warm does nothing while audio is off', () => {
+  let warmed = 0;
+  const player: CuePlayer = { play: () => undefined, warm: () => warmed++ };
+  new Feedback(() => ({ ...BASE, audio: false }), player).warm();
+  assert.equal(warmed, 0);
+});
+
+test('warm tolerates a player with nothing to set up', () => {
+  const { player } = spies();
+  assert.doesNotThrow(() => new Feedback(() => BASE, player).warm());
+  assert.doesNotThrow(() => new Feedback(() => BASE).warm());
+});

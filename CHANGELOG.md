@@ -6,6 +6,11 @@ commit and build time of the running bundle.
 
 ## 2026-09-05
 
+- Taps no longer stutter on a full board. The board used to be torn down and
+  redrawn from scratch after every tap, and the very first tap of a session
+  also paid for setting up the sound; now only the tiles that changed are
+  redrawn, and the sound is set up in the background right after the game
+  loads. The first tap and every tap after it land in a single frame (#58).
 - Every layout has been rebuilt as a deeper, tighter stack: far fewer tiles
   are free when a board is dealt (at most 30, against up to 64 before), so a
   matching pair is no longer always in view and parking a tile in the holder
