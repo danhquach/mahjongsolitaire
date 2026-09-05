@@ -6,6 +6,10 @@ commit and build time of the running bundle.
 
 ## 2026-09-04
 
+- The tutorial's "Free tiles" step no longer puts its card over one of the two
+  tiles it points at. On a board where the only visible pair spans both halves,
+  the step now highlights the pair without the ring instead of ringing a tile
+  the card would then cover (#199).
 - With one holder slot left, a banner over the board now says so in words and
   reminds you that Undo returns a parked tile. Filling the fourth slot is still
   the end of the level, and the loss dialog now says plainly that Undo cannot

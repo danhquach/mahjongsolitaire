@@ -1507,9 +1507,10 @@ async function start(): Promise<void> {
         spotlightTiles = { pair: [pick[0].id, pick[1].id] };
         hintPair = spotlightTiles.pair!;
       } else {
-        // No fully visible pair on this board: the solver's hint is still
-        // highlighted and announced, but not ringed — a ring around a
-        // half-covered tile would break the "fully visible" rule.
+        // No fully visible pair in one half of this board: the solver's hint
+        // is still highlighted and announced, but not ringed — a ring around
+        // a half-covered tile would break the "fully visible" rule, and a
+        // ring around a straddling pair would put the card on a tile (#199).
         hintPair = game.peekHint() ?? [];
       }
     }
