@@ -1,28 +1,28 @@
 [
   {
     "level": 1,
-    "layoutId": "windmill",
+    "layoutId": "spider",
     "seed": 100000
   },
   {
     "level": 2,
-    "layoutId": "butterfly",
+    "layoutId": "windmill",
     "seed": 200000
   },
   {
     "level": 3,
-    "layoutId": "windmill",
+    "layoutId": "butterfly",
     "seed": 300000
   },
   {
     "level": 4,
-    "layoutId": "butterfly",
+    "layoutId": "spider",
     "seed": 400000
   },
   {
     "level": 5,
     "layoutId": "windmill",
-    "seed": 500000
+    "seed": 500001
   },
   {
     "level": 6,
@@ -31,58 +31,58 @@
   },
   {
     "level": 7,
-    "layoutId": "windmill",
+    "layoutId": "spider",
     "seed": 700000
   },
   {
     "level": 8,
-    "layoutId": "butterfly",
-    "seed": 800000
+    "layoutId": "windmill",
+    "seed": 800002
   },
   {
     "level": 9,
-    "layoutId": "windmill",
+    "layoutId": "butterfly",
     "seed": 900000
   },
   {
     "level": 10,
-    "layoutId": "spider",
+    "layoutId": "cat",
     "seed": 1000000
   },
   {
     "level": 11,
     "layoutId": "windmill",
-    "seed": 1100000
+    "seed": 1100001
   },
   {
     "level": 12,
     "layoutId": "butterfly",
-    "seed": 1200000
+    "seed": 1200001
   },
   {
     "level": 13,
-    "layoutId": "windmill",
+    "layoutId": "spider",
     "seed": 1300000
   },
   {
     "level": 14,
-    "layoutId": "butterfly",
-    "seed": 1400000
+    "layoutId": "windmill",
+    "seed": 1400002
   },
   {
     "level": 15,
-    "layoutId": "windmill",
+    "layoutId": "butterfly",
     "seed": 1500000
   },
   {
     "level": 16,
-    "layoutId": "butterfly",
+    "layoutId": "spider",
     "seed": 1600000
   },
   {
     "level": 17,
     "layoutId": "windmill",
-    "seed": 1700000
+    "seed": 1700002
   },
   {
     "level": 18,
@@ -91,58 +91,58 @@
   },
   {
     "level": 19,
-    "layoutId": "windmill",
+    "layoutId": "spider",
     "seed": 1900000
   },
   {
     "level": 20,
-    "layoutId": "turtle_classic",
-    "seed": 2000000
+    "layoutId": "cat",
+    "seed": 2000002
   },
   {
     "level": 21,
-    "layoutId": "cat",
+    "layoutId": "turtle_classic",
     "seed": 2100000
   },
   {
     "level": 22,
-    "layoutId": "spider",
+    "layoutId": "cat",
     "seed": 2200000
   },
   {
     "level": 23,
     "layoutId": "turtle_classic",
-    "seed": 2300000
+    "seed": 2300004
   },
   {
     "level": 24,
     "layoutId": "cat",
-    "seed": 2400000
+    "seed": 2400001
   },
   {
     "level": 25,
-    "layoutId": "spider",
-    "seed": 2500000
+    "layoutId": "turtle_classic",
+    "seed": 2500001
   },
   {
     "level": 26,
-    "layoutId": "turtle_classic",
-    "seed": 2600000
+    "layoutId": "cat",
+    "seed": 2600001
   },
   {
     "level": 27,
-    "layoutId": "cat",
+    "layoutId": "turtle_classic",
     "seed": 2700000
   },
   {
     "level": 28,
-    "layoutId": "spider",
+    "layoutId": "cat",
     "seed": 2800000
   },
   {
     "level": 29,
     "layoutId": "turtle_classic",
-    "seed": 2900000
+    "seed": 2900001
   },
   {
     "level": 30,
@@ -151,28 +151,28 @@
   },
   {
     "level": 31,
-    "layoutId": "spider",
-    "seed": 3100000
+    "layoutId": "turtle_classic",
+    "seed": 3100001
   },
   {
     "level": 32,
-    "layoutId": "turtle_classic",
-    "seed": 3200000
+    "layoutId": "cat",
+    "seed": 3200001
   },
   {
     "level": 33,
-    "layoutId": "cat",
+    "layoutId": "turtle_classic",
     "seed": 3300000
   },
   {
     "level": 34,
-    "layoutId": "spider",
+    "layoutId": "cat",
     "seed": 3400000
   },
   {
     "level": 35,
     "layoutId": "turtle_classic",
-    "seed": 3500000
+    "seed": 3500003
   },
   {
     "level": 36,
@@ -181,18 +181,18 @@
   },
   {
     "level": 37,
-    "layoutId": "spider",
-    "seed": 3700000
+    "layoutId": "turtle_classic",
+    "seed": 3700001
   },
   {
     "level": 38,
-    "layoutId": "turtle_classic",
-    "seed": 3800000
+    "layoutId": "cat",
+    "seed": 3800002
   },
   {
     "level": 39,
-    "layoutId": "cat",
-    "seed": 3900000
+    "layoutId": "turtle_classic",
+    "seed": 3900003
   },
   {
     "level": 40,
@@ -202,7 +202,7 @@
   {
     "level": 41,
     "layoutId": "turtle_classic",
-    "seed": 4100000
+    "seed": 4100001
   },
   {
     "level": 42,
@@ -211,28 +211,28 @@
   },
   {
     "level": 43,
-    "layoutId": "spider",
+    "layoutId": "turtle_classic",
     "seed": 4300000
   },
   {
     "level": 44,
-    "layoutId": "turtle_classic",
-    "seed": 4400001
+    "layoutId": "cat",
+    "seed": 4400000
   },
   {
     "level": 45,
-    "layoutId": "cat",
-    "seed": 4500000
+    "layoutId": "turtle_classic",
+    "seed": 4500002
   },
   {
     "level": 46,
-    "layoutId": "spider",
-    "seed": 4600000
+    "layoutId": "cat",
+    "seed": 4600001
   },
   {
     "level": 47,
     "layoutId": "turtle_classic",
-    "seed": 4700000
+    "seed": 4700004
   },
   {
     "level": 48,
@@ -241,7 +241,7 @@
   },
   {
     "level": 49,
-    "layoutId": "spider",
+    "layoutId": "turtle_classic",
     "seed": 4900000
   },
   {
@@ -251,13 +251,13 @@
   },
   {
     "level": 51,
-    "layoutId": "cat",
-    "seed": 5100000
+    "layoutId": "turtle_classic",
+    "seed": 5100006
   },
   {
     "level": 52,
-    "layoutId": "spider",
-    "seed": 5200000
+    "layoutId": "cat",
+    "seed": 5200001
   },
   {
     "level": 53,
@@ -271,28 +271,28 @@
   },
   {
     "level": 55,
-    "layoutId": "spider",
-    "seed": 5500000
+    "layoutId": "turtle_classic",
+    "seed": 5500001
   },
   {
     "level": 56,
-    "layoutId": "turtle_classic",
-    "seed": 5600000
+    "layoutId": "cat",
+    "seed": 5600001
   },
   {
     "level": 57,
-    "layoutId": "cat",
-    "seed": 5700000
+    "layoutId": "turtle_classic",
+    "seed": 5700001
   },
   {
     "level": 58,
-    "layoutId": "spider",
+    "layoutId": "cat",
     "seed": 5800000
   },
   {
     "level": 59,
     "layoutId": "turtle_classic",
-    "seed": 5900000
+    "seed": 5900001
   },
   {
     "level": 60,
@@ -302,12 +302,12 @@
   {
     "level": 61,
     "layoutId": "terrace",
-    "seed": 6100003
+    "seed": 6100000
   },
   {
     "level": 62,
     "layoutId": "pyramid",
-    "seed": 6200001
+    "seed": 6200000
   },
   {
     "level": 63,
@@ -322,7 +322,7 @@
   {
     "level": 65,
     "layoutId": "terrace",
-    "seed": 6500001
+    "seed": 6500000
   },
   {
     "level": 66,
@@ -332,12 +332,12 @@
   {
     "level": 67,
     "layoutId": "terrace",
-    "seed": 6700002
+    "seed": 6700000
   },
   {
     "level": 68,
     "layoutId": "pyramid",
-    "seed": 6800004
+    "seed": 6800000
   },
   {
     "level": 69,
@@ -352,7 +352,7 @@
   {
     "level": 71,
     "layoutId": "terrace",
-    "seed": 7100003
+    "seed": 7100000
   },
   {
     "level": 72,
@@ -362,27 +362,27 @@
   {
     "level": 73,
     "layoutId": "terrace",
-    "seed": 7300001
+    "seed": 7300000
   },
   {
     "level": 74,
     "layoutId": "pyramid",
-    "seed": 7400007
+    "seed": 7400000
   },
   {
     "level": 75,
     "layoutId": "terrace",
-    "seed": 7500001
+    "seed": 7500000
   },
   {
     "level": 76,
     "layoutId": "pyramid",
-    "seed": 7600003
+    "seed": 7600001
   },
   {
     "level": 77,
     "layoutId": "terrace",
-    "seed": 7700002
+    "seed": 7700000
   },
   {
     "level": 78,
@@ -392,7 +392,7 @@
   {
     "level": 79,
     "layoutId": "terrace",
-    "seed": 7900001
+    "seed": 7900000
   },
   {
     "level": 80,
@@ -402,12 +402,12 @@
   {
     "level": 81,
     "layoutId": "terrace",
-    "seed": 8100002
+    "seed": 8100000
   },
   {
     "level": 82,
     "layoutId": "pyramid",
-    "seed": 8200002
+    "seed": 8200001
   },
   {
     "level": 83,
@@ -432,17 +432,17 @@
   {
     "level": 87,
     "layoutId": "terrace",
-    "seed": 8700005
+    "seed": 8700000
   },
   {
     "level": 88,
     "layoutId": "pyramid",
-    "seed": 8800002
+    "seed": 8800000
   },
   {
     "level": 89,
     "layoutId": "terrace",
-    "seed": 8900002
+    "seed": 8900000
   },
   {
     "level": 90,
@@ -452,7 +452,7 @@
   {
     "level": 91,
     "layoutId": "terrace",
-    "seed": 9100002
+    "seed": 9100001
   },
   {
     "level": 92,
@@ -472,7 +472,7 @@
   {
     "level": 95,
     "layoutId": "terrace",
-    "seed": 9500003
+    "seed": 9500000
   },
   {
     "level": 96,
@@ -482,12 +482,12 @@
   {
     "level": 97,
     "layoutId": "terrace",
-    "seed": 9700001
+    "seed": 9700000
   },
   {
     "level": 98,
     "layoutId": "pyramid",
-    "seed": 9800001
+    "seed": 9800000
   },
   {
     "level": 99,
@@ -507,22 +507,22 @@
   {
     "level": 102,
     "layoutId": "pyramid",
-    "seed": 10200004
+    "seed": 10200000
   },
   {
     "level": 103,
     "layoutId": "terrace",
-    "seed": 10300002
+    "seed": 10300000
   },
   {
     "level": 104,
     "layoutId": "pyramid",
-    "seed": 10400004
+    "seed": 10400001
   },
   {
     "level": 105,
     "layoutId": "terrace",
-    "seed": 10500003
+    "seed": 10500000
   },
   {
     "level": 106,
@@ -557,7 +557,7 @@
   {
     "level": 112,
     "layoutId": "pyramid",
-    "seed": 11200001
+    "seed": 11200000
   },
   {
     "level": 113,
@@ -572,17 +572,17 @@
   {
     "level": 115,
     "layoutId": "terrace",
-    "seed": 11500001
+    "seed": 11500000
   },
   {
     "level": 116,
     "layoutId": "pyramid",
-    "seed": 11600001
+    "seed": 11600000
   },
   {
     "level": 117,
     "layoutId": "terrace",
-    "seed": 11700001
+    "seed": 11700002
   },
   {
     "level": 118,
@@ -607,7 +607,7 @@
   {
     "level": 122,
     "layoutId": "pyramid",
-    "seed": 12200001
+    "seed": 12200000
   },
   {
     "level": 123,
@@ -617,7 +617,7 @@
   {
     "level": 124,
     "layoutId": "pyramid",
-    "seed": 12400002
+    "seed": 12400000
   },
   {
     "level": 125,
@@ -632,17 +632,17 @@
   {
     "level": 127,
     "layoutId": "terrace",
-    "seed": 12700001
+    "seed": 12700000
   },
   {
     "level": 128,
     "layoutId": "pyramid",
-    "seed": 12800001
+    "seed": 12800000
   },
   {
     "level": 129,
     "layoutId": "terrace",
-    "seed": 12900007
+    "seed": 12900000
   },
   {
     "level": 130,
@@ -652,12 +652,12 @@
   {
     "level": 131,
     "layoutId": "terrace",
-    "seed": 13100001
+    "seed": 13100000
   },
   {
     "level": 132,
     "layoutId": "pyramid",
-    "seed": 13200003
+    "seed": 13200000
   },
   {
     "level": 133,
@@ -692,12 +692,12 @@
   {
     "level": 139,
     "layoutId": "terrace",
-    "seed": 13900001
+    "seed": 13900000
   },
   {
     "level": 140,
     "layoutId": "moon_gate",
-    "seed": 14000000
+    "seed": 14000002
   },
   {
     "level": 141,
@@ -717,7 +717,7 @@
   {
     "level": 144,
     "layoutId": "pyramid",
-    "seed": 14400001
+    "seed": 14400000
   },
   {
     "level": 145,
@@ -727,17 +727,17 @@
   {
     "level": 146,
     "layoutId": "pyramid",
-    "seed": 14600002
+    "seed": 14600000
   },
   {
     "level": 147,
     "layoutId": "terrace",
-    "seed": 14700001
+    "seed": 14700000
   },
   {
     "level": 148,
     "layoutId": "pyramid",
-    "seed": 14800002
+    "seed": 14800000
   },
   {
     "level": 149,

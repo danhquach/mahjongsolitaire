@@ -6,6 +6,12 @@ commit and build time of the running bundle.
 
 ## 2026-09-04
 
+- The level ladder is re-dealt so that the bands line up with how many
+  matches a board actually offers: the difficulty score now follows the
+  number of playable pairs a deal opens with and keeps offering, and Spider,
+  the most open layout, joins the easy band. Levels you have already cleared
+  stay cleared; the next level you reach may be a different deal than before.
+  A game in progress is not affected (#212).
 - Settings has an **Account** section with two actions of your own: **Reset
   progress** starts the ladder over (levels, this week's score, streak and your
   place on the leaderboard go; your name and avatar stay), and **Close account**

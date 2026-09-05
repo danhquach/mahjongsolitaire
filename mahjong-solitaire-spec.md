@@ -183,6 +183,7 @@ Naïve random dealing produces unsolvable boards. Use **reverse construction**:
   - `mean_branching_factor` across a solution path
   - `layer_count`, `tile_count`
   - `forced_move_ratio` (turns with exactly one legal pair)
+  - *(Decision 0035, issue #212)*: the composite is pair-density dominant — `initial_free_pair_count` and `mean_branching_factor` carry 0.35 each, normalized over the range the shipped layouts occupy (48 pairs, branching 16); size, depth and forced moves carry 0.10 each.
 - Bucket into Easy / Medium / Hard / Expert. The v1 ladder is a **plateau ladder** (decision 0011): 150 levels in three flat bands — 1–20 Easy, 21–60 Medium, 61–150 Medium+ (upper half of the Medium score range) — with every 10th level spiking one band up (Medium in the Easy band, Hard elsewhere). No rising curve and no separate relief levels: the nine base levels of each decade are the relief. Expert does not ship in v1.
 - The scorer's v1 obligation is **ordering, not bucket accuracy**: no misordered pair among the bands in use (a spike never scores below its decade's base levels; no Medium+ level below the Medium median). Full holder-aware calibration (decisions 0008/0009) and concealment re-balance (decision 0010) are deferred to a follow-up ticket, required only if the ladder grows past the plateaus.
 
