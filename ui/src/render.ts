@@ -54,6 +54,7 @@ import {
   pipMetrics,
 } from './pips.js';
 import type { Game } from './game.js';
+import type { GlyphTextures } from './glyphs.js';
 import { SIDE_DEPTH, TILE_H, TILE_W, boardBounds, drawOrder, tileRect } from './geometry.js';
 import type { Rect } from './geometry.js';
 import { BOARD_MARGIN, fitScale } from './hud-fit.js';
@@ -68,6 +69,31 @@ const TILE_RADIUS = 6;
 /** Bake resolution for the holder strip's tile pictures (issue #66): 4× board
  *  px covers a 2×-fit board on a 2× display with headroom to spare. */
 const TILE_IMAGE_RESOLUTION = 4;
+
+// --- bitmap glyph sets (issue #229, decision 0038) ----------------------------
+//
+// A bought glyph set replaces the *drawing* of each face with a whole-face
+// bitmap; the face fill, border, sides, back and felt stay the palette's, and
+// the bitmap sits where the pips would, centred in PIP_AREA. Depth is kept by
+// tinting the sprite with the same ink factor tileShade applies to vector ink,
+// so a deep-layer bitmap face recedes with its drawn neighbours.
+
+/** The glyph sheets were drawn at a 256 px cell for the 64 px tile (the brief
+ *  in docs/design/glyph-sheet-brief.md), so a bitmap is drawn at a fixed
+ *  quarter of its pixel size. Fixed, not fit-to-box: fitting would blow a
+ *  single pip up to fill the face and lose the relative sizing the grids
+ *  depend on. A glyph that would still leave PIP_AREA is clamped to it. */
+const GLYPH_BITMAP_SCALE = 0.25;
+
+/** The drawn default set's id — the one set that loads no textures. */
+export const DRAWN_GLYPH_SET = 'lantern';
+
+/** A glyph set as the renderer holds it: an id for the tile key, and the
+ *  textures to draw from, or null for the drawn default. */
+export interface GlyphSetInUse {
+  readonly id: string;
+  readonly textures: GlyphTextures | null;
+}
 
 // --- face-down back (issue #64) ----------------------------------------------
 //
@@ -247,6 +273,9 @@ export class BoardRenderer {
   private sizeFactor = 1;
   /** The board palette in force (issue #67): border, side, back, felt. */
   private palette: BoardPalette = LANTERN;
+  /** The glyph set in force (issue #229): the drawn default until a bought
+   *  set's textures are handed over. */
+  private glyphSet: GlyphSetInUse = { id: DRAWN_GLYPH_SET, textures: null };
   /** The holder-full loss's desaturation (issue #121) — one filter on the
    *  whole board layer rather than per tile (cheaper, and the slump fades
    *  every tile at the same rate anyway). Created lazily; torn down at 0
@@ -300,6 +329,20 @@ export class BoardRenderer {
 
   get paletteId(): BoardPalette['id'] {
     return this.palette.id;
+  }
+
+  /** Swap the glyph set (issue #229): every face changes, so the holder's
+   *  tile-picture cache is dropped like setPalette drops it. The caller
+   *  redraws; the tile key carries the set id, so every face node is rebuilt
+   *  on that redraw. A set with no textures is the drawn default. */
+  setGlyphSet(set: GlyphSetInUse): void {
+    if (set.id === this.glyphSet.id && set.textures === this.glyphSet.textures) return;
+    this.glyphSet = set;
+    this.tileImages.clear();
+  }
+
+  get glyphSetId(): string {
+    return this.glyphSet.id;
   }
 
   get scale(): number {
@@ -467,11 +510,11 @@ export class BoardRenderer {
       const dimmed = state.dimBlocked && !hinted && !flashed && !game.board.isFree(tile.id);
       const hidden = game.isFaceHidden(tile.id);
       // Slot and face pin the tile itself (a new deal reuses ids on other
-      // slots; Shuffle changes faces in place); topZ and the palette are the
-      // renderer state tileShade reads.
+      // slots; Shuffle changes faces in place); topZ, the palette and the
+      // glyph set are the renderer state buildTile reads.
       const key =
         `${tile.slot.x},${tile.slot.y},${tile.slot.z}|${tile.face}|` +
-        `${+flashed}${+hinted}${+dimmed}${+hidden}|${this.topZ}|${this.palette.id}`;
+        `${+flashed}${+hinted}${+dimmed}${+hidden}|${this.topZ}|${this.palette.id}|${this.glyphSet.id}`;
       let node = this.tileNodes.get(tile.id);
       if (node === undefined || this.tileKeys.get(tile.id) !== key) {
         // `{ children: true }` leaves textures alone, which is what keeps the
@@ -518,6 +561,10 @@ export class BoardRenderer {
       readonly dimmed: boolean;
       /** Face-down this frame (issue #64): back art instead of the face. */
       readonly hidden?: boolean;
+      /** Draw from these glyph textures instead of the set in force (issue
+       *  #229): the shop's previews show a set the board is not wearing.
+       *  `null` forces the drawn default; undefined means the set in force. */
+      readonly glyphs?: GlyphTextures | null;
     },
   ): Container {
     const { flashed, hinted, dimmed, hidden = false } = opts;
@@ -568,7 +615,20 @@ export class BoardRenderer {
     // Ink recedes with the face it sits on, faster than the face does, so
     // the 4.5:1 figure/ground budget widens as layers go back (depth.ts).
     const ink = shade.ink(style.color);
-    if (style.pips) {
+    const bitmap = (opts.glyphs === undefined ? this.glyphSet.textures : opts.glyphs)?.get(tile.face);
+    if (bitmap) {
+      // A bought glyph set (issue #229): the whole face as one sprite where the
+      // drawn art would go, receding per layer by the ink factor — white
+      // scaled by it is exactly the multiplier tileShade applies to an ink.
+      const sprite = new Sprite(bitmap);
+      sprite.anchor.set(0.5);
+      sprite.position.set(r.x + PIP_AREA.x + PIP_AREA.w / 2, r.y + PIP_AREA.y + PIP_AREA.h / 2);
+      sprite.scale.set(
+        Math.min(GLYPH_BITMAP_SCALE, PIP_AREA.w / Math.max(1, bitmap.width), PIP_AREA.h / Math.max(1, bitmap.height)),
+      );
+      sprite.tint = shade.ink(0xffffff);
+      node.addChild(sprite);
+    } else if (style.pips) {
       // Per-rank pip art (issue #35, redrawn in the traditional idiom for
       // issue #45). Placement and sizing — including staying inside the face
       // — are pips.ts.
@@ -666,13 +726,22 @@ export class BoardRenderer {
     return this.bakeTile(' back', 'dots-1', true);
   }
 
-  private bakeTile(key: string, face: string, hidden: boolean): string {
+  /** A face as a given glyph set would draw it (issue #229), for the shop's
+   *  previews: the same bake as the holder's pictures, from textures the
+   *  board may not be wearing. Cached under the set's own key so switching
+   *  sets in the shop does not re-bake, and dropped with the rest of the cache
+   *  on a palette or set change. */
+  tileImageIn(face: string, set: GlyphSetInUse): string {
+    return this.bakeTile(`${set.id} ${face}`, face, false, set.textures);
+  }
+
+  private bakeTile(key: string, face: string, hidden: boolean, glyphs?: GlyphTextures | null): string {
     const cached = this.tileImages.get(key);
     if (cached) return cached;
     const slot = { x: 0, y: 0, z: this.topZ };
     const node = this.buildTile(
       { id: -1, slot, face, removed: false },
-      { flashed: false, hinted: false, dimmed: false, hidden },
+      { flashed: false, hinted: false, dimmed: false, hidden, ...(glyphs === undefined ? {} : { glyphs }) },
     );
     const r = tileRect(slot);
     const canvas = this.app.renderer.extract.canvas({

@@ -6,6 +6,15 @@ commit and build time of the running bundle.
 
 ## 2026-09-05
 
+- Trophies now buy something: a Shop row in Settings sells two glyph sets,
+  Calligraphy (25 trophies) and Fantasy (60), that redraw every tile face in
+  a new style without changing the pips, numerals or colours. Buying takes a
+  Buy tap and a Confirm tap; a set you cannot afford yet shows how many
+  trophies short you are. Bought sets are yours for good and switch freely,
+  and they follow your profile across devices with cloud sync. Nothing is
+  taken from the trophies you have earned — the shop shows what is left to
+  spend beside the total (#229, first slice: tile backs, felts and avatar
+  frames follow).
 - Daily challenge trophies are now capped at three a day in the record
   itself, not only in local progress. Clearing local storage and replaying
   the same day's challenges no longer mints extra trophies (#227).

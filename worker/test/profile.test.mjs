@@ -136,6 +136,9 @@ test('a client record is sanitized field by field, not rejected', () => {
     lastDaily: '2026-09-01',
     trophies: 2,
     dailyCount: 0,
+    owned: [],
+    looks: { glyphs: 'lantern' },
+    looksAt: null,
   });
 });
 
@@ -247,6 +250,74 @@ test('one side never having played contributes the other side\'s dailyCount', ()
   assert.equal(mergeRecords(EMPTY_RECORD, played).dailyCount, 2);
 });
 
+// --- cosmetics (issue #229, decision 0038) ------------------------------------
+//
+// Mirrors ui/src/profile.ts `parsePlayerRecord` and ui/src/sync.ts
+// `mergeRecords`: owned ids are opaque, sorted, deduplicated, unioned; the
+// look is last-write by stamp, commutative on a tie.
+
+test('a pre-#229 record owns nothing, looks Lantern, and has no stamp', () => {
+  const record = validateRecord({ trophies: 3 });
+  assert.deepEqual(record.owned, []);
+  assert.deepEqual(record.looks, { glyphs: 'lantern' });
+  assert.equal(record.looksAt, null);
+  assert.deepEqual(EMPTY_RECORD.owned, []);
+  assert.deepEqual(EMPTY_RECORD.looks, { glyphs: 'lantern' });
+  assert.equal(EMPTY_RECORD.looksAt, null);
+});
+
+test('owned ids are kept opaquely — plausible ids only, sorted, deduplicated, capped', () => {
+  const record = validateRecord({
+    owned: ['glyphs-fantasy', 'glyphs-calligraphy', 'glyphs-fantasy', 'Not An Id', 7, 'future-item'],
+  });
+  assert.deepEqual(record.owned, ['future-item', 'glyphs-calligraphy', 'glyphs-fantasy']);
+  assert.deepEqual(validateRecord({ owned: 'glyphs-fantasy' }).owned, []);
+  const many = Array.from({ length: 100 }, (_, i) => `item-${String(i).padStart(3, '0')}`);
+  assert.equal(validateRecord({ owned: many }).owned.length, 64);
+});
+
+test('looks keep an unknown id opaquely and drop garbage; the stamp is a non-negative integer or null', () => {
+  assert.deepEqual(validateRecord({ looks: { glyphs: 'glyphs-fantasy' }, looksAt: 5 }).looks, {
+    glyphs: 'glyphs-fantasy',
+  });
+  assert.equal(validateRecord({ looks: { glyphs: 'glyphs-fantasy' }, looksAt: 5 }).looksAt, 5);
+  assert.deepEqual(validateRecord({ looks: { glyphs: 'not an id!' } }).looks, { glyphs: 'lantern' });
+  assert.deepEqual(validateRecord({ looks: ['glyphs-fantasy'] }).looks, { glyphs: 'lantern' });
+  assert.equal(validateRecord({ looksAt: -1 }).looksAt, null);
+  assert.equal(validateRecord({ looksAt: 1.5 }).looksAt, null);
+  assert.equal(validateRecord({ looksAt: '5' }).looksAt, null);
+});
+
+test('owned items merge as a union; the later look stamp wins the whole look', () => {
+  const a = { ...EMPTY_RECORD, owned: ['glyphs-fantasy'], looks: { glyphs: 'glyphs-fantasy' }, looksAt: 2000 };
+  const b = {
+    ...EMPTY_RECORD,
+    owned: ['glyphs-calligraphy', 'glyphs-fantasy'],
+    looks: { glyphs: 'glyphs-calligraphy' },
+    looksAt: 1000,
+  };
+  const merged = mergeRecords(a, b);
+  assert.deepEqual(merged.owned, ['glyphs-calligraphy', 'glyphs-fantasy']);
+  assert.deepEqual(merged.looks, { glyphs: 'glyphs-fantasy' });
+  assert.equal(merged.looksAt, 2000);
+  assert.deepEqual(merged, mergeRecords(b, a));
+  // A null stamp loses to any stamp; two nulls stay null.
+  assert.deepEqual(mergeRecords(EMPTY_RECORD, b).looks, { glyphs: 'glyphs-calligraphy' });
+  assert.equal(mergeRecords(b, EMPTY_RECORD).looksAt, 1000);
+  assert.equal(mergeRecords(EMPTY_RECORD, EMPTY_RECORD).looksAt, null);
+});
+
+test('equal look stamps with different content resolve the same way from either side', () => {
+  const a = { ...EMPTY_RECORD, looks: { glyphs: 'glyphs-calligraphy' }, looksAt: 1000 };
+  const b = { ...EMPTY_RECORD, looks: { glyphs: 'glyphs-fantasy' }, looksAt: 1000 };
+  assert.deepEqual(mergeRecords(a, b), mergeRecords(b, a));
+  assert.equal(mergeRecords(a, b).looksAt, 1000);
+  // Both unstamped but different (a hand-edited record): still commutative.
+  const c = { ...EMPTY_RECORD, looks: { glyphs: 'glyphs-fantasy' } };
+  assert.deepEqual(mergeRecords(c, EMPTY_RECORD), mergeRecords(EMPTY_RECORD, c));
+  assert.equal(mergeRecords(c, EMPTY_RECORD).looksAt, null);
+});
+
 // --- routes ------------------------------------------------------------------
 
 test('registering mints a profile, a public id and a one-time recovery code', async () => {
@@ -306,6 +377,56 @@ test('dailyCount round-trips through register and sync, exercising the daily_cou
   assert.equal(profile.record.dailyCount, 1);
   const updated = env.DB.raw.prepare('SELECT daily_count FROM players WHERE id = ?').get(created.playerId);
   assert.equal(updated.daily_count, 1);
+});
+
+test('cosmetics round-trip through register, sync and read, exercising the 0007 columns', async () => {
+  const env = { DB: createDb() };
+  const { json: created } = await registerPlayer(env, makeDeps(), {
+    record: { ...EMPTY_RECORD, trophies: 30, owned: ['glyphs-calligraphy'], looks: { glyphs: 'glyphs-calligraphy' }, looksAt: 1000 },
+  });
+  assert.deepEqual(created.profile.record.owned, ['glyphs-calligraphy']);
+  assert.deepEqual(created.profile.record.looks, { glyphs: 'glyphs-calligraphy' });
+  assert.equal(created.profile.record.looksAt, 1000);
+  const row = env.DB.raw.prepare('SELECT owned, looks, looks_at FROM players WHERE id = ?').get(created.playerId);
+  assert.deepEqual(JSON.parse(row.owned), ['glyphs-calligraphy']);
+  assert.deepEqual(JSON.parse(row.looks), { glyphs: 'glyphs-calligraphy' });
+  assert.equal(row.looks_at, 1000);
+
+  // Another device bought the other set and picked it later: union + last-write.
+  const response = await handleProfile(
+    request('POST', '/api/profile/sync', {
+      headers: bearer(created.code),
+      body: {
+        record: { ...EMPTY_RECORD, trophies: 90, owned: ['glyphs-fantasy'], looks: { glyphs: 'glyphs-fantasy' }, looksAt: 2000 },
+      },
+    }),
+    env,
+    makeDeps(),
+  );
+  assert.equal(response.status, 200);
+  const { profile } = await response.json();
+  assert.deepEqual(profile.record.owned, ['glyphs-calligraphy', 'glyphs-fantasy']);
+  assert.deepEqual(profile.record.looks, { glyphs: 'glyphs-fantasy' });
+  assert.equal(profile.record.looksAt, 2000);
+  assert.equal(profile.record.trophies, 90, 'nothing is deducted for a purchase');
+
+  const read = await handleProfile(request('GET', '/api/profile', { headers: bearer(created.code) }), env, makeDeps());
+  const stored = (await read.json()).profile.record;
+  assert.deepEqual(stored.owned, ['glyphs-calligraphy', 'glyphs-fantasy']);
+  assert.deepEqual(stored.looks, { glyphs: 'glyphs-fantasy' });
+  assert.equal(stored.looksAt, 2000);
+});
+
+test('a row from before migration 0007 reads as owning nothing with a null stamp', async () => {
+  const env = { DB: createDb() };
+  const { json: created } = await registerPlayer(env, makeDeps());
+  // What every pre-existing row holds once the migration's defaults apply.
+  env.DB.raw.prepare("UPDATE players SET owned = '[]', looks = '{}', looks_at = NULL WHERE id = ?").run(created.playerId);
+  const read = await handleProfile(request('GET', '/api/profile', { headers: bearer(created.code) }), env, makeDeps());
+  const { record } = (await read.json()).profile;
+  assert.deepEqual(record.owned, []);
+  assert.deepEqual(record.looks, { glyphs: 'lantern' });
+  assert.equal(record.looksAt, null);
 });
 
 test('a wrong, malformed or missing code is the same 401', async () => {
@@ -830,7 +951,19 @@ test('a player with a standing on any board is never reaped, however idle', asyn
 async function playerWithEverything(env, deps) {
   const { json } = await registerPlayer(env, deps);
   const code = json.code;
-  const record = { ...EMPTY_RECORD, levelsCleared: 3, weekScore: 900, weekStart: WEEK, cleared: [1, 2, 3], trophies: 2 };
+  const record = {
+    ...EMPTY_RECORD,
+    levelsCleared: 3,
+    weekScore: 900,
+    weekStart: WEEK,
+    cleared: [1, 2, 3],
+    trophies: 2,
+    // Issue #229: a reset returns the trophies that bought these, so a reset
+    // must empty them too — the reset test deep-equals EMPTY_RECORD.
+    owned: ['glyphs-calligraphy'],
+    looks: { glyphs: 'glyphs-calligraphy' },
+    looksAt: 1000,
+  };
   const synced = await handleProfile(
     request('POST', '/api/profile/sync', { body: { record }, headers: bearer(code) }),
     env,

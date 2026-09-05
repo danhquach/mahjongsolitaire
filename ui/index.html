@@ -743,6 +743,7 @@
       #feedback,
       #leaderboard,
       #daily-panel,
+      #shop,
       #confirm,
       #welcome {
         position: absolute;
@@ -768,6 +769,7 @@
       #feedback.visible,
       #leaderboard.visible,
       #daily-panel.visible,
+      #shop.visible,
       #confirm.visible,
       #welcome.visible {
         display: flex;
@@ -778,6 +780,7 @@
       #feedback .card,
       #leaderboard .card,
       #daily-panel .card,
+      #shop .card,
       #confirm .card,
       #welcome .card {
         background: #f0fdf4;
@@ -796,6 +799,7 @@
       #feedback h2,
       #leaderboard h2,
       #daily-panel h2,
+      #shop h2,
       #confirm h2,
       #welcome h2 {
         margin: 0 0 12px;
@@ -1091,6 +1095,7 @@
       #feedback .attach-row > button,
       #leaderboard .card > button,
       #daily-panel .card > button,
+      #shop .card > button,
       #confirm .card > button,
       #welcome .card > button {
         margin-top: 16px;
@@ -1112,6 +1117,7 @@
          row (issue #69) is the same idiom: a row that opens another screen. */
       #settings .card > button.version-row,
       #settings .card > button.feedback-row,
+      #settings .card > button.shop-row,
       #settings .card > button.profile-row {
         margin-top: 12px;
         text-align: left;
@@ -1249,6 +1255,109 @@
       }
       #profile .record-hint {
         margin: 6px 0 0;
+        font-size: 15px;
+        color: #3f6212;
+      }
+
+      /* --- Cosmetics shop (issue #229, decision 0038) ------------------------
+         One row per item: name and price on one line, four preview tiles baked
+         by the board renderer from the real set, then the row's one action —
+         Use / In use for what is owned, Buy (two taps: Buy, then Confirm) for
+         what is not, disabled with the shortfall when it cannot be afforded.
+         The row in use is marked three ways over (mint wash, green edge, the
+         pressed "In use" label) because colour alone never carries meaning
+         (spec §7). */
+      #shop .shop-balance {
+        margin: 0 0 12px;
+        font-size: 15px;
+        color: #3f6212;
+      }
+      #shop .shop-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      #shop .shop-item {
+        padding: 10px 12px;
+        margin: 0 -12px;
+        border-left: 3px solid transparent;
+      }
+      #shop .shop-item + .shop-item {
+        border-top: 1px solid #d1fae5;
+      }
+      #shop .shop-item[data-state='in-use'] {
+        background: #dcfce7;
+        border-left-color: #166534;
+      }
+      #shop .shop-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 12px;
+      }
+      #shop .shop-price {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 15px;
+        white-space: nowrap;
+      }
+      #shop .shop-desc {
+        display: block;
+        margin-top: 2px;
+        font-size: 15px;
+        color: #3f6212;
+      }
+      #shop .shop-preview {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 8px 0;
+        min-height: 52px;
+      }
+      #shop .shop-preview img {
+        width: 38px;
+        height: auto;
+      }
+      #shop .shop-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+      }
+      #shop .shop-actions button {
+        min-height: 48px; /* spec §7 touch target */
+        padding: 6px 14px;
+        border-radius: 8px;
+        border: 1px solid #14532d;
+        background: #166534;
+        color: #f0fdf4;
+        font-size: 16px;
+      }
+      #shop .shop-actions button.secondary {
+        background: none;
+        color: #166534;
+        border-color: #bbf7d0;
+      }
+      #shop .shop-actions button[aria-pressed='true'] {
+        background: none;
+        color: #14532d;
+        border-color: transparent;
+        font-weight: 700;
+      }
+      #shop .shop-actions button:disabled {
+        opacity: 0.5;
+      }
+      #shop .shop-short,
+      #shop .record-hint {
+        font-size: 15px;
+        color: #3f6212;
+      }
+      #shop .record-hint {
+        margin: 12px 0 0;
+      }
+      #shop-status {
+        display: block;
+        min-height: 20px;
+        margin-top: 8px;
         font-size: 15px;
         color: #3f6212;
       }
@@ -2006,6 +2115,26 @@
               <button id="daily-panel-close" type="button">Done</button>
             </div>
           </div>
+          <!-- Cosmetics shop (issue #229, decision 0038): trophies buy looks
+               that change how the tiles are drawn, never what a face means.
+               Opened from the Shop row in Settings; main.ts fills the list. -->
+          <div id="shop" role="dialog" aria-modal="true" aria-labelledby="shop-title">
+            <div class="card">
+              <h2 id="shop-title">Shop</h2>
+              <p id="shop-balance" class="shop-balance"></p>
+              <fieldset>
+                <legend>Glyph sets</legend>
+                <ul id="shop-glyphs" class="shop-list"></ul>
+              </fieldset>
+              <p class="record-hint">
+                A glyph set redraws every tile face in a new style. The pips, numerals and
+                colours stay the same, so a board reads exactly as before. Bought sets are
+                yours to switch between any time.
+              </p>
+              <span id="shop-status" aria-live="polite"></span>
+              <button id="shop-close" type="button">Done</button>
+            </div>
+          </div>
           <!-- Weekly leaderboard (issues #70, #176). Its own dialog rather than a
                section of the profile: it is a list that can be long. -->
           <div id="leaderboard" role="dialog" aria-modal="true" aria-labelledby="leaderboard-title">
@@ -2230,6 +2359,14 @@
                   aria-valuetext="Extra large"
                 />
               </div>
+              <!-- Shop (issue #229): where trophies are spent. Same row idiom as
+                   the profile row — a row that opens another screen. -->
+              <button id="btn-shop" type="button" class="row shop-row">
+                <span>
+                  Shop
+                  <span class="hint">Spend trophies on new looks for the tiles.</span>
+                </span>
+              </button>
               <!-- Send feedback (issue #118): a short in-game form, delivered
                    by email via the Worker endpoint (worker/index.mjs). -->
               <button id="btn-feedback" type="button" class="row feedback-row">

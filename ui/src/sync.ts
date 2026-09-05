@@ -20,7 +20,7 @@
 import { readRecord, writeRecord, clearRecord } from './storage.js';
 import type { KeyValueStorage } from './storage.js';
 import type { PlayerRecord } from './profile.js';
-import { parsePlayerRecord } from './profile.js';
+import { normalizeOwned, parsePlayerRecord } from './profile.js';
 
 export const SYNC_STORAGE_KEY = 'mahjong.sync.v1';
 
@@ -403,5 +403,28 @@ export function mergeRecords(local: PlayerRecord, remote: PlayerRecord): PlayerR
     cleared: Array.from(new Set([...local.cleared, ...remote.cleared])).sort((a, b) => a - b),
     ...streak,
     trophies: Math.max(local.trophies, remote.trophies),
+    // Cosmetics (issue #229, decision 0038): what is owned is a union, like
+    // cleared levels — nothing bought is ever lost. The look is last-write.
+    owned: normalizeOwned([...local.owned, ...remote.owned]),
+    ...mergeLooks(local, remote),
   };
+}
+
+/**
+ * The later stamp takes the whole `looks` object; a null stamp loses to any
+ * stamp. Equal stamps with different content (two devices tapping in the same
+ * millisecond) take the lexicographically greater JSON, so the result is the
+ * same from either side — the merge has to be commutative because both sides
+ * run it (worker/profile.mjs `mergeLooks`, kept identical).
+ */
+function mergeLooks(a: PlayerRecord, b: PlayerRecord): Pick<PlayerRecord, 'looks' | 'looksAt'> {
+  const pick = (r: PlayerRecord) => ({ looks: r.looks, looksAt: r.looksAt });
+  if (a.looksAt !== b.looksAt) {
+    if (a.looksAt === null) return pick(b);
+    if (b.looksAt === null) return pick(a);
+    return a.looksAt > b.looksAt ? pick(a) : pick(b);
+  }
+  // Equal stamps — including both null, which a hand-edited record can carry
+  // with a non-default look — fall to the content tie-break.
+  return JSON.stringify(a.looks) >= JSON.stringify(b.looks) ? pick(a) : pick(b);
 }
