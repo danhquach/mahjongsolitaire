@@ -11,8 +11,9 @@
 //
 // This file is the Worker's entry point and its router. `POST /api/feedback`
 // is handled below; `/api/profile*` (issue #138) lives in profile.mjs,
-// `/api/leaderboard*` (issue #70) in leaderboard.mjs, and the shared
-// JSON/cross-site/rate-limit helpers in http.mjs. Rate limits count in D1
+// `/api/leaderboard*` (issue #70) in leaderboard.mjs, the shared
+// JSON/cross-site/rate-limit helpers in http.mjs, and the page a browser gets
+// for a wrong path (issue #210) in error-page.mjs. Rate limits count in D1
 // since issue #186 (decision 0029); `scheduled` below sweeps that table and,
 // since issue #188, prunes old runs and reaps abandoned players.
 //
@@ -36,6 +37,7 @@
 // docs/decisions/0033-api-limits.md; worker/test/api-limits.test.mjs holds
 // that table to the constants exported below.
 
+import { errorPage, isNavigation } from './error-page.mjs';
 import { callerKey, isCrossSite, json, quotaExceeded, rateLimitedShared } from './http.mjs';
 import { handleLeaderboard, pruneSubmissions } from './leaderboard.mjs';
 import { authenticate, handleProfile, reapPlayers } from './profile.mjs';
@@ -310,7 +312,14 @@ function route(request, env, pathname) {
     // repeating it (issue #70).
     return handleLeaderboard(request, env, { authenticate });
   }
+  // A browser that landed on a wrong path gets a page with a way back (issue
+  // #210); anything else — including a browser on an API path — gets JSON.
+  if (wantsPage(request, pathname)) return errorPage(404);
   return json(404, { error: 'not_found' });
+}
+
+function wantsPage(request, pathname) {
+  return !pathname.startsWith('/api/') && isNavigation(request);
 }
 
 /** Route by path. Only requests with no matching static asset get here (see
@@ -332,6 +341,7 @@ export async function handleRequest(request, env) {
     return await route(request, env, pathname);
   } catch (error) {
     console.error(`api route failed: ${request.method} ${pathname}: ${error?.message ?? error}`);
+    if (wantsPage(request, pathname)) return errorPage(503);
     return json(503, { error: 'unavailable' });
   }
 }

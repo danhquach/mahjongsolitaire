@@ -4,6 +4,12 @@ Playtest builds deploy from `main` on every merge; entries are grouped by
 deploy day. The in-game Settings screen shows this file with the exact
 commit and build time of the running bundle.
 
+## 2026-09-05
+
+- A mistyped or out-of-date link now lands on a proper page — "That page
+  doesn't exist", with a button back to the game — instead of a line of raw
+  text (#210).
+
 ## 2026-09-04
 
 - The level ladder is re-dealt so that the bands line up with how many
