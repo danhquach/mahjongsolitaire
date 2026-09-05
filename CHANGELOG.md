@@ -22,8 +22,8 @@ commit and build time of the running bundle.
   the end of the level, and the loss dialog now says plainly that Undo cannot
   help once the holder is full (#190).
 - If the leaderboard cannot answer, the game now says so ("The leaderboard is
-  unavailable right now") instead of the server failing with a raw error, and
-  a build can no longer deploy ahead of the database change it needs (#185).
+  unavailable right now") instead of the server failing with a raw error. A
+  build can also no longer deploy ahead of the database change it needs (#185).
 
 ## 2026-09-03
 
