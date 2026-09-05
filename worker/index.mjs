@@ -36,7 +36,7 @@
 // docs/decisions/0033-api-limits.md; worker/test/api-limits.test.mjs holds
 // that table to the constants exported below.
 
-import { callerKey, isCrossSite, json, rateLimitedShared } from './http.mjs';
+import { callerKey, isCrossSite, json, quotaExceeded, rateLimitedShared } from './http.mjs';
 import { handleLeaderboard, pruneSubmissions } from './leaderboard.mjs';
 import { authenticate, handleProfile, reapPlayers } from './profile.mjs';
 
@@ -62,6 +62,16 @@ const VIDEO_TYPES = new Set(['video/mp4', 'video/quicktime', 'video/webm']);
 const PROVIDER_TIMEOUT_MS = 5000;
 const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
+/** The day's quota (issue #211). The minutes window alone let one address
+ *  post 720 reports a day, each relayed as an email and each up to 36 MB, so
+ *  a patient caller met no limit at all. Twenty a day is far more than a
+ *  tester files; the global ceiling bounds the inbox and the email provider
+ *  whatever the addresses, and is sized for a playtest cohort, not a public
+ *  launch. Both count in the shared limiter (0032) under their own `-day`
+ *  scope, checked after the minutes window and before the body is read. */
+const DAILY_MAX = 20;
+const DAILY_GLOBAL_MAX = 300;
+const DAILY_GLOBAL_KEY = 'feedback-day:global';
 const CONTEXT_FIELD_MAX = 300;
 /** The header the game's feedback form sends with its build label (issue
  *  #191). Not a credential — anyone who reads the client can send it — but a
@@ -75,6 +85,8 @@ export const FEEDBACK_LIMITS = {
   MAX_BODY_BYTES_WITH_ATTACHMENTS,
   RATE_LIMIT_MAX,
   RATE_LIMIT_WINDOW_MS,
+  DAILY_MAX,
+  DAILY_GLOBAL_MAX,
 };
 
 function isNonEmptyString(value, maxLen) {
@@ -202,6 +214,12 @@ export async function handleFeedback(request, env, deps = {}) {
       max: RATE_LIMIT_MAX,
       windowMs: RATE_LIMIT_WINDOW_MS,
     })
+  ) {
+    return json(429, { error: 'rate_limited' });
+  }
+  if (
+    (await quotaExceeded(env.DB, callerKey(request, 'feedback-day'), now(), DAILY_MAX)) ||
+    (await quotaExceeded(env.DB, DAILY_GLOBAL_KEY, now(), DAILY_GLOBAL_MAX))
   ) {
     return json(429, { error: 'rate_limited' });
   }

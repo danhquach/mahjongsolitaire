@@ -24,7 +24,7 @@ back only by the address limiter.
 
 | Route | Body cap | Per address | Per player | Per day |
 | --- | --- | --- | --- | --- |
-| `POST /api/feedback` | 8 KB text, 36 MB with the build header | 5 / 10 min | — | — |
+| `POST /api/feedback` | 8 KB text, 36 MB with the build header | 5 / 10 min | — | 20 per address, 300 global |
 | `POST /api/profile/register` | 16 KB | 5 / 1 h | — | 10 per address, 1,000 global |
 | `GET /api/profile` | — | 10 / 10 min | 10 / 10 min | — |
 | `POST /api/profile/sync` | 16 KB | 60 / 10 min | 60 / 10 min | 200 |
@@ -53,7 +53,10 @@ How to read it:
   is metered per isolate in memory (public data, no credential, and a database
   write per read would double the cost of the cheapest route — 0029).
 - The feedback route is the only unauthenticated write and so has no player
-  and no quota; its address bucket is the whole limiter.
+  bucket; its day is the address's and everyone's, the way registration's is
+  (#211). Every accepted report is an email, so the global ceiling is what
+  bounds the inbox and the provider whatever the addresses; it is sized for a
+  playtest cohort and is raised, not removed, when the game opens up.
 
 `worker/test/api-limits.test.mjs` reads this table and compares every cell to
 the constants the three route modules export (`FEEDBACK_LIMITS` in
