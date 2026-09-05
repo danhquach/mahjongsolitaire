@@ -97,9 +97,55 @@ export async function rateLimitedShared(db, key, now, { max, windowMs }) {
  *  get independent buckets, and by `ip` so an address bucket can never collide
  *  with a player bucket. Unknown callers share one bucket per scope, which is
  *  the conservative choice: better to throttle an unidentifiable caller than
- *  to hand every one of them its own allowance. */
+ *  to hand every one of them its own allowance.
+ *
+ *  An IPv6 caller keys on its /64 prefix (issue #209). Every IPv6 connection
+ *  owns at least a /64, so the full address would hand one caller 2^64
+ *  buckets and turn every address-only limit into no limit at all. The prefix
+ *  is what one connection is, the way one IPv4 address is. */
 export function callerKey(request, scope) {
-  return `${scope}:ip:${request.headers.get('CF-Connecting-IP') ?? 'unknown'}`;
+  const ip = request.headers.get('CF-Connecting-IP');
+  return `${scope}:ip:${ip == null ? 'unknown' : addressBucket(ip)}`;
+}
+
+/** An IPv4 address as written; an IPv6 address as its canonical /64 prefix
+ *  (`2001:db8:85a3:1::/64`), so the two spellings of one address land in one
+ *  bucket. An IPv4-mapped IPv6 address (`::ffff:203.0.113.9`) is that IPv4
+ *  address. Anything unparseable is kept as written: an odd header value still
+ *  gets a bucket, just not a shared one. */
+function addressBucket(ip) {
+  if (!ip.includes(':')) return ip;
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+  if (mapped) return mapped[1];
+  const groups = expandIpv6(ip);
+  if (groups == null) return ip;
+  const prefix = groups.slice(0, 4);
+  // Canonical form: no leading zeros, and the `::` that stands for the four
+  // host groups also swallows any zero groups just before it.
+  let end = 4;
+  while (end > 0 && prefix[end - 1] === 0) end -= 1;
+  return `${prefix.slice(0, end).map((g) => g.toString(16)).join(':')}::/64`;
+}
+
+/** The eight 16-bit groups of an IPv6 address, or `null` if it is not one.
+ *  A trailing dotted quad (`64:ff9b::203.0.113.9`, the NAT64 spelling) is the
+ *  two groups it stands for. */
+function expandIpv6(ip) {
+  const quad = /:(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(ip);
+  if (quad) {
+    const [a, b, c, d] = quad.slice(1).map(Number);
+    if ([a, b, c, d].some((n) => n > 255)) return null;
+    ip = `${ip.slice(0, quad.index + 1)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const halves = ip.split('::');
+  if (halves.length > 2) return null;
+  const parse = (part) => (part === '' ? [] : part.split(':').map((g) => (/^[0-9a-f]{1,4}$/i.test(g) ? parseInt(g, 16) : NaN)));
+  const head = parse(halves[0]);
+  const tail = halves.length === 2 ? parse(halves[1]) : [];
+  if ([...head, ...tail].some(Number.isNaN)) return null;
+  const missing = 8 - head.length - tail.length;
+  if (halves.length === 2 ? missing < 1 : missing !== 0) return null;
+  return [...head, ...new Array(missing).fill(0), ...tail];
 }
 
 /** The player a limiter keys on once a request has authenticated (issue
