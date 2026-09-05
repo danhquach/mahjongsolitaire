@@ -1026,6 +1026,20 @@ for (const vp of VIEWPORTS) {
       panel,
     );
 
+    // The Share button (issue #228) is in the panel, reachable by keyboard.
+    const share = await page.evaluate(() => {
+      const btn = document.getElementById('daily-share');
+      btn.focus();
+      return {
+        present: btn !== null,
+        text: btn.textContent,
+        focused: document.activeElement === btn,
+      };
+    });
+    check(share.present, 'the Share button is in the Daily panel', share);
+    check(share.text === 'Share', 'the Share button starts labeled "Share"', share);
+    check(share.focused, 'the Share button is keyboard-focusable', share);
+
     // The ladder is untouched: the panel starts nothing.
     const afterOpen = await page.evaluate(() => ({
       level: window.__slice.ladderLevel,

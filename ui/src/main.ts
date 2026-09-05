@@ -127,6 +127,7 @@ import {
   sendFeedback,
 } from './feedback-form.js';
 import { DailyStore, describeChallenge } from './daily.js';
+import { dailyShareCard, shareDailyCard } from './share.js';
 import { ProgressStore } from './progress.js';
 import {
   AVATARS,
@@ -330,6 +331,8 @@ async function start(): Promise<void> {
   const dailyPanelStreak = el<HTMLElement>('daily-panel-streak');
   const dailyPanelTrophies = el<HTMLElement>('daily-panel-trophies');
   const dailyPanelClose = el<HTMLButtonElement>('daily-panel-close');
+  const dailyShareButton = el<HTMLButtonElement>('daily-share');
+  const dailyShareStatus = el<HTMLElement>('daily-share-status');
   const feedbackPanel = el<HTMLDivElement>('feedback');
   const feedbackButton = el<HTMLButtonElement>('btn-feedback');
   const feedbackSummaryInput = el<HTMLInputElement>('feedback-summary');
@@ -1243,6 +1246,54 @@ async function start(): Promise<void> {
     );
     dailyPanelStreak.textContent = String(liveStreak(record.value, today));
     dailyPanelTrophies.textContent = String(record.value.trophies);
+    resetDailyShareButton();
+  }
+
+  /** The Share button's label reverts to "Share" on its own after a "Copied"
+   *  flash (issue #228, ~2s via setTimeout), and immediately whenever the
+   *  panel re-renders or closes — never left reading "Copied" for a card that
+   *  no longer matches what's on screen. */
+  let dailyShareRevertTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function resetDailyShareButton(): void {
+    if (dailyShareRevertTimer !== null) {
+      clearTimeout(dailyShareRevertTimer);
+      dailyShareRevertTimer = null;
+    }
+    dailyShareButton.textContent = 'Share';
+    dailyShareStatus.textContent = '';
+  }
+
+  /** Share today's standing as a short plain-text card (issue #228): no name,
+   *  no score, no level — see decision 0028 and spec §7's no-pressure stance.
+   *  Prefers the system share sheet; falls back to the clipboard, mirroring
+   *  the recovery-code copy pattern (issue #135's "Copy report"). */
+  async function shareDaily(): Promise<void> {
+    const today = dailyDateKey();
+    const standing = dailyProgress.standing(today);
+    const streak = liveStreak(record.value, today);
+    const url = `${location.origin}${location.pathname}`;
+    const text = dailyShareCard({ done: standing.map((slot) => slot.done), streak, dateKey: today, url });
+    const canShare = typeof navigator.share === 'function';
+    const clipboard = navigator.clipboard;
+    const result = await shareDailyCard(
+      text,
+      canShare ? { share: navigator.share.bind(navigator), clipboard } : { clipboard },
+    );
+    if (result === 'copied') {
+      dailyShareButton.textContent = 'Copied';
+      dailyShareStatus.textContent = '';
+      announcer.say('Copied.');
+      dailyShareRevertTimer = setTimeout(() => {
+        dailyShareRevertTimer = null;
+        dailyShareButton.textContent = 'Share';
+      }, 2000);
+    } else if (result === 'failed') {
+      dailyShareButton.textContent = 'Share';
+      if (!canShare && clipboard === undefined) {
+        dailyShareStatus.textContent = "Sharing isn't available here.";
+      }
+    }
   }
 
   /** The chip's tap (issue #183): today's challenges, not a board. Opens the
@@ -1280,6 +1331,7 @@ async function start(): Promise<void> {
     dailyPanel.classList.remove('visible');
     setBackgroundInert(false);
     dailyButton.focus();
+    resetDailyShareButton();
   }
 
   /** What a completed challenge has to say, waiting for the next live-region
@@ -2400,6 +2452,7 @@ async function start(): Promise<void> {
     if (ev.target === leaderboardPanel) closeLeaderboard();
   });
 
+  dailyShareButton.addEventListener('click', () => void shareDaily());
   dailyPanelClose.addEventListener('click', closeDailyPanel);
   // Same backdrop dismissal as every other dialog (issue #225).
   dailyPanel.addEventListener('click', (ev) => {

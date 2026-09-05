@@ -9,6 +9,10 @@ commit and build time of the running bundle.
 - Daily challenge trophies are now capped at three a day in the record
   itself, not only in local progress. Clearing local storage and replaying
   the same day's challenges no longer mints extra trophies (#227).
+- The Daily panel has a Share button: it turns today's standing into a short
+  text card — three boxes for the day's challenges, your streak, and a link
+  to the game — and hands it to your device's share sheet, or copies it if
+  there isn't one. No name, no score, no level (#228).
 - The Profile and Daily panels now close when you tap the dimmed area outside
   them, the way Settings and the leaderboard already did; a tap on the card
   itself still leaves it open (#225).
