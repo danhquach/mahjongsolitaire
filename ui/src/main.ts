@@ -1274,11 +1274,11 @@ async function start(): Promise<void> {
     const streak = liveStreak(record.value, today);
     const url = `${location.origin}${location.pathname}`;
     const text = dailyShareCard({ done: standing.map((slot) => slot.done), streak, dateKey: today, url });
-    const canShare = typeof navigator.share === 'function';
-    const clipboard = navigator.clipboard;
     const result = await shareDailyCard(
       text,
-      canShare ? { share: navigator.share.bind(navigator), clipboard } : { clipboard },
+      typeof navigator.share === 'function'
+        ? { share: navigator.share.bind(navigator), clipboard: navigator.clipboard }
+        : { clipboard: navigator.clipboard },
     );
     if (result === 'copied') {
       dailyShareButton.textContent = 'Copied';
@@ -1289,10 +1289,10 @@ async function start(): Promise<void> {
         dailyShareButton.textContent = 'Share';
       }, 2000);
     } else if (result === 'failed') {
+      // Nothing worked — say so, the way "Copy report" does. A dismissed share
+      // sheet is not a failure and says nothing.
       dailyShareButton.textContent = 'Share';
-      if (!canShare && clipboard === undefined) {
-        dailyShareStatus.textContent = "Sharing isn't available here.";
-      }
+      dailyShareStatus.textContent = "Sharing isn't available here.";
     }
   }
 

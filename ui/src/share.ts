@@ -45,22 +45,23 @@ function isAbortError(err: unknown): boolean {
 /** Share the card (issue #228). `share` is passed only when the caller has
  *  already confirmed `typeof navigator.share === 'function'`; when given, it
  *  is preferred over the clipboard. A user-dismissed share sheet
- *  (`AbortError`) is not a failure worth reporting — it resolves 'failed'
- *  silently, without touching the clipboard. Any other share rejection falls
- *  back to copying the text; 'copied' on success, 'failed' otherwise. */
+ *  (`AbortError`) is not a failure worth reporting — it resolves 'dismissed'
+ *  without touching the clipboard. Any other share rejection falls back to
+ *  copying the text; 'copied' on success, 'failed' when nothing worked, which
+ *  the caller should tell the player about. */
 export async function shareDailyCard(
   text: string,
   options: {
     readonly share?: (data: { text: string }) => Promise<void>;
     readonly clipboard?: ClipboardWriter;
   },
-): Promise<'shared' | 'copied' | 'failed'> {
+): Promise<'shared' | 'copied' | 'dismissed' | 'failed'> {
   if (options.share !== undefined) {
     try {
       await options.share({ text });
       return 'shared';
     } catch (err) {
-      if (isAbortError(err)) return 'failed';
+      if (isAbortError(err)) return 'dismissed';
       // any other share error falls through to the clipboard fallback
     }
   }

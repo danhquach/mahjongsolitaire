@@ -52,7 +52,7 @@ test('shareDailyCard: share preferred when provided', async () => {
   assert.deepEqual(called, { text: 'text' });
 });
 
-test('shareDailyCard: AbortError resolves failed without touching the clipboard', async () => {
+test('shareDailyCard: AbortError resolves dismissed without touching the clipboard', async () => {
   let clipboardCalled = false;
   const abort = Object.assign(new Error('dismissed'), { name: 'AbortError' });
   const result = await shareDailyCard('text', {
@@ -65,7 +65,7 @@ test('shareDailyCard: AbortError resolves failed without touching the clipboard'
       },
     },
   });
-  assert.equal(result, 'failed');
+  assert.equal(result, 'dismissed');
   assert.equal(clipboardCalled, false);
 });
 
