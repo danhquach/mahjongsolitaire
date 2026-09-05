@@ -32,8 +32,11 @@ import {
   SHADOW_DX,
   SHADOW_DY,
   SHADOW_PAD,
+  SHADOW_REACH_GROUND,
+  SHADOW_REACH_PER_LAYER,
   SHADOW_RINGS,
   SHADOW_UP_LEFT_RATIO,
+  shadowRings,
   SIDE_BAND_FACTORS,
   tileShade,
 } from '../src/depth.js';
@@ -297,6 +300,65 @@ test('the shadow reaches far enough down-right to clear the layer lift', () => {
   // that never actually lands on the tile underneath, which is the whole point.
   const reach = SHADOW_DX + Math.max(...SHADOW_RINGS.map((r) => r.grow));
   assert.ok(reach > SIDE_DEPTH, `shadow reach ${reach} must exceed the ${SIDE_DEPTH}px lift`);
+});
+
+// --- shadow by height (issue #220) --------------------------------------------
+
+const shadowReach = (z: number): number => SHADOW_DX + Math.max(...shadowRings(z).map((r) => r.grow));
+
+test('a ground tile casts a contact shadow shorter than its own side, so it rests on the felt', () => {
+  // The bug: every tile cast the raised-tile shadow, and a ground tile at the
+  // board's edge — the only place nothing overpaints it — looked lifted, hence
+  // free. A shadow that stops inside the side face reads as a block on a table.
+  assert.ok(
+    shadowReach(0) < SIDE_DEPTH,
+    `ground shadow reach ${shadowReach(0)} must stay under the ${SIDE_DEPTH}px side`,
+  );
+  assert.equal(shadowRings(0)[0]!.grow, SHADOW_REACH_GROUND);
+});
+
+test('one layer up, the shadow clears the lift and lands on the layer below', () => {
+  // The detaching cue issue #86 bought, kept where it is true.
+  for (let z = 1; z <= MAX_TOP_Z; z++) {
+    assert.ok(shadowReach(z) > SIDE_DEPTH, `z=${z} reach ${shadowReach(z)} must exceed the lift`);
+  }
+});
+
+test('shadow reach grows with height, then caps at the full stack', () => {
+  assert.ok(SHADOW_REACH_PER_LAYER > 0);
+  const full = SHADOW_RINGS[0]!.grow;
+  let previous = shadowRings(0)[0]!.grow;
+  for (let z = 1; z <= MAX_TOP_Z + 2; z++) {
+    const grow = shadowRings(z)[0]!.grow;
+    assert.ok(grow >= previous, `z=${z} must not cast a shorter shadow than z=${z - 1}`);
+    assert.ok(grow <= full, `z=${z} must not outgrow the texture baked for the full stack`);
+    previous = grow;
+  }
+  assert.equal(shadowRings(MAX_TOP_Z + 2)[0]!.grow, full, 'a tall stack casts the full shadow');
+});
+
+test('every height keeps the ring stack shape: same alphas, largest-first, inside the up-left offset', () => {
+  for (let z = 0; z <= MAX_TOP_Z; z++) {
+    const rings = shadowRings(z);
+    assert.equal(rings.length, SHADOW_RINGS.length);
+    assert.deepEqual(
+      rings.map((r) => r.alpha),
+      SHADOW_RINGS.map((r) => r.alpha),
+    );
+    const grows = rings.map((r) => r.grow);
+    assert.deepEqual(grows, [...grows].sort((a, b) => b - a), `z=${z}`);
+    assert.ok(grows[grows.length - 1]! > 0, `z=${z}: the innermost ring must still paint`);
+    for (const ring of rings) {
+      const back = ring.grow * SHADOW_UP_LEFT_RATIO;
+      assert.ok(back < SHADOW_DX && back < SHADOW_DY, `z=${z} grow=${ring.grow} escapes up-left`);
+    }
+  }
+});
+
+test('the ground shadow is keyed on the felt, not on the layout depth', () => {
+  // A flat layout's ground tiles are as much on the table as a deep one's;
+  // only z decides, so shadowRings takes no topZ and a z below ground clamps.
+  assert.deepEqual(shadowRings(-1), shadowRings(0));
 });
 
 // --- colour arithmetic --------------------------------------------------------
