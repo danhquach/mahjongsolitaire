@@ -139,7 +139,9 @@ import {
   weekScoreNow,
 } from './profile.js';
 import { SaveStore, captureSave, reopen } from './save.js';
+import { confirmMatches, wipeDevice, wipeProgress } from './account.js';
 import {
+  closeAccount,
   fetchProfile,
   forgetCredentials,
   formatCode,
@@ -150,6 +152,7 @@ import {
   pushRecord,
   readCredentials,
   registerProfile,
+  resetAccount,
   writeCredentials,
 } from './sync.js';
 import type { RemoteProfile, SyncCredentials, SyncFailure } from './sync.js';
@@ -256,6 +259,16 @@ async function start(): Promise<void> {
   const holderWarning = el<HTMLDivElement>('holder-warning');
   const settingsPanel = el<HTMLDivElement>('settings');
   const settingsButton = el<HTMLButtonElement>('btn-settings');
+  const resetProgressButton = el<HTMLButtonElement>('btn-reset-progress');
+  const closeAccountButton = el<HTMLButtonElement>('btn-close-account');
+  const confirmPanel = el<HTMLDivElement>('confirm');
+  const confirmTitle = el<HTMLHeadingElement>('confirm-title');
+  const confirmText = el<HTMLParagraphElement>('confirm-text');
+  const confirmNameLabel = el<HTMLLabelElement>('confirm-name-label');
+  const confirmNameInput = el<HTMLInputElement>('confirm-name-input');
+  const confirmStatus = el<HTMLElement>('confirm-status');
+  const confirmGo = el<HTMLButtonElement>('confirm-go');
+  const confirmCancel = el<HTMLButtonElement>('confirm-cancel');
   const changelogPanel = el<HTMLDivElement>('changelog');
   const changelogCard = changelogPanel.querySelector<HTMLDivElement>('.card')!;
   const changelogTitle = el<HTMLHeadingElement>('changelog-title');
@@ -530,6 +543,12 @@ async function start(): Promise<void> {
    *  outgoing board is dropped until the new deal is in. */
   let dealing = false;
   let settingsVisible = false;
+  /** The irreversible-action confirmation (issue #201), and which action it
+   *  is armed for. Only ever opened from Settings, which steps aside. */
+  let confirmVisible = false;
+  let confirmAction: 'reset' | 'close' = 'reset';
+  let confirmBusy = false;
+  let confirmOpener: HTMLElement = settingsButton;
   let changelogVisible = false;
   let profileVisible = false;
   let feedbackVisible = false;
@@ -1241,6 +1260,7 @@ async function start(): Promise<void> {
       profileVisible ||
       feedbackVisible ||
       welcomeVisible ||
+      confirmVisible ||
       tutorialVisible
     )
       return;
@@ -1400,6 +1420,7 @@ async function start(): Promise<void> {
       profileVisible ||
       feedbackVisible ||
       welcomeVisible ||
+      confirmVisible ||
       tutorialVisible ||
       dailyPanelVisible
     )
@@ -1443,6 +1464,7 @@ async function start(): Promise<void> {
       settingsVisible ||
       changelogVisible ||
       feedbackVisible ||
+      confirmVisible ||
       leaderboardVisible ||
       overlayVisible
     ) {
@@ -2696,6 +2718,124 @@ async function start(): Promise<void> {
     });
   }
 
+  // --- reset progress / close account (issue #201) -------------------------------
+
+  /** The dialog's words for each action. Both say "cannot be undone" in so
+   *  many words; the close text differs by whether there is a server-side
+   *  account to delete at all. */
+  function confirmCopy(action: 'reset' | 'close'): { title: string; text: string; button: string } {
+    const synced = syncCredentials !== null;
+    if (action === 'reset') {
+      return {
+        title: 'Reset progress?',
+        text:
+          'This wipes your levels, this week’s score, your streak and your place on the leaderboard' +
+          (synced ? ', on every device that syncs to this profile' : '') +
+          '. Your name and avatar stay. This cannot be undone.',
+        button: 'Reset progress',
+      };
+    }
+    return {
+      title: 'Close account?',
+      text: synced
+        ? 'This deletes your profile, progress and leaderboard scores from our servers and forgets your ' +
+          'sign-in on this device. Your recovery code stops working. This cannot be undone.'
+        : 'This deletes your profile and progress from this device. This cannot be undone.',
+      button: 'Close account',
+    };
+  }
+
+  function renderConfirmControls(): void {
+    const armed = !confirmBusy && confirmMatches(confirmNameInput.value, profile.value.name);
+    confirmGo.disabled = !armed;
+    confirmCancel.disabled = confirmBusy;
+    confirmNameInput.disabled = confirmBusy;
+  }
+
+  function openConfirm(action: 'reset' | 'close', opener: HTMLElement): void {
+    if (confirmVisible) return;
+    // Opened from inside Settings: that panel steps aside rather than stacking.
+    closeSettings();
+    confirmAction = action;
+    confirmOpener = opener;
+    const copy = confirmCopy(action);
+    confirmTitle.textContent = copy.title;
+    confirmText.textContent = copy.text;
+    confirmGo.textContent = copy.button;
+    confirmNameLabel.textContent = `Type your name (${profile.value.name}) to confirm`;
+    confirmNameInput.value = '';
+    confirmStatus.textContent = '';
+    confirmBusy = false;
+    renderConfirmControls();
+    confirmVisible = true;
+    confirmPanel.classList.add('visible');
+    setBackgroundInert(true);
+    confirmNameInput.focus();
+    announcer.say(`${copy.title} ${copy.text}`);
+  }
+
+  /** Cancel: back into Settings, on the row that opened this. */
+  function closeConfirm(): void {
+    if (!confirmVisible || confirmBusy) return;
+    confirmVisible = false;
+    confirmPanel.classList.remove('visible');
+    setBackgroundInert(false);
+    openSettings();
+    confirmOpener.focus();
+  }
+
+  /**
+   * Server first, device second, then a reload. A refused server call leaves
+   * the device exactly as it was and says why; the local wipe only ever runs
+   * once the server has agreed (or, for a close, has already forgotten the
+   * code — a 401 there means there is nothing left to delete). The reload is
+   * the point: every store reads its key once at boot, so starting over is
+   * the one way to be sure no half-reset session survives.
+   */
+  async function runConfirmedAction(): Promise<void> {
+    if (confirmGo.disabled) return;
+    confirmBusy = true;
+    renderConfirmControls();
+    confirmStatus.textContent = confirmAction === 'reset' ? 'Resetting…' : 'Closing your account…';
+    if (syncCredentials !== null) {
+      const result =
+        confirmAction === 'reset' ? await resetAccount(syncCredentials) : await closeAccount(syncCredentials);
+      const alreadyGone = confirmAction === 'close' && !result.ok && result.reason === 'unauthorized';
+      if (!result.ok && !alreadyGone) {
+        // A 401 on reset means this device's code no longer opens a profile
+        // (closed elsewhere, or reaped) — the sync copy for that assumes a
+        // code was just typed, which nothing here was.
+        confirmStatus.textContent =
+          result.reason === 'unauthorized'
+            ? 'This device is no longer signed in to a profile. Turn sync off and on again, then retry.'
+            : SYNC_FAILURE_TEXT[result.reason];
+        confirmBusy = false;
+        renderConfirmControls();
+        confirmNameInput.focus();
+        return;
+      }
+    }
+    if (confirmAction === 'reset') wipeProgress(storage);
+    else wipeDevice(storage);
+    announcer.say(confirmAction === 'reset' ? 'Progress reset.' : 'Account closed.');
+    window.location.reload();
+  }
+
+  function wireConfirm(): void {
+    resetProgressButton.addEventListener('click', () => openConfirm('reset', resetProgressButton));
+    closeAccountButton.addEventListener('click', () => openConfirm('close', closeAccountButton));
+    confirmNameInput.addEventListener('input', renderConfirmControls);
+    confirmNameInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') void runConfirmedAction();
+    });
+    confirmGo.addEventListener('click', () => void runConfirmedAction());
+    confirmCancel.addEventListener('click', closeConfirm);
+    // A backdrop tap is a cancel, like every other dialog (issue #107).
+    confirmPanel.addEventListener('click', (ev) => {
+      if (ev.target === confirmPanel) closeConfirm();
+    });
+  }
+
   // --- welcome gate (issue #105) -------------------------------------------------
 
   /** First launch only: the player picks an identity before playing. Required
@@ -2803,6 +2943,7 @@ async function start(): Promise<void> {
       // The tutorial card (issue #59) is only ever up over the bare board —
       // every other panel is guarded against it — so Escape there is Skip.
       if (tutorialVisible) tutorial.skip();
+      else if (confirmVisible) closeConfirm();
       else if (leaderboardVisible) closeLeaderboard();
       else if (feedbackVisible) closeFeedback();
       else if (changelogVisible) closeChangelog();
@@ -3324,6 +3465,7 @@ async function start(): Promise<void> {
   wireProfile();
   wireFeedback();
   wireWelcome();
+  wireConfirm();
   wireTutorial();
   applyMotionPreference();
   el<HTMLElement>('version').textContent = versionLabel(

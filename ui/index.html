@@ -743,6 +743,7 @@
       #feedback,
       #leaderboard,
       #daily-panel,
+      #confirm,
       #welcome {
         position: absolute;
         inset: 0;
@@ -767,6 +768,7 @@
       #feedback.visible,
       #leaderboard.visible,
       #daily-panel.visible,
+      #confirm.visible,
       #welcome.visible {
         display: flex;
       }
@@ -776,6 +778,7 @@
       #feedback .card,
       #leaderboard .card,
       #daily-panel .card,
+      #confirm .card,
       #welcome .card {
         background: #f0fdf4;
         color: #14532d;
@@ -793,6 +796,7 @@
       #feedback h2,
       #leaderboard h2,
       #daily-panel h2,
+      #confirm h2,
       #welcome h2 {
         margin: 0 0 12px;
         font-size: 24px;
@@ -1087,6 +1091,7 @@
       #feedback .attach-row > button,
       #leaderboard .card > button,
       #daily-panel .card > button,
+      #confirm .card > button,
       #welcome .card > button {
         margin-top: 16px;
         display: block;
@@ -1123,6 +1128,71 @@
         align-items: center;
         gap: 12px;
         border-top: none;
+      }
+      /* Account actions (issue #201): settings rows in the warning colour,
+         and the confirmation dialog — the destructive button is filled red
+         and disabled until the typed name matches. */
+      #settings fieldset > button.danger-row {
+        /* A row inside the fieldset, so the `.card > button` primary style
+           does not reach it: reset the button chrome to the feedback row's. */
+        width: 100%;
+        box-sizing: border-box;
+        text-align: left;
+        border: none;
+        background: none;
+        color: #991b1b;
+        font: inherit;
+        font-weight: bold;
+        border-radius: 0;
+      }
+      #settings fieldset > button.danger-row .hint {
+        font-weight: normal;
+      }
+      #confirm {
+        /* Over Settings, which steps aside anyway; explicit so a future
+           route over another dialog starts right (issue #174). */
+        z-index: 41;
+      }
+      #confirm p {
+        margin: 0 0 8px;
+      }
+      #confirm label {
+        display: block;
+        margin: 12px 0 4px;
+        font-weight: bold;
+      }
+      #confirm input[type='text'] {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        min-height: 48px;
+        font-size: 18px;
+        font-family: inherit;
+        padding: 8px 10px;
+        border: 1px solid #bbf7d0;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #14532d;
+      }
+      #confirm-status {
+        display: block;
+        margin-top: 12px;
+        min-height: 24px;
+        font-size: 15px;
+        color: #991b1b;
+        font-weight: bold;
+      }
+      #confirm .card > button.danger {
+        background: #991b1b;
+        border-color: #7f1d1d;
+      }
+      #confirm .card > button:disabled {
+        opacity: 0.5;
+      }
+      #confirm .card > .secondary {
+        background: none;
+        color: #166534;
+        border-color: #bbf7d0;
       }
       /* Booster grants on the win dialog (issue #51): the payout line reads
          like the score line. */
@@ -2008,6 +2078,35 @@
               <button id="welcome-guest" type="button">Play as guest</button>
             </div>
           </div>
+          <!-- Irreversible-action confirmation (issue #201). An alertdialog:
+               the text says plainly that the action cannot be undone, and the
+               destructive button stays disabled until the player has typed
+               their display name — a second, deliberate step, not a tap. -->
+          <div
+            id="confirm"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="confirm-title"
+            aria-describedby="confirm-text"
+          >
+            <div class="card">
+              <h2 id="confirm-title">Reset progress?</h2>
+              <p id="confirm-text"></p>
+              <label for="confirm-name-input" id="confirm-name-label">Type your name to confirm</label>
+              <input
+                type="text"
+                id="confirm-name-input"
+                maxlength="20"
+                autocomplete="off"
+                autocapitalize="off"
+                spellcheck="false"
+                enterkeyhint="done"
+              />
+              <span id="confirm-status" aria-live="assertive"></span>
+              <button id="confirm-go" type="button" class="danger" disabled>Reset progress</button>
+              <button id="confirm-cancel" type="button" class="secondary">Cancel</button>
+            </div>
+          </div>
           <!-- First-run tutorial (issue #59): six steps over the dealt board,
                Next / Skip on every one, Esc = Skip. No dark backdrop — step 3
                highlights a real pair on the board behind it — but the
@@ -2125,6 +2224,24 @@
                   <span class="hint">Tell us what's wrong or what you'd like to see.</span>
                 </span>
               </button>
+              <!-- Account (issue #201): the two irreversible actions. Each opens
+                   the confirmation dialog (#confirm), which asks the player to
+                   type their display name before the destructive button arms. -->
+              <fieldset id="account-section">
+                <legend>Account</legend>
+                <button id="btn-reset-progress" type="button" class="row danger-row">
+                  <span>
+                    Reset progress
+                    <span class="hint">Start the ladder over. Keeps your name and avatar.</span>
+                  </span>
+                </button>
+                <button id="btn-close-account" type="button" class="row danger-row">
+                  <span>
+                    Close account
+                    <span class="hint">Delete your profile and everything in it.</span>
+                  </span>
+                </button>
+              </fieldset>
               <!-- Issue #81: which build is this? The commit stamp is the
                    load-bearing part; tapping the row opens the changelog. -->
               <button id="btn-version" type="button" class="row version-row">

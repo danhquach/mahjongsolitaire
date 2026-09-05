@@ -62,6 +62,18 @@ test('the API limits table states exactly what the code enforces', () => {
       player: rate(PROFILE.name),
       day: String(PROFILE.name.perDay),
     },
+    'POST /api/profile/reset': {
+      body: NONE,
+      address: rate(PROFILE.reset),
+      player: rate(PROFILE.reset),
+      day: String(PROFILE.reset.perDay),
+    },
+    'DELETE /api/profile': {
+      body: NONE,
+      address: rate(PROFILE.close),
+      player: rate(PROFILE.close),
+      day: String(PROFILE.close.perDay),
+    },
     'POST /api/leaderboard/weekly': {
       body: bytes(BOARD_BODY),
       address: rate(BOARD.submit),
@@ -91,7 +103,7 @@ test('the code has no route or limit the table does not list', () => {
   // A new `perDay` (or a new route) in RATE_LIMITS without a table row is the
   // drift this file exists to catch; the row check above covers the values,
   // this covers the keys.
-  assert.deepEqual(Object.keys(PROFILE).sort(), ['name', 'read', 'register', 'sync']);
+  assert.deepEqual(Object.keys(PROFILE).sort(), ['close', 'name', 'read', 'register', 'reset', 'sync']);
   assert.deepEqual(Object.keys(BOARD).sort(), ['read', 'read-signed', 'submit', 'withdraw']);
   assert.deepEqual(Object.keys(FEEDBACK_LIMITS).sort(), [
     'MAX_BODY_BYTES',

@@ -280,6 +280,40 @@ export async function pushName(
   );
 }
 
+/** Issue #201, "Reset progress": the server empties the record and the
+ *  board standing and hands back the (now empty) profile. The caller wipes
+ *  the device's own progress afterwards, not before — a refused reset must
+ *  leave the device exactly as it was. */
+export async function resetAccount(
+  credentials: SyncCredentials,
+  deps: SyncDeps = {},
+): Promise<SyncResult<RemoteProfile>> {
+  return profileResult(
+    await apiRequest({
+      fetchImpl: deps.fetchImpl ?? boundFetch,
+      path: `${BASE}/reset`,
+      method: 'POST',
+      code: credentials.code,
+    }),
+  );
+}
+
+/** Issue #201, "Close account": delete the profile and everything tied to it
+ *  on the server. The code stops working the moment this succeeds, so the
+ *  caller forgets it (and everything else) and reloads. */
+export async function closeAccount(
+  credentials: SyncCredentials,
+  deps: SyncDeps = {},
+): Promise<SyncResult<null>> {
+  const result = await apiRequest({
+    fetchImpl: deps.fetchImpl ?? boundFetch,
+    path: BASE,
+    method: 'DELETE',
+    code: credentials.code,
+  });
+  return result.ok ? { ok: true, value: null } : result;
+}
+
 /** Recover a profile on a new device (or after a reinstall) from its code. */
 export async function fetchProfile(
   code: string,
