@@ -157,6 +157,18 @@ level 30 as hard, and each is worth its spike.
   the player's own profile number, not a public entry, and zeroing it would
   erase their private score as a side effect of leaving a public board.
 
+- **A rejoin after withdraw starts the board from zero (#200, won't-fix,
+  2026-09-04).** Withdraw deletes the stored runs along with the standing, and
+  the client keeps no run histories after posting, so when a second device
+  that is still opted in posts its next clear there is nothing verifiable left
+  to rebuild the week from. Seeding the standing from `players.week_score`
+  would bypass the replay check that every counted run passes. The only shape
+  that preserves verification is keeping the private runs on withdraw and
+  rebuilding the standing from them, which reverses "every entry" here and in
+  0022/0031; the PM chose to keep the erasure semantics instead. Close account
+  (#201) now covers the case that motivated deleting the runs, so the board
+  can trail the profile total after a rejoin, and that gap is accepted.
+
 ## What does not change
 
 Scores are still **bounded, not verified** — 0022's central position and its
