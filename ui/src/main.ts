@@ -2398,6 +2398,10 @@ async function start(): Promise<void> {
   });
 
   dailyPanelClose.addEventListener('click', closeDailyPanel);
+  // Same backdrop dismissal as every other dialog (issue #225).
+  dailyPanel.addEventListener('click', (ev) => {
+    if (ev.target === dailyPanel) closeDailyPanel();
+  });
 
   // --- feedback form (issue #118) ----------------------------------------------
 
@@ -2882,6 +2886,12 @@ async function start(): Promise<void> {
     buildAvatarGrid();
     profileButton.addEventListener('click', () => openProfile());
     profileClose.addEventListener('click', () => closeProfile());
+    // Tapping the dimmed backdrop dismisses the profile like every other
+    // dialog (issue #225); closeProfile commits a pending name the same way
+    // Escape does, so nothing typed is lost.
+    profilePanel.addEventListener('click', (ev) => {
+      if (ev.target === profilePanel) closeProfile();
+    });
     profileNameInput.addEventListener('change', () => {
       const name = profile.setName(profileNameInput.value);
       // The field shows the name as stored — trimmed, clamped, never empty.
