@@ -44,8 +44,9 @@ How to read it:
 - **Per address** is a fixed window keyed by `CF-Connecting-IP`, checked before
   any code is looked at (0029). An IPv4 caller keys on its address; an IPv6
   caller keys on its /64 prefix, because every IPv6 connection owns at least
-  a /64 and the full address would give one caller 2^64 buckets (#209). **Per player** is the same window keyed by the
-  authenticated player, checked after. **Per day** is the identity's quota
+  a /64 and the full address would give one caller 2^64 buckets (#209).
+  **Per player** is the same window keyed by the authenticated player,
+  checked after. **Per day** is the identity's quota
   (0032): the player's where there is one, the address's and everyone's for
   registration. All three answer `429 rate_limited`.
 - Everything counts in D1, with one exception: the anonymous leaderboard read

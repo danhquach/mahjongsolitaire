@@ -70,6 +70,16 @@ test('an IPv6 address keys on its /64 prefix, so one connection is one bucket', 
   assert.equal(key('::1'), 'feedback:ip:::/64');
   // An IPv4-mapped IPv6 address is that IPv4 address, not a /64.
   assert.equal(key('::ffff:203.0.113.9'), 'feedback:ip:203.0.113.9');
+  // A trailing dotted quad in any other position is the two groups it spells.
+  assert.equal(key('64:ff9b::203.0.113.9'), key('64:ff9b::cb00:7109'));
+  assert.equal(key('2001:db8:1:2:3:4:203.0.113.9'), 'feedback:ip:2001:db8:1:2::/64');
   // IPv4 is untouched.
   assert.equal(key('203.0.113.9'), 'feedback:ip:203.0.113.9');
+});
+
+test('a header value that is not an address keeps its own bucket rather than throwing', () => {
+  const key = (ip) => callerKey(new Request('https://x.example/api/x', { headers: { 'CF-Connecting-IP': ip } }), 'feedback');
+  for (const odd of ['fe80::1%eth0', '[2001:db8::1]', '2001:db8::1::2', '1:2:3:4:5:6:7:8:9', '1:2:3:4:5:6:7', '64:ff9b::1.2.3.999', 'garbage']) {
+    assert.equal(key(odd), `feedback:ip:${odd}`);
+  }
 });

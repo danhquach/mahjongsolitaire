@@ -127,8 +127,16 @@ function addressBucket(ip) {
   return `${prefix.slice(0, end).map((g) => g.toString(16)).join(':')}::/64`;
 }
 
-/** The eight 16-bit groups of an IPv6 address, or `null` if it is not one. */
+/** The eight 16-bit groups of an IPv6 address, or `null` if it is not one.
+ *  A trailing dotted quad (`64:ff9b::203.0.113.9`, the NAT64 spelling) is the
+ *  two groups it stands for. */
 function expandIpv6(ip) {
+  const quad = /:(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(ip);
+  if (quad) {
+    const [a, b, c, d] = quad.slice(1).map(Number);
+    if ([a, b, c, d].some((n) => n > 255)) return null;
+    ip = `${ip.slice(0, quad.index + 1)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
   const halves = ip.split('::');
   if (halves.length > 2) return null;
   const parse = (part) => (part === '' ? [] : part.split(':').map((g) => (/^[0-9a-f]{1,4}$/i.test(g) ? parseInt(g, 16) : NaN)));
