@@ -92,9 +92,11 @@ test('pickVisiblePair takes the same-face free pair in one half with most room f
   assert.deepEqual(pair?.map((t) => t.id).sort(), [1, 2]);
 });
 
-test('pickVisiblePair falls back to a cross-half pair, then to null', () => {
+test('pickVisiblePair never takes a pair that straddles the middle, and is null without one (issue #199)', () => {
   const crossHalf = [tile(1, 1, 0, { face: 'a' }), tile(2, 1, 7, { face: 'a' })];
-  assert.deepEqual(pickVisiblePair(crossHalf, MID)?.map((t) => t.id), [1, 2]);
+  assert.equal(pickVisiblePair(crossHalf, MID), null, 'the card would have no half to take');
+  const withSameHalf = [...crossHalf, tile(3, 3, 7, { face: 'a' })];
+  assert.deepEqual(pickVisiblePair(withSameHalf, MID)?.map((t) => t.id).sort(), [2, 3], 'a same-half pair wins over the straddling one');
   const blockedPair = [tile(1, 1, 0, { face: 'a', free: false }), tile(2, 3, 0, { face: 'a' })];
   assert.equal(pickVisiblePair(blockedPair, MID), null, 'only free tiles pair');
   assert.equal(pickVisiblePair([tile(1, 1, 0, { face: 'a' }), tile(2, 3, 0, { face: 'b' })], MID), null);

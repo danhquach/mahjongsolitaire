@@ -94,9 +94,11 @@ export function pickFreeBlocked(
 
 /**
  * Step 3's actors: a matchable free pair (same face, both free), both fully
- * visible. Same half preferred, with the most room from the middle; if no
- * pair fits one half, any fully visible pair; null when there is none (the
- * caller falls back to the solver's hint, unringed).
+ * visible and in the same half of the board, with the most room from the
+ * middle. Null when no such pair exists (the caller falls back to the
+ * solver's hint, unringed). A pair that straddles the middle is never taken:
+ * the card sits in the half that holds no actor, and a straddling pair
+ * leaves it no half to take (issue #199).
  */
 export function pickVisiblePair(
   tiles: readonly SpotTile[],
@@ -109,20 +111,18 @@ export function pickVisiblePair(
     if (list) list.push(t);
     else byFace.set(t.face, [t]);
   }
-  let sameHalf: { score: number; pair: readonly [SpotTile, SpotTile] } | null = null;
-  let any: readonly [SpotTile, SpotTile] | null = null;
+  let best: { score: number; pair: readonly [SpotTile, SpotTile] } | null = null;
   for (const ids of byFace.values()) {
     for (let i = 0; i < ids.length; i++) {
       for (let j = i + 1; j < ids.length; j++) {
         const pair = [ids[i]!, ids[j]!] as const;
-        any ??= pair;
         if (half(pair[0].rect, boardMidY) !== half(pair[1].rect, boardMidY)) continue;
         const score = clearance([pair[0].rect, pair[1].rect], boardMidY);
-        if (sameHalf === null || score > sameHalf.score) sameHalf = { score, pair };
+        if (best === null || score > best.score) best = { score, pair };
       }
     }
   }
-  return sameHalf?.pair ?? any;
+  return best?.pair ?? null;
 }
 
 /** A tile's hole: the face plus a little of the side depth below it. */
