@@ -90,19 +90,23 @@ test("the day's first completion starts a 1-day streak and pays one trophy", () 
     dailyStreak: 1,
     lastDaily: '2026-09-01',
     trophies: 1,
+    dailyCount: 1,
   });
 });
 
-test('consecutive days extend the streak', () => {
+test('consecutive days extend the streak and reset dailyCount to 1', () => {
   const record = new RecordStore(fakeStorage());
   record.creditDailyChallenge('2026-09-01');
+  record.creditDailyChallenge('2026-09-01'); // a second challenge the same day
+  assert.equal(record.value.dailyCount, 2);
   assert.deepEqual(record.creditDailyChallenge('2026-09-02'), {
     credited: true,
     streak: 2,
     trophies: 1,
   });
-  assert.equal(record.value.trophies, 2);
+  assert.equal(record.value.trophies, 3);
   assert.equal(record.value.lastDaily, '2026-09-02');
+  assert.equal(record.value.dailyCount, 1, 'a new date starts the count over, not maxed with yesterday');
 });
 
 test("the day's second and third completions pay a flat trophy and leave the streak", () => {
@@ -124,7 +128,44 @@ test("the day's second and third completions pay a flat trophy and leave the str
   assert.equal(record.value.trophies, 3, 'three challenges, three trophies');
   assert.equal(record.value.dailyStreak, 1);
   assert.equal(record.value.lastDaily, '2026-09-01');
+  assert.equal(record.value.dailyCount, 3, 'the record itself now enforces the three-a-day cap');
 });
+
+test('a fourth completion the same date pays nothing and writes nothing (issue #227)', () => {
+  const storage = fakeStorage();
+  const record = new RecordStore(storage);
+  record.creditDailyChallenge('2026-09-01');
+  record.creditDailyChallenge('2026-09-01');
+  record.creditDailyChallenge('2026-09-01');
+  const before = new RecordStore(storage).value; // what actually got persisted
+  const fourth = record.creditDailyChallenge('2026-09-01');
+  assert.deepEqual(fourth, { credited: false, streak: 1, trophies: 0 });
+  assert.equal(record.value.trophies, 3, 'no fourth trophy');
+  assert.equal(record.value.dailyCount, 3, 'the cap does not overshoot');
+  assert.deepEqual(new RecordStore(storage).value, before, 'a refused credit writes nothing');
+});
+
+test(
+  'the exploit issue #227 describes: crediting 3 times then again refuses, whatever a fresh local ' +
+    'Daily-progress store might say',
+  () => {
+    // Reproduces the hole directly: a RecordStore over its own fake storage,
+    // credited three times for one date — exactly what daily.ts's `done`
+    // flags would also allow — and then credited a fourth time. Before #227
+    // this paid a fourth trophy unconditionally; the cap now lives in the
+    // record itself, so it holds even if `mahjong.daily.v1` were wiped and a
+    // fresh DailyStore reported nothing done for the date.
+    const record = new RecordStore(fakeStorage());
+    for (let i = 0; i < 3; i++) {
+      const credit = record.creditDailyChallenge('2026-09-01');
+      assert.equal(credit.credited, true, `credit ${i + 1} of 3 should be paid`);
+    }
+    const exploitAttempt = record.creditDailyChallenge('2026-09-01');
+    assert.equal(exploitAttempt.credited, false, 'the record refuses a fourth credit for the same date');
+    assert.equal(exploitAttempt.trophies, 0);
+    assert.equal(record.value.trophies, 3, 'no trophy minted by the replay');
+  },
+);
 
 test('a streak bonus is paid once a day, not once a challenge', () => {
   const record = new RecordStore(fakeStorage());
@@ -149,6 +190,7 @@ test('a date before the last credited one pays nothing', () => {
   // Yesterday's board finished after today's: the streak is what it is.
   assert.deepEqual(record.creditDailyChallenge('2026-09-04'), { credited: false, streak: 1, trophies: 0 });
   assert.equal(record.value.lastDaily, '2026-09-05');
+  assert.equal(record.value.dailyCount, 1, 'the refused earlier date leaves the count untouched');
 });
 
 test('the streak crosses month, year and DST boundaries', () => {
@@ -193,6 +235,20 @@ test('parsePlayerRecord drops a streak whose date it cannot vouch for', () => {
   const ok = parsePlayerRecord({ dailyStreak: 9, lastDaily: '2026-09-01' });
   assert.equal(ok.dailyStreak, 9);
   assert.equal(ok.lastDaily, '2026-09-01');
+});
+
+test('parsePlayerRecord clamps dailyCount to the daily cap, and defaults it to 0', () => {
+  // Missing entirely: an old record parses to 0 (the grace-window case).
+  assert.equal(parsePlayerRecord({ lastDaily: '2026-09-01' }).dailyCount, 0);
+  // Non-negative integer, like every other counter here.
+  assert.equal(parsePlayerRecord({ lastDaily: '2026-09-01', dailyCount: -1 }).dailyCount, 0);
+  assert.equal(parsePlayerRecord({ lastDaily: '2026-09-01', dailyCount: 2.5 }).dailyCount, 0);
+  assert.equal(parsePlayerRecord({ lastDaily: '2026-09-01', dailyCount: '3' }).dailyCount, 0);
+  // Clamped to the daily cap even when a hand-edited record claims more.
+  assert.equal(parsePlayerRecord({ lastDaily: '2026-09-01', dailyCount: 3 }).dailyCount, 3);
+  assert.equal(parsePlayerRecord({ lastDaily: '2026-09-01', dailyCount: 99 }).dailyCount, 3);
+  // Forced to 0 without a lastDaily to anchor it to — same rule as dailyStreak.
+  assert.equal(parsePlayerRecord({ dailyCount: 3 }).dailyCount, 0);
 });
 
 test('a throwing storage still yields a working in-memory record', () => {

@@ -276,6 +276,7 @@ test('merging keeps the best of both and loses nothing', () => {
     dailyStreak: 0,
     lastDaily: null,
     trophies: 7,
+    dailyCount: 0,
   });
 });
 
@@ -323,6 +324,35 @@ test('a streak already broken by a gap is not resurrected by a merge', () => {
   );
   assert.equal(merged.dailyStreak, 2);
   assert.equal(merged.lastDaily, '2026-09-02');
+});
+
+// --- dailyCount (issue #227) --------------------------------------------------
+//
+// Anchored to lastDaily exactly like dailyStreak, but with its own rule: equal
+// dates take the max (both sides saw the same day), any other date takes the
+// later side's count outright — never maxed across different dates, which
+// would carry one day's count into the next.
+
+test('same lastDaily on both sides: dailyCount takes the max', () => {
+  const a = withRecord({ dailyStreak: 4, lastDaily: '2026-09-01', dailyCount: 1 });
+  const b = withRecord({ dailyStreak: 4, lastDaily: '2026-09-01', dailyCount: 3 });
+  assert.equal(mergeRecords(a, b).dailyCount, 3);
+  assert.deepEqual(mergeRecords(a, b), mergeRecords(b, a));
+});
+
+test('a later lastDaily takes its own dailyCount outright, never maxed across dates', () => {
+  const earlier = withRecord({ dailyStreak: 1, lastDaily: '2026-09-01', dailyCount: 3 });
+  const later = withRecord({ dailyStreak: 2, lastDaily: '2026-09-02', dailyCount: 1 });
+  const merged = mergeRecords(earlier, later);
+  assert.equal(merged.lastDaily, '2026-09-02');
+  assert.equal(merged.dailyCount, 1, "yesterday's 3 must not carry into today's count");
+  assert.deepEqual(merged, mergeRecords(later, earlier));
+});
+
+test('one side never having played contributes the other side\'s dailyCount', () => {
+  const played = withRecord({ dailyStreak: 2, lastDaily: '2026-09-02', dailyCount: 2 });
+  assert.equal(mergeRecords(played, EMPTY_RECORD).dailyCount, 2);
+  assert.equal(mergeRecords(EMPTY_RECORD, played).dailyCount, 2);
 });
 
 test('merging is symmetric, and a side with no Daily history contributes none', () => {

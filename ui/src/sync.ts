@@ -337,12 +337,12 @@ export async function fetchProfile(
  * get. Keep the two in step.
  */
 export function mergeRecords(local: PlayerRecord, remote: PlayerRecord): PlayerRecord {
-  const streak = ((): { dailyStreak: number; lastDaily: string | null } => {
+  const streak = ((): { dailyStreak: number; lastDaily: string | null; dailyCount: number } => {
     if (local.lastDaily === null) {
-      return { dailyStreak: remote.dailyStreak, lastDaily: remote.lastDaily };
+      return { dailyStreak: remote.dailyStreak, lastDaily: remote.lastDaily, dailyCount: remote.dailyCount };
     }
     if (remote.lastDaily === null) {
-      return { dailyStreak: local.dailyStreak, lastDaily: local.lastDaily };
+      return { dailyStreak: local.dailyStreak, lastDaily: local.lastDaily, dailyCount: local.dailyCount };
     }
     const day = 24 * 60 * 60 * 1000;
     const gap = Math.abs(
@@ -352,9 +352,19 @@ export function mergeRecords(local: PlayerRecord, remote: PlayerRecord): PlayerR
       ),
     );
     const later = local.lastDaily >= remote.lastDaily ? local : remote;
+    // dailyCount is anchored to lastDaily, not to the streak's gap<=1 grace
+    // window: the same date on both sides means the same day's count, so the
+    // larger is the better record of what was credited (issue #227). Any other
+    // date, even one day off, takes the later side's count outright — maxing
+    // across different dates would carry one day's count into the next.
+    const dailyCount =
+      local.lastDaily === remote.lastDaily
+        ? Math.max(local.dailyCount, remote.dailyCount)
+        : later.dailyCount;
     return {
       dailyStreak: gap <= 1 ? Math.max(local.dailyStreak, remote.dailyStreak) : later.dailyStreak,
       lastDaily: later.lastDaily,
+      dailyCount,
     };
   })();
   // The week score is the one field here that can legitimately go *down*, so

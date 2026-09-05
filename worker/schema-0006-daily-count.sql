@@ -1,0 +1,31 @@
+-- D1 schema, migration 0006: the per-date Daily credit count (issue #227).
+--
+--   wrangler d1 execute lantern-tiles --remote --file worker/schema-0006-daily-count.sql
+--
+-- (`--local` instead of `--remote` for `wrangler dev`.)
+--
+-- ## Additive only, and it must run BEFORE the deploy
+--
+-- Closes the hole in decision 0028's "per-day cap lives in the progress
+-- store" consequence: the three-a-day cap was only ever enforced by the
+-- `done` flags in `mahjong.daily.v1`, a local document the record never
+-- consulted, so clearing it and re-completing minted trophies that synced
+-- unchallenged. The fix moves the count into the record itself, paired with
+-- `lastDaily` the way `week_score` is paired with `week_start` (0003), and the
+-- Worker's register/sync routes bind `daily_count` on every write from the
+-- moment they are built with issue #227's code.
+--
+-- That means this is exactly the schema-0003 situation again: apply this file
+-- before the Worker that expects the column is deployed, or every profile
+-- write 500s until it is. `worker/scripts/check-schema.mjs` is the deploy
+-- gate that catches this — it fails the deploy job until the live database
+-- has `players.daily_count`, which is what this migration adds.
+--
+-- ## Re-running
+--
+-- NOT a no-op. SQLite has no `ADD COLUMN IF NOT EXISTS`, so a second run
+-- errors. Check what is there before re-running:
+--
+--   wrangler d1 execute lantern-tiles --remote --command "PRAGMA table_info(players)"
+
+ALTER TABLE players ADD COLUMN daily_count INTEGER NOT NULL DEFAULT 0;

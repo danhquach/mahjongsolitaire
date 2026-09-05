@@ -114,6 +114,8 @@ players once 0027 removed the Daily leaderboard.
   the actual threat. **Revisit the moment trophies unlock content or feed a
   board**, at which point the counter is required rather than optional.
 
+  Closed by 0037 (issue #227).
+
 - **The layout/pool invariant moved.** "The pools name exactly the shipped
   layout files" was asserted through `DAILY_LAYOUTS`; it is the ladder's
   invariant and now lives in `ladder.test.ts`.

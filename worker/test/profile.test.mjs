@@ -135,7 +135,15 @@ test('a client record is sanitized field by field, not rejected', () => {
     dailyStreak: 9,
     lastDaily: '2026-09-01',
     trophies: 2,
+    dailyCount: 0,
   });
+});
+
+test('dailyCount is clamped to the daily cap, and forced to 0 without a lastDaily to anchor it', () => {
+  assert.equal(validateRecord({ lastDaily: '2026-09-01', dailyCount: 3 }).dailyCount, 3);
+  assert.equal(validateRecord({ lastDaily: '2026-09-01', dailyCount: 99 }).dailyCount, 3);
+  assert.equal(validateRecord({ lastDaily: '2026-09-01', dailyCount: -1 }).dailyCount, 0);
+  assert.equal(validateRecord({ dailyCount: 3 }).dailyCount, 0);
 });
 
 test('a week score with no week it belongs to is not a score', () => {
@@ -215,6 +223,30 @@ test('a side with no Daily history contributes no streak', () => {
   assert.deepEqual(mergeRecords(EMPTY_RECORD, played), played);
 });
 
+// --- dailyCount (issue #227) --------------------------------------------------
+
+test('same lastDaily on both sides: dailyCount takes the max', () => {
+  const a = { ...EMPTY_RECORD, dailyStreak: 4, lastDaily: '2026-09-01', dailyCount: 1 };
+  const b = { ...EMPTY_RECORD, dailyStreak: 4, lastDaily: '2026-09-01', dailyCount: 3 };
+  assert.equal(mergeRecords(a, b).dailyCount, 3);
+  assert.deepEqual(mergeRecords(a, b), mergeRecords(b, a));
+});
+
+test('a later lastDaily takes its own dailyCount outright, never maxed across dates', () => {
+  const earlier = { ...EMPTY_RECORD, dailyStreak: 1, lastDaily: '2026-09-01', dailyCount: 3 };
+  const later = { ...EMPTY_RECORD, dailyStreak: 2, lastDaily: '2026-09-02', dailyCount: 1 };
+  const merged = mergeRecords(earlier, later);
+  assert.equal(merged.lastDaily, '2026-09-02');
+  assert.equal(merged.dailyCount, 1, "yesterday's 3 must not carry into today's count");
+  assert.deepEqual(merged, mergeRecords(later, earlier));
+});
+
+test('one side never having played contributes the other side\'s dailyCount', () => {
+  const played = { ...EMPTY_RECORD, dailyStreak: 2, lastDaily: '2026-09-02', dailyCount: 2 };
+  assert.equal(mergeRecords(played, EMPTY_RECORD).dailyCount, 2);
+  assert.equal(mergeRecords(EMPTY_RECORD, played).dailyCount, 2);
+});
+
 // --- routes ------------------------------------------------------------------
 
 test('registering mints a profile, a public id and a one-time recovery code', async () => {
@@ -249,6 +281,31 @@ test('the recovery code reads the profile back — from any device', async () =>
   assert.equal(profile.name, 'Alex');
   assert.deepEqual(profile.record.cleared, [1, 2, 3]);
   assert.equal(profile.record.trophies, 3);
+});
+
+test('dailyCount round-trips through register and sync, exercising the daily_count column', async () => {
+  const env = { DB: createDb() };
+  const { json: created } = await registerPlayer(env, makeDeps(), {
+    record: { ...EMPTY_RECORD, lastDaily: '2026-09-01', dailyStreak: 1, dailyCount: 2 },
+  });
+  assert.equal(created.profile.record.dailyCount, 2);
+  const row = env.DB.raw.prepare('SELECT daily_count FROM players WHERE id = ?').get(created.playerId);
+  assert.equal(row.daily_count, 2);
+
+  // A later date on the sync'd record wins outright and resets the count.
+  const response = await handleProfile(
+    request('POST', '/api/profile/sync', {
+      headers: bearer(created.code),
+      body: { record: { ...EMPTY_RECORD, lastDaily: '2026-09-02', dailyStreak: 2, dailyCount: 1 } },
+    }),
+    env,
+    makeDeps(),
+  );
+  assert.equal(response.status, 200);
+  const { profile } = await response.json();
+  assert.equal(profile.record.dailyCount, 1);
+  const updated = env.DB.raw.prepare('SELECT daily_count FROM players WHERE id = ?').get(created.playerId);
+  assert.equal(updated.daily_count, 1);
 });
 
 test('a wrong, malformed or missing code is the same 401', async () => {

@@ -17,6 +17,7 @@
 // sync.ts is the opt-in bridge between these two stores and that server.
 
 import {
+  DAILY_CHALLENGE_COUNT,
   LADDER_LENGTH,
   dailyTrophies,
   daysBetween,
@@ -187,6 +188,13 @@ export interface PlayerRecord {
   /** Trophies collected from completed Daily challenges (issue #183: one per
    *  completion, plus the streak tier bonus on the day's first). */
   readonly trophies: number;
+  /** How many Daily challenges have been credited on `lastDaily` (issue #227).
+   *  Paired with `lastDaily` the way `weekScore` is paired with `weekStart`:
+   *  meaningless on its own, and forced to 0 whenever `lastDaily` is null. This
+   *  is what actually enforces the three-a-day cap — `mahjong.daily.v1`'s
+   *  `done` flags never reached the record, so clearing that store used to
+   *  mint a trophy on every replay of the same date. */
+  readonly dailyCount: number;
 }
 
 export const EMPTY_RECORD: PlayerRecord = {
@@ -197,6 +205,7 @@ export const EMPTY_RECORD: PlayerRecord = {
   dailyStreak: 0,
   lastDaily: null,
   trophies: 0,
+  dailyCount: 0,
 };
 
 export const RECORD_STORAGE_KEY = 'mahjong.record.v1';
@@ -240,6 +249,15 @@ export function parsePlayerRecord(record: unknown): PlayerRecord {
   // one it is not a score, it is a number of unknown age. This is what stops a
   // pre-#176 record's lifetime total from being read as this week's.
   const weekStart = isWeekKey(raw['weekStart']) ? raw['weekStart'] : null;
+  // Clamped to the daily cap for the same reason a bad `dailyStreak` is
+  // forgotten without `lastDaily` to vouch for it: a hand-edited (or simply
+  // absent) count must never be able to raise the ceiling `creditDailyChallenge`
+  // enforces. A record written before this change has no `dailyCount` and
+  // reads as 0 — its own trophies are kept as they are (see the class
+  // comment), but it gets one grace window of up to three credits on its own
+  // `lastDaily` day, gated as today by the local Daily store the same as
+  // always.
+  const dailyCount = lastDaily === null ? 0 : Math.min(count('dailyCount'), DAILY_CHALLENGE_COUNT);
   return {
     levelsCleared: count('levelsCleared'),
     weekScore: weekStart === null ? 0 : count('weekScore'),
@@ -248,6 +266,7 @@ export function parsePlayerRecord(record: unknown): PlayerRecord {
     dailyStreak: lastDaily === null ? 0 : count('dailyStreak'),
     lastDaily,
     trophies: count('trophies'),
+    dailyCount,
   };
 }
 
@@ -360,14 +379,26 @@ export class RecordStore {
    * the second and third pay a flat trophy, because the streak counts days,
    * not challenges. A date *earlier* than the last credited one pays nothing
    * at all — winding the device clock back must not re-earn a day.
+   *
+   * The cap is enforced here, in the record, not in the local Daily-progress
+   * store (issue #227): a fourth call for the same date — however it was
+   * reached, including a cleared `mahjong.daily.v1` — pays nothing and writes
+   * nothing.
    */
   creditDailyChallenge(dateKey: string): DailyCredit {
-    const { lastDaily, dailyStreak } = this.current;
+    const { lastDaily, dailyStreak, dailyCount } = this.current;
     const gap = lastDaily === null ? null : daysBetween(lastDaily, dateKey);
     if (gap !== null && gap < 0) return { credited: false, streak: dailyStreak, trophies: 0 };
     if (gap === 0) {
+      if (dailyCount >= DAILY_CHALLENGE_COUNT) {
+        return { credited: false, streak: dailyStreak, trophies: 0 };
+      }
       // Another challenge off the same day's three: a trophy, no streak move.
-      this.current = { ...this.current, trophies: this.current.trophies + 1 };
+      this.current = {
+        ...this.current,
+        trophies: this.current.trophies + 1,
+        dailyCount: dailyCount + 1,
+      };
       writeRecord(this.storage, this.key, this.current);
       return { credited: true, streak: dailyStreak, trophies: 1 };
     }
@@ -377,6 +408,7 @@ export class RecordStore {
       ...this.current,
       dailyStreak: streak,
       lastDaily: dateKey,
+      dailyCount: 1,
       trophies: this.current.trophies + trophies,
     };
     writeRecord(this.storage, this.key, this.current);
