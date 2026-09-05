@@ -16,7 +16,7 @@
 //   4. a pair can be matched with the keyboard alone, outcomes are announced,
 //      and focus survives the tiles being removed;
 //   5. the end-of-level dialog is modal and takes focus;
-//  5b. the weekly leaderboard (issues #70, #176) is a named, modal dialog
+//  5b. the weekly leaderboard (issues #70, #176, #223) is a named, modal dialog
 //      that takes focus, inerts the board behind it, and hands focus back on
 //      Escape;
 //   6. the settings screen (issue #14, plus issue #45's Highlight free tiles
@@ -864,6 +864,26 @@ for (const vp of VIEWPORTS) {
     check(!closed.visible, 'Escape closes the leaderboard', closed);
     check(closed.focus === 'btn-leaderboard', 'focus returns to the button that opened it', closed);
     check(!closed.boardInert, 'and the board is live again', closed);
+
+    // A tap on the dimmed backdrop closes it too, like every other dialog
+    // (issue #223); a click on the card itself must not. The backdrop is the
+    // panel element — clicking it directly is what a tap outside dispatches.
+    await page.click('#btn-leaderboard');
+    await page.evaluate(() => document.getElementById('leaderboard-close').parentElement.click());
+    const innerClick = await page.evaluate(() =>
+      document.getElementById('leaderboard').classList.contains('visible'),
+    );
+    check(innerClick, 'clicking inside the leaderboard card does not close it', { visible: innerClick });
+
+    await page.evaluate(() => document.getElementById('leaderboard').click());
+    const backdrop = await page.evaluate(() => ({
+      visible: document.getElementById('leaderboard').classList.contains('visible'),
+      focus: document.activeElement?.id,
+      boardInert: document.getElementById('a11y-layer').hasAttribute('inert'),
+    }));
+    check(!backdrop.visible, 'tapping the backdrop closes the leaderboard', backdrop);
+    check(backdrop.focus === 'btn-leaderboard', 'focus returns to the button that opened it', backdrop);
+    check(!backdrop.boardInert, 'and the board is live again', backdrop);
   }
 
   // --- 5c. Daily challenges (issue #183): the chip opens a labelled modal ---

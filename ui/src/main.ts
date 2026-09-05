@@ -2390,6 +2390,12 @@ async function start(): Promise<void> {
   });
 
   leaderboardClose.addEventListener('click', closeLeaderboard);
+  // Tapping the dimmed backdrop dismisses the board like every other dialog
+  // (issue #223) — the target check keeps taps on the card itself from
+  // closing it.
+  leaderboardPanel.addEventListener('click', (ev) => {
+    if (ev.target === leaderboardPanel) closeLeaderboard();
+  });
 
   dailyPanelClose.addEventListener('click', closeDailyPanel);
 
