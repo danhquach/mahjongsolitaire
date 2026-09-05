@@ -41,7 +41,7 @@ test('the API limits table states exactly what the code enforces', () => {
       body: `${bytes(FEEDBACK_LIMITS.MAX_BODY_BYTES)} text, ${bytes(FEEDBACK_LIMITS.MAX_BODY_BYTES_WITH_ATTACHMENTS)} with the build header`,
       address: rate({ max: FEEDBACK_LIMITS.RATE_LIMIT_MAX, windowMs: FEEDBACK_LIMITS.RATE_LIMIT_WINDOW_MS }),
       player: NONE,
-      day: NONE,
+      day: `${FEEDBACK_LIMITS.DAILY_MAX} per address, ${FEEDBACK_LIMITS.DAILY_GLOBAL_MAX} global`,
     },
     'POST /api/profile/register': {
       body: bytes(PROFILE_BODY),
@@ -106,6 +106,8 @@ test('the code has no route or limit the table does not list', () => {
   assert.deepEqual(Object.keys(PROFILE).sort(), ['close', 'name', 'read', 'register', 'reset', 'sync']);
   assert.deepEqual(Object.keys(BOARD).sort(), ['read', 'read-signed', 'submit', 'withdraw']);
   assert.deepEqual(Object.keys(FEEDBACK_LIMITS).sort(), [
+    'DAILY_GLOBAL_MAX',
+    'DAILY_MAX',
     'MAX_BODY_BYTES',
     'MAX_BODY_BYTES_WITH_ATTACHMENTS',
     'RATE_LIMIT_MAX',

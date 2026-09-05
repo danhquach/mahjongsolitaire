@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BUILD_HEADER, handleFeedback, sweep, sweepRateLimits } from '../index.mjs';
+import { BUILD_HEADER, FEEDBACK_LIMITS, handleFeedback, sweep, sweepRateLimits } from '../index.mjs';
 import { QUOTA_WINDOW_MS } from '../http.mjs';
 import { createDb } from './d1.mjs';
 
@@ -107,6 +107,38 @@ test('rate limit: 6th call in the window is 429, with nothing shared in memory b
   }
   assert.equal(last.status, 429);
   assert.deepEqual(await last.json(), { error: 'rate_limited' });
+});
+
+// Issue #211: the minutes window alone allowed 720 posts a day per address,
+// each relayed as an email. A patient caller meets a day's quota per address
+// and one for everyone.
+test('daily quota: one address is stopped for the day however patiently it posts', async () => {
+  const env = validEnv();
+  const headers = { 'CF-Connecting-IP': '203.0.113.9' };
+  const { DAILY_MAX, RATE_LIMIT_WINDOW_MS } = FEEDBACK_LIMITS;
+  let last;
+  for (let i = 0; i <= DAILY_MAX; i++) {
+    // A fresh minutes window every call, so only the day can say no.
+    const now = () => 1_000 + i * (RATE_LIMIT_WINDOW_MS + 1);
+    last = await handleFeedback(req({ summary: 'hi', body: 'hello', context: VALID_CONTEXT }, { headers }), env, { fetch: okFetch(), now });
+    if (i < DAILY_MAX) assert.equal(last.status, 202, `call ${i + 1} should be within the day's quota`);
+  }
+  assert.equal(last.status, 429);
+  assert.deepEqual(await last.json(), { error: 'rate_limited' });
+});
+
+test('daily quota: everyone together is stopped for the day, whatever their addresses', async () => {
+  const env = validEnv();
+  const { DAILY_GLOBAL_MAX } = FEEDBACK_LIMITS;
+  const deps = { fetch: okFetch(), now: () => 1_000 };
+  let last;
+  for (let i = 0; i <= DAILY_GLOBAL_MAX; i++) {
+    // Every call from its own address, so neither the window nor the address's day applies.
+    const headers = { 'CF-Connecting-IP': `2001:db8:${(i >> 16) & 0xffff}:${i & 0xffff}::1` };
+    last = await handleFeedback(req({ summary: 'hi', body: 'hello', context: VALID_CONTEXT }, { headers }), env, deps);
+    if (i < DAILY_GLOBAL_MAX) assert.equal(last.status, 202, `call ${i + 1} should be within the global quota`);
+  }
+  assert.equal(last.status, 429);
 });
 
 test('rate limit: the over-limit request is refused before its body is read', async () => {
