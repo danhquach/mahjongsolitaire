@@ -951,6 +951,11 @@ for (const vp of VIEWPORTS) {
         localStorage.getItem(k),
       ]),
     );
+    // The sections above played real pairs today, and on a day whose set
+    // holds a small target that play has already completed a challenge, so
+    // the chip would read 1/3 (issue #206). Start from a fresh day: the store
+    // is read at boot, so dropping it and reloading is a clean Daily state.
+    await restoreStores(page, [['mahjong.daily.v1', null]]);
 
     const chip = () =>
       page.evaluate(() => {
