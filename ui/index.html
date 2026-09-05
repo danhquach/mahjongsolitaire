@@ -1189,7 +1189,8 @@
       #confirm .card > button:disabled {
         opacity: 0.5;
       }
-      #confirm .card > .secondary {
+      #confirm .card > .secondary,
+      #daily-panel .card > .secondary {
         background: none;
         color: #166534;
         border-color: #bbf7d0;
@@ -1333,6 +1334,17 @@
       }
       #app[data-motion='reduced'] #daily-panel .daily-fill {
         transition: none;
+      }
+      /* Share (issue #228): a status line for the rare case neither the
+         share sheet nor the clipboard is available — the same idiom as
+         #feedback-copy-status. Empty and invisible otherwise. */
+      #daily-share-status {
+        display: block;
+        min-height: 20px;
+        margin-top: 4px;
+        font-size: 15px;
+        color: #166534;
+        font-weight: bold;
       }
 
       /* --- Cloud sync (issue #138) -------------------------------------------
@@ -1989,6 +2001,8 @@
                 Each challenge you finish pays a trophy and a booster charge. The first one
                 each day keeps your streak alive.
               </p>
+              <button id="daily-share" type="button" class="secondary">Share</button>
+              <span id="daily-share-status" aria-live="polite"></span>
               <button id="daily-panel-close" type="button">Done</button>
             </div>
           </div>
