@@ -1020,7 +1020,11 @@ test('the routes work through the Worker entry point, which injects nothing', as
   const env = { DB: createDb() };
   const deps = makeDeps();
   const alex = await addPlayer(env, deps, 'Alex');
-  await post(env, deps, alex, playedRun(1, 0));
+  // Posted on the live clock, not the suite's fixed NOW: the read below goes
+  // through the real router, which has only the live clock, and a run posted
+  // into the fixed week is not on the live week's board once the calendar
+  // has moved past it (it did, 2026-09-06 00:00 UTC, and CI went red).
+  await post(env, deps, alex, playedRun(1, 0), Date.now());
 
   const response = await handleRequest(request('GET', '/api/leaderboard/weekly'), env);
   assert.equal(response.status, 200);
