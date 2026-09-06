@@ -121,7 +121,17 @@ export const PALETTES: Record<PaletteId, BoardPalette> = {
 export interface Felt {
   readonly id: string;
   readonly label: string;
+  /** The base colour: what the swatch shows, what the table is until the
+   *  texture arrives, and the flat felt of the default. */
   readonly color: number;
+  /** The seamless texture (`data/felts/<id>.png`, cut by
+   *  docs/design/cut-felts.py, which prints both fields): its size in CSS px,
+   *  one repeat, shown at one sheet pixel per CSS pixel; and its brightest
+   *  pixel, which the back-vs-felt proof runs against instead of `color` — a
+   *  back has to clear the lightest thing on the table. Absent for the
+   *  default, which is a flat colour. */
+  readonly texture?: readonly [number, number];
+  readonly light?: number;
 }
 
 /** The free felt every record starts with: Lantern's own. */
@@ -132,12 +142,19 @@ export const DEFAULT_FELT = 'lantern';
  *  burgundy or Daily indigo (decision 0017). */
 export const FELTS: Readonly<Record<string, Felt>> = {
   [DEFAULT_FELT]: { id: DEFAULT_FELT, label: 'Lantern', color: BOARD_FELT },
-  'felt-forest': { id: 'felt-forest', label: 'Forest', color: 0x052e16 },
-  'felt-ink': { id: 'felt-ink', label: 'Ink', color: 0x18181b },
-  'felt-teal': { id: 'felt-teal', label: 'Teal', color: 0x134e4a },
-  'felt-slate': { id: 'felt-slate', label: 'Slate', color: 0x334155 },
-  'felt-walnut': { id: 'felt-walnut', label: 'Walnut', color: 0x4a3728 },
+  'felt-forest': { id: 'felt-forest', label: 'Forest', color: 0x052e16, texture: [255, 351], light: 0x153c21 },
+  'felt-ink': { id: 'felt-ink', label: 'Ink', color: 0x18181b, texture: [532, 724], light: 0x1c1d21 },
+  'felt-teal': { id: 'felt-teal', label: 'Teal', color: 0x134e4a, texture: [182, 340], light: 0x175049 },
+  'felt-slate': { id: 'felt-slate', label: 'Slate', color: 0x334155, texture: [227, 318], light: 0x3c4652 },
+  'felt-walnut': { id: 'felt-walnut', label: 'Walnut', color: 0x4a3728, texture: [534, 724], light: 0x4b3c29 },
 };
+
+/** Where a felt's seamless texture lives, relative to the app's base URL;
+ *  null for the default, which is a flat colour. Painted as a CSS background
+ *  on #play-area (index.html), tiled at `felt.texture` CSS px per repeat. */
+export function feltTextureUrl(felt: Felt): string | null {
+  return felt.texture === undefined ? null : `felts/${felt.id}.png`;
+}
 
 /** The felt a record's `looks.felt` names — Lantern's for an id this build
  *  does not ship (a newer build's pick, kept opaquely, has nothing to paint). */
@@ -149,6 +166,44 @@ export function feltFor(id: string): Felt {
  *  identically, only the table under them changes. */
 export function withFelt(palette: BoardPalette, felt: Felt): BoardPalette {
   return palette.felt === felt.color ? palette : { ...palette, felt: felt.color };
+}
+
+/**
+ * A purchasable face-down back (issue #229 slice 2, decision 0040): a whole
+ * back as one bitmap (`data/backs/<id>.png`, cut by docs/design/cut-backs.py)
+ * drawn over the tile face in place of the palette's plain back and keyline.
+ * `ground` and `keyline` are the brief's colours for the art and what the
+ * renderer paints while the bitmap is still loading; the proof in
+ * ui/test/depth.test.ts is on them. Backs are decoration for ordinary levels:
+ * the milestone palette keeps its own rose back.
+ */
+export interface TileBack {
+  readonly id: string;
+  readonly label: string;
+  readonly ground: number;
+  readonly keyline: number;
+}
+
+/** The free back every record starts with: the palette's own drawn one. */
+export const DEFAULT_BACK = 'lantern';
+
+/** Every back this build can draw, by id. The default has no bitmap; its
+ *  colours are the Lantern palette's. Others from docs/design/cosmetics-prompts.md. */
+export const BACKS: Readonly<Record<string, TileBack>> = {
+  [DEFAULT_BACK]: { id: DEFAULT_BACK, label: 'Jade', ground: LANTERN.back, keyline: LANTERN.backKeyline },
+  'back-night-sky': { id: 'back-night-sky', label: 'Night Sky', ground: 0x1e1b4b, keyline: 0xc9a227 },
+  'back-blue-wave': { id: 'back-blue-wave', label: 'Blue Wave', ground: 0x0f3d4a, keyline: 0x5eead4 },
+  'back-lacquer-lantern': { id: 'back-lacquer-lantern', label: 'Lacquer Lantern', ground: 0x7c2d12, keyline: 0xfde68a },
+  'back-plum-branch': { id: 'back-plum-branch', label: 'Plum Branch', ground: 0x3b0764, keyline: 0xe9d5ff },
+  'back-koi': { id: 'back-koi', label: 'Koi', ground: 0x0c4a6e, keyline: 0xfdba74 },
+  'back-bamboo-grove': { id: 'back-bamboo-grove', label: 'Bamboo Grove', ground: 0x14532d, keyline: 0x86efac },
+  'back-cloud-scroll': { id: 'back-cloud-scroll', label: 'Cloud Scroll', ground: 0x1c1917, keyline: 0xd6d3d1 },
+};
+
+/** The back a record's `looks.back` names — the default for an id this build
+ *  does not ship. */
+export function backFor(id: string): TileBack {
+  return BACKS[id] ?? BACKS[DEFAULT_BACK]!;
 }
 
 /** `#rrggbb` for CSS, from a packed RGB colour. */

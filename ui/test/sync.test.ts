@@ -278,7 +278,7 @@ test('merging keeps the best of both and loses nothing', () => {
     trophies: 7,
     dailyCount: 0,
     owned: [],
-    looks: { felt: 'lantern', glyphs: 'lantern' },
+    looks: { back: 'lantern', felt: 'lantern', glyphs: 'lantern' },
     looksAt: null,
   });
 });
@@ -382,32 +382,32 @@ test('owned items are the union of both sides, sorted', () => {
 });
 
 test('the later look stamp wins the whole look; a null stamp loses to any stamp', () => {
-  const older = withRecord({ looks: { felt: 'lantern', glyphs: 'glyphs-calligraphy' }, looksAt: 1000 });
-  const newer = withRecord({ looks: { felt: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 2000 });
-  assert.deepEqual(mergeRecords(older, newer).looks, { felt: 'lantern', glyphs: 'glyphs-fantasy' });
+  const older = withRecord({ looks: { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-calligraphy' }, looksAt: 1000 });
+  const newer = withRecord({ looks: { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 2000 });
+  assert.deepEqual(mergeRecords(older, newer).looks, { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-fantasy' });
   assert.equal(mergeRecords(older, newer).looksAt, 2000);
   assert.deepEqual(mergeRecords(older, newer), mergeRecords(newer, older));
-  assert.deepEqual(mergeRecords(EMPTY_RECORD, older).looks, { felt: 'lantern', glyphs: 'glyphs-calligraphy' });
+  assert.deepEqual(mergeRecords(EMPTY_RECORD, older).looks, { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-calligraphy' });
   assert.equal(mergeRecords(older, EMPTY_RECORD).looksAt, 1000);
   assert.equal(mergeRecords(EMPTY_RECORD, EMPTY_RECORD).looksAt, null);
 });
 
 test('equal stamps with different looks resolve the same way from either side', () => {
-  const a = withRecord({ looks: { felt: 'lantern', glyphs: 'glyphs-calligraphy' }, looksAt: 1000 });
-  const b = withRecord({ looks: { felt: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 1000 });
+  const a = withRecord({ looks: { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-calligraphy' }, looksAt: 1000 });
+  const b = withRecord({ looks: { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 1000 });
   assert.deepEqual(mergeRecords(a, b), mergeRecords(b, a));
   assert.equal(mergeRecords(a, b).looksAt, 1000);
   // Both unstamped but different (a hand-edited record): still commutative.
-  const c = withRecord({ looks: { felt: 'lantern', glyphs: 'glyphs-fantasy' } });
+  const c = withRecord({ looks: { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-fantasy' } });
   assert.deepEqual(mergeRecords(c, EMPTY_RECORD), mergeRecords(EMPTY_RECORD, c));
   assert.equal(mergeRecords(c, EMPTY_RECORD).looksAt, null);
 });
 
 test('a look is never lost to a merge that only moved counters', () => {
-  const picked = withRecord({ owned: ['glyphs-fantasy'], looks: { felt: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 1000 });
+  const picked = withRecord({ owned: ['glyphs-fantasy'], looks: { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 1000 });
   const played = withRecord({ trophies: 9, levelsCleared: 3 });
   const merged = mergeRecords(picked, played);
-  assert.deepEqual(merged.looks, { felt: 'lantern', glyphs: 'glyphs-fantasy' });
+  assert.deepEqual(merged.looks, { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-fantasy' });
   assert.equal(merged.trophies, 9);
   assert.deepEqual(merged, mergeRecords(played, picked));
 });

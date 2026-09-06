@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { EMPTY_RECORD, RecordStore } from '../src/profile.js';
-import { DEFAULT_FELT, FELTS, LANTERN } from '../src/depth.js';
+import { BACKS, DEFAULT_BACK, DEFAULT_FELT, FELTS, LANTERN } from '../src/depth.js';
 import type { PlayerRecord } from '../src/profile.js';
 import {
   GLYPH_SETS,
@@ -20,7 +20,7 @@ import {
 
 const withRecord = (patch: Partial<PlayerRecord>): PlayerRecord => ({ ...EMPTY_RECORD, ...patch });
 
-test('the shop sells the two drawn glyph sets and five felts at the issue’s proposed prices', () => {
+test('the shop sells two glyph sets, five felts and seven backs at the issue’s proposed prices', () => {
   assert.deepEqual(
     SHOP_ITEMS.map((i) => [i.id, i.kind, i.price]),
     [
@@ -31,6 +31,13 @@ test('the shop sells the two drawn glyph sets and five felts at the issue’s pr
       ['felt-teal', 'felt', 25],
       ['felt-slate', 'felt', 25],
       ['felt-walnut', 'felt', 60],
+      ['back-night-sky', 'back', 10],
+      ['back-blue-wave', 'back', 10],
+      ['back-bamboo-grove', 'back', 25],
+      ['back-cloud-scroll', 'back', 25],
+      ['back-lacquer-lantern', 'back', 25],
+      ['back-plum-branch', 'back', 60],
+      ['back-koi', 'back', 60],
     ],
   );
   // Every item has something to show and say.
@@ -66,6 +73,18 @@ test('every purchasable felt is a colour the palette can paint, and the default 
   assert.deepEqual(
     Object.keys(FELTS).filter((id) => id !== DEFAULT_FELT).sort(),
     SHOP_ITEMS.filter((i) => i.kind === 'felt').map((i) => i.id).sort(),
+  );
+});
+
+test('every purchasable back is one the palette table knows, and the default is free and not for sale', () => {
+  for (const item of SHOP_ITEMS.filter((i) => i.kind === 'back')) {
+    assert.ok(BACKS[item.id], `${item.id} has a back`);
+    assert.equal(BACKS[item.id]!.label, item.label);
+  }
+  assert.equal(SHOP_ITEMS.some((i) => i.id === DEFAULT_BACK), false);
+  assert.deepEqual(
+    Object.keys(BACKS).filter((id) => id !== DEFAULT_BACK).sort(),
+    SHOP_ITEMS.filter((i) => i.kind === 'back').map((i) => i.id).sort(),
   );
 });
 
@@ -114,7 +133,7 @@ test('purchase spends the balance once, refuses a short balance and a repeat, an
   assert.equal(purchase(record, 'glyphs-calligraphy'), true, 'exactly affordable');
   assert.equal(trophyBalance(record.value), 0);
   // Buying picks nothing: the look is a separate, deliberate tap.
-  assert.deepEqual(record.value.looks, { felt: 'lantern', glyphs: 'lantern' });
+  assert.deepEqual(record.value.looks, { back: 'lantern', felt: 'lantern', glyphs: 'lantern' });
   assert.equal(purchase(record, 'not-for-sale'), false);
 });
 
@@ -128,7 +147,7 @@ test('a felt is bought and chosen like a glyph set, and the two kinds spend one 
   assert.equal(purchase(record, 'glyphs-calligraphy'), true, 'the felt spent from the same balance');
   assert.equal(trophyBalance(record.value), 0);
   assert.equal(record.setLook('felt', 'felt-forest', 1), true);
-  assert.deepEqual(record.value.looks, { felt: 'felt-forest', glyphs: 'lantern' });
+  assert.deepEqual(record.value.looks, { back: 'lantern', felt: 'felt-forest', glyphs: 'lantern' });
   assert.equal(record.setLook('felt', 'felt-walnut', 2), false, 'not owned');
   assert.equal(record.setLook('felt', DEFAULT_FELT, 2), true, 'the free default is always allowed');
 });

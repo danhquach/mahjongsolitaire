@@ -47,11 +47,11 @@ swapped and the same `id`). Consequences that fall out of "one field":
   milestone palette for a decade spike before it looks at the record; the
   Daily board never used the palette system (issue #183). A bought felt is
   decoration on ordinary levels, never a signal.
-- **No pattern.** The brief's tone-on-tone weaves are not drawn. The 8%
-  ceiling makes them nearly invisible at phone size and they would cost a
-  texture per felt for a surface that is meant to disappear. If a pattern is
-  ever wanted it is a per-felt bitmap behind the tiles, not a change to this
-  table.
+- **No pattern.** *Superseded the same day by [0040](0040-cosmetics-shop-tile-backs.md) §5:*
+  a composite of the generated sheet showed the weaves reading clearly at
+  phone size, and the PM chose to ship them as seamless textures painted by
+  the page behind a transparent canvas. The table here is unchanged; each
+  felt gained the texture's brightest pixel for the proofs.
 
 ### 2. The record: `looks.felt`, and unknown kinds kept
 

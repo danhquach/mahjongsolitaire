@@ -88,6 +88,19 @@ const GLYPH_BITMAP_SCALE = 0.25;
 /** The drawn default set's id — the one set that loads no textures. */
 export const DRAWN_GLYPH_SET = 'lantern';
 
+/** A tile back as the renderer holds it (issue #229, decision 0040): an id for
+ *  the tile key, the colours it paints while the bitmap is loading (or for the
+ *  drawn default, which has none), and the bitmap once it is in. The default
+ *  id defers to the palette's own back and keyline. */
+export interface BackInUse {
+  readonly id: string;
+  readonly ground: number;
+  readonly keyline: number;
+  readonly texture: Texture | null;
+}
+
+export const DRAWN_BACK = 'lantern';
+
 /** A glyph set as the renderer holds it: an id for the tile key, and the
  *  textures to draw from, or null for the drawn default. */
 export interface GlyphSetInUse {
@@ -276,6 +289,9 @@ export class BoardRenderer {
   /** The glyph set in force (issue #229): the drawn default until a bought
    *  set's textures are handed over. */
   private glyphSet: GlyphSetInUse = { id: DRAWN_GLYPH_SET, textures: null };
+  /** The face-down back in force (issue #229): the palette's own until a
+   *  bought back is chosen. */
+  private back: BackInUse = { id: DRAWN_BACK, ground: 0, keyline: 0, texture: null };
   /** The holder-full loss's desaturation (issue #121) — one filter on the
    *  whole board layer rather than per tile (cheaper, and the slump fades
    *  every tile at the same rate anyway). Created lazily; torn down at 0
@@ -328,7 +344,9 @@ export class BoardRenderer {
     }
     if (palette.id !== this.palette.id) this.tileImages.clear();
     this.palette = palette;
-    this.app.renderer.background.color = palette.felt;
+    // The felt itself is painted by the page, not the canvas: #play-area's
+    // CSS background (colour or texture, main.ts applyPalette) shows through
+    // a transparent canvas, so the board and the holder strip are one surface.
   }
 
   get paletteId(): BoardPalette['id'] {
@@ -347,6 +365,19 @@ export class BoardRenderer {
 
   get glyphSetId(): string {
     return this.glyphSet.id;
+  }
+
+  /** Swap the face-down back (issue #229). Only hidden tiles change, and the
+   *  holder never parks one, so the tile-picture cache keeps its faces; the
+   *  baked back previews are keyed by back id and stay valid too. The caller
+   *  redraws; the tile key carries the back id. */
+  setBack(back: BackInUse): void {
+    if (back.id === this.back.id && back.texture === this.back.texture) return;
+    this.back = back;
+  }
+
+  get backId(): string {
+    return this.back.id;
   }
 
   get scale(): number {
@@ -518,7 +549,7 @@ export class BoardRenderer {
       // glyph set are the renderer state buildTile reads.
       const key =
         `${tile.slot.x},${tile.slot.y},${tile.slot.z}|${tile.face}|` +
-        `${+flashed}${+hinted}${+dimmed}${+hidden}|${this.topZ}|${this.palette.id}|${this.glyphSet.id}`;
+        `${+flashed}${+hinted}${+dimmed}${+hidden}|${this.topZ}|${this.palette.id}|${this.glyphSet.id}|${this.back.id}${this.back.texture ? '+' : ''}`;
       let node = this.tileNodes.get(tile.id);
       if (node === undefined || this.tileKeys.get(tile.id) !== key) {
         // `{ children: true }` leaves textures alone, which is what keeps the
@@ -569,9 +600,16 @@ export class BoardRenderer {
        *  #229): the shop's previews show a set the board is not wearing.
        *  `null` forces the drawn default; undefined means the set in force. */
       readonly glyphs?: GlyphTextures | null;
+      /** Draw this back instead of the one in force (issue #229): the shop's
+       *  previews show a back the board is not wearing. */
+      readonly back?: BackInUse;
     },
   ): Container {
     const { flashed, hinted, dimmed, hidden = false } = opts;
+    // The palette's own back for the default id, else the chosen back's colours.
+    const back = opts.back ?? this.back;
+    const backGround = back.id === DRAWN_BACK ? this.palette.back : back.ground;
+    const backKeyline = back.id === DRAWN_BACK ? this.palette.backKeyline : back.keyline;
     const node = new Container();
     const r = tileRect(tile.slot);
     const shade = tileShade(tile.slot.z, this.topZ, dimmed, this.palette);
@@ -595,7 +633,7 @@ export class BoardRenderer {
     // cue; recolouring the face would make the back read as a fourth suit).
     const backFactor = 1 - LAYER_FACE_STEP * depthSteps(tile.slot.z, this.topZ, dimmed);
     g.roundRect(r.x, r.y, r.w, r.h, TILE_RADIUS)
-      .fill(hidden ? scaleColor(this.palette.back, backFactor) : hinted ? FACE_HINT : shade.face)
+      .fill(hidden ? scaleColor(backGround, backFactor) : hinted ? FACE_HINT : shade.face)
       .stroke({
         width: flashed || hinted ? BORDER_WIDTH_ACTIVE : BORDER_WIDTH,
         color: flashed ? COLOR_FLASH : hinted ? COLOR_HINT : shade.border,
@@ -603,15 +641,40 @@ export class BoardRenderer {
     node.addChild(g);
 
     if (hidden) {
-      // The back's only ornament: an inset keyline, so a face-down tile reads
-      // as a deliberate card back rather than a rendering failure.
+      if (back.texture) {
+        // A bought back (issue #229, decision 0040): the whole back as one
+        // sprite stretched to the face — the sheet's cells are not exactly
+        // 64:84 and a stretch keeps its keyline on all four edges where a
+        // crop would not. Receding per layer by the same factor as the ground
+        // under it, so a deep face-down tile darkens with its neighbours. The
+        // face fill under it is the back's ground, so the corners the
+        // bitmap's alpha leaves are the same colour.
+        const sprite = new Sprite(back.texture);
+        sprite.position.set(r.x, r.y);
+        sprite.width = r.w;
+        sprite.height = r.h;
+        sprite.tint = scaleColor(0xffffff, backFactor);
+        node.addChild(sprite);
+        // The outline goes back on top: the sprite covers the inner half of
+        // the stroke the face fill drew.
+        node.addChild(
+          new Graphics().roundRect(r.x, r.y, r.w, r.h, TILE_RADIUS).stroke({
+            width: flashed || hinted ? BORDER_WIDTH_ACTIVE : BORDER_WIDTH,
+            color: flashed ? COLOR_FLASH : hinted ? COLOR_HINT : shade.border,
+          }),
+        );
+        return node;
+      }
+      // The drawn back's only ornament: an inset keyline, so a face-down tile
+      // reads as a deliberate card back rather than a rendering failure. Also
+      // what a bought back shows, in its own colours, until its bitmap is in.
       g.roundRect(
         r.x + BACK_INSET,
         r.y + BACK_INSET,
         r.w - 2 * BACK_INSET,
         r.h - 2 * BACK_INSET,
         Math.max(2, TILE_RADIUS - 2),
-      ).stroke({ width: BACK_KEYLINE_WIDTH, color: scaleColor(this.palette.backKeyline, backFactor) });
+      ).stroke({ width: BACK_KEYLINE_WIDTH, color: scaleColor(backKeyline, backFactor) });
       return node; // no glyph, no pips — that is the point
     }
 
@@ -739,13 +802,32 @@ export class BoardRenderer {
     return this.bakeTile(`${set.id} ${face}`, face, false, set.textures);
   }
 
-  private bakeTile(key: string, face: string, hidden: boolean, glyphs?: GlyphTextures | null): string {
+  /** A face-down tile wearing `back`, for the shop's back previews (issue
+   *  #229). Cached under the back id and whether its bitmap was in. */
+  backImage(back: BackInUse): string {
+    return this.bakeTile(`back ${back.id} ${back.texture ? 'art' : 'plain'}`, 'dots-1', true, undefined, back);
+  }
+
+  private bakeTile(
+    key: string,
+    face: string,
+    hidden: boolean,
+    glyphs?: GlyphTextures | null,
+    back?: BackInUse,
+  ): string {
     const cached = this.tileImages.get(key);
     if (cached) return cached;
     const slot = { x: 0, y: 0, z: this.topZ };
     const node = this.buildTile(
       { id: -1, slot, face, removed: false },
-      { flashed: false, hinted: false, dimmed: false, hidden, ...(glyphs === undefined ? {} : { glyphs }) },
+      {
+        flashed: false,
+        hinted: false,
+        dimmed: false,
+        hidden,
+        ...(glyphs === undefined ? {} : { glyphs }),
+        ...(back === undefined ? {} : { back }),
+      },
     );
     const r = tileRect(slot);
     const canvas = this.app.renderer.extract.canvas({

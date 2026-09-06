@@ -99,8 +99,8 @@ import type { Cue } from './feedback.js';
 import { faceStyle } from './faces.js';
 import { Game, nearPairs } from './game.js';
 import { HolderStrip } from './holder.js';
-import { BOARD_FELT, FELTS, PALETTES, cssColor, feltFor, withFelt } from './depth.js';
-import type { BoardPalette, Felt } from './depth.js';
+import { BACKS, FELTS, PALETTES, backFor, cssColor, feltFor, feltTextureUrl, withFelt } from './depth.js';
+import type { BoardPalette, Felt, TileBack } from './depth.js';
 import { SIDE_DEPTH, TILE_H, TILE_W, tileRect } from './geometry.js';
 import type { Rect } from './geometry.js';
 import { hitTest } from './hit-test.js';
@@ -145,7 +145,8 @@ import { confirmMatches, wipeDevice, wipeProgress } from './account.js';
 import { GLYPH_SETS, SHOP_ITEMS, affordability, glyphSetFor, purchase, trophyBalance } from './shop.js';
 import type { GlyphSet } from './shop.js';
 import { GlyphSetLoader } from './glyphs.js';
-import type { GlyphSetInUse } from './render.js';
+import { BackLoader } from './backs.js';
+import type { BackInUse, GlyphSetInUse } from './render.js';
 import {
   closeAccount,
   fetchProfile,
@@ -343,6 +344,7 @@ async function start(): Promise<void> {
   const shopBalance = el<HTMLElement>('shop-balance');
   const shopGlyphList = el<HTMLElement>('shop-glyphs');
   const shopFeltList = el<HTMLElement>('shop-felts');
+  const shopBackList = el<HTMLElement>('shop-backs');
   const shopStatus = el<HTMLElement>('shop-status');
   const shopClose = el<HTMLButtonElement>('shop-close');
   const feedbackPanel = el<HTMLDivElement>('feedback');
@@ -402,7 +404,9 @@ async function start(): Promise<void> {
   const app = new Application();
   await app.init({
     resizeTo: boardDiv,
-    background: BOARD_FELT,
+    // Transparent: the felt is #play-area's CSS background (a colour, or a
+    // bought texture — issue #229), so the canvas and the holder strip share it.
+    backgroundAlpha: 0,
     resolution: window.devicePixelRatio || 1,
     autoDensity: true,
     antialias: true,
@@ -455,6 +459,20 @@ async function start(): Promise<void> {
     const palette = paletteInPlay();
     renderer.setPalette(palette);
     appRoot.style.setProperty('--felt', cssColor(palette.felt));
+    // A bought felt's texture rides along; a spike's burgundy has none.
+    const felt = feltFor(record.value.looks.felt);
+    const texture = palette.id === 'lantern' ? feltTextureUrl(felt) : null;
+    appRoot.style.setProperty('--felt-image', texture === null ? 'none' : `url("${texture}")`);
+    appRoot.style.setProperty('--felt-size', texture === null ? 'auto' : `${felt.texture![0]}px ${felt.texture![1]}px`);
+    // The back follows the same rule (a spike keeps its rose back), and the
+    // level can change under a chosen back — so it is re-applied here too.
+    void applyBack();
+  }
+
+  /** The face-down back the deal on the table wears (issue #229 slice 2): the
+   *  palette's own on a decade spike, else the record's pick. */
+  function backInPlay(): TileBack {
+    return bandForLevel(progress.level).spike ? BACKS['lantern']! : backFor(record.value.looks.back);
   }
 
   /** A fresh seed for the same level (issue #94): New game must visibly
@@ -507,9 +525,11 @@ async function start(): Promise<void> {
   // the first palette: the felt it chose (issue #229) is part of it.
   const profile = new ProfileStore(storage);
   const record = new RecordStore(storage);
+  const backLoader = new BackLoader();
 
   // The booted deal's palette (issue #67) — a milestone level boots into its
-  // own colours, not the default's, and an ordinary one into the record's felt.
+  // own colours, not the default's, and an ordinary one into the record's felt
+  // and back (issue #229).
   applyPalette();
 
   const settings = new SettingsStore(storage);
@@ -2107,7 +2127,7 @@ async function start(): Promise<void> {
       record.adopt(mergeRecords(record.value, remote.record));
       syncProfileControls();
       syncProfileRow();
-      // The restored record may pick a glyph set and a felt (issue #229).
+      // The restored record may pick a glyph set, a felt and a back (issue #229).
       void applyGlyphSet();
       applyPalette();
       setSyncStatus(`Profile restored — welcome back, ${remote.name}.`);
@@ -2529,6 +2549,36 @@ async function start(): Promise<void> {
     redraw();
   }
 
+  /** The renderer's view of a back: its bitmap if loaded, else null — which
+   *  draws the back's colours with the plain keyline until it is. */
+  function backInUse(back: TileBack): BackInUse {
+    return {
+      id: back.id,
+      ground: back.ground,
+      keyline: back.keyline,
+      texture: back.id === BACKS['lantern']!.id ? null : (backLoader.peek(back.id) ?? null),
+    };
+  }
+
+  /** Put the record's chosen back on the face-down tiles, loading its bitmap
+   *  first. Same shape as applyGlyphSet: a failed load leaves the board as it
+   *  is and the shop says so; the pick is re-read after the load. */
+  async function applyBack(): Promise<void> {
+    const back = backInPlay();
+    if (renderer.backId === back.id && (back.id === 'lantern' || backLoader.peek(back.id))) return;
+    if (back.id !== 'lantern') {
+      try {
+        await backLoader.get(back.id);
+      } catch {
+        setShopStatus(`Couldn't load the ${back.label} back. Check your connection and try again.`);
+        return;
+      }
+      if (backInPlay().id !== back.id) return;
+    }
+    renderer.setBack(backInUse(back));
+    redraw();
+  }
+
   /** Publish a purchase or a pick, if sync is on. Same fire-and-forget shape
    *  as the avatar's push: the record carries both. */
   function syncCosmetics(): void {
@@ -2595,7 +2645,12 @@ async function start(): Promise<void> {
     return (into) => {
       const swatch = document.createElement('span');
       swatch.className = 'shop-swatch';
-      swatch.style.background = cssColor(felt.color);
+      swatch.style.backgroundColor = cssColor(felt.color);
+      const texture = feltTextureUrl(felt);
+      if (texture !== null) {
+        swatch.style.backgroundImage = `url("${texture}")`;
+        swatch.style.backgroundSize = `${felt.texture![0]}px ${felt.texture![1]}px`;
+      }
       const back = document.createElement('span');
       back.className = 'shop-swatch-back';
       back.style.background = cssColor(PALETTES.lantern.back);
@@ -2643,9 +2698,48 @@ async function start(): Promise<void> {
     apply: applyPalette,
   }));
 
+  /** A back's preview is a face-down tile wearing it, baked by the board
+   *  renderer — the plain-keyline stand-in until its bitmap is in. */
+  function backPreview(back: TileBack): (into: HTMLElement) => void {
+    return (into) => {
+      const img = document.createElement('img');
+      img.alt = '';
+      img.src = renderer.backImage(backInUse(back));
+      into.append(img);
+      if (back.id !== 'lantern' && backLoader.peek(back.id) === undefined) {
+        void backLoader.get(back.id).then(
+          () => {
+            if (shopVisible) renderShop();
+          },
+          () => setShopStatus(`Couldn't load the ${back.label} preview. Check your connection and try again.`),
+        );
+      }
+    };
+  }
+
+  /** Every back row, the free default first (issue #229 slice 2). */
+  const SHOP_BACK_ROWS: readonly ShopRow[] = [
+    { back: BACKS['lantern']!, price: 0, description: 'The plain jade back every board starts with.' },
+    ...SHOP_ITEMS.filter((item) => item.kind === 'back').map((item) => ({
+      back: backFor(item.id),
+      price: item.price,
+      description: item.description,
+    })),
+  ].map(({ back, price, description }) => ({
+    kind: 'back',
+    id: back.id,
+    label: back.label,
+    spoken: `${back.label} tile back`,
+    price,
+    description,
+    preview: backPreview(back),
+    apply: () => void applyBack(),
+  }));
+
   const SHOP_LISTS: readonly { list: HTMLElement; rows: readonly ShopRow[]; inUse: () => string }[] = [
     { list: shopGlyphList, rows: SHOP_GLYPH_ROWS, inUse: () => glyphSetFor(record.value.looks.glyphs).id },
     { list: shopFeltList, rows: SHOP_FELT_ROWS, inUse: () => feltFor(record.value.looks.felt).id },
+    { list: shopBackList, rows: SHOP_BACK_ROWS, inUse: () => backFor(record.value.looks.back).id },
   ];
 
   function renderShop(): void {

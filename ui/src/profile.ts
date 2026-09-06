@@ -218,10 +218,11 @@ export interface PlayerRecord {
 export interface Looks {
   readonly glyphs: string;
   readonly felt: string;
+  readonly back: string;
   readonly [kind: string]: string;
 }
 
-export type LookKind = 'glyphs' | 'felt';
+export type LookKind = 'glyphs' | 'felt' | 'back';
 
 /** The free, drawn glyph set every record starts with (decision 0002's faces). */
 export const DEFAULT_GLYPH_SET = 'lantern';
@@ -229,12 +230,15 @@ export const DEFAULT_GLYPH_SET = 'lantern';
  *  (depth.ts `DEFAULT_FELT`, kept as a literal so profile.ts stays free of the
  *  renderer's palette). */
 export const DEFAULT_FELT = 'lantern';
+/** The free face-down back: the palette's own (depth.ts `DEFAULT_BACK`). */
+export const DEFAULT_BACK = 'lantern';
 
 /** Keys in sorted order, like `parseLooks` leaves them and `setLook` keeps them. */
-export const DEFAULT_LOOKS: Looks = { felt: DEFAULT_FELT, glyphs: DEFAULT_GLYPH_SET };
+export const DEFAULT_LOOKS: Looks = { back: DEFAULT_BACK, felt: DEFAULT_FELT, glyphs: DEFAULT_GLYPH_SET };
 
 /** A look kind is a short lowercase word; more kinds than the shop could ever
- *  sell is a hand-edited record. */
+ *  sell is a hand-edited record (MAX_LOOKS bounds what arrives; the kinds this
+ *  build knows are always present on top of that). */
 const LOOK_KIND = /^[a-z]{1,16}$/;
 const MAX_LOOKS = 8;
 
