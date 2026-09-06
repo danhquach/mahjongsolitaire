@@ -55,7 +55,18 @@ const MAX_TAPS_TO_ACTION = 2;
 const TILE_LABEL =
   /^.+, (available|blocked), row \d+, column \d+(, activate to (peek at it|send it to the holder|send it to the last holder slot, which ends the level|clear it with its match in the holder))?$/;
 /** Controls behind the modal dialog: the header and the booster rail. */
-const BACKGROUND_CONTROLS = ['btn-level', 'btn-daily', 'btn-new', 'btn-restart', 'btn-hint', 'btn-undo', 'btn-shuffle'];
+const BACKGROUND_CONTROLS = [
+  'btn-level',
+  'btn-daily',
+  'btn-new',
+  'btn-restart',
+  'btn-hint',
+  'btn-undo',
+  'btn-shuffle',
+  // The rail's Shop button (issue #239): a background control like the rest,
+  // so an open dialog must never let Tab reach it.
+  'btn-shop',
+];
 
 const server = createServer(async (req, res) => {
   const path = req.url === '/' ? '/index.html' : req.url.split('?')[0];
@@ -312,8 +323,10 @@ for (const vp of VIEWPORTS) {
       controls.map((c) => c.name).join('|') ===
         // Leaderboard sits last among the board actions, beside Settings, since
         // issue #153 moved it out of the header into the bottom bar; the
-        // expectation here still read the old header order.
-        'Profile|Daily challenges|New game|Restart|Hint|Undo|Shuffle|Leaderboard|Settings',
+        // expectation here still read the old header order. Shop joined that
+        // meta group in issue #239, which is the whole point of that ticket:
+        // one tap from the board, not two screens down inside Settings.
+        'Profile|Daily challenges|New game|Restart|Hint|Undo|Shuffle|Shop|Leaderboard|Settings',
       'board screen exposes the complete slice action set',
       controls,
     );
@@ -1068,14 +1081,15 @@ for (const vp of VIEWPORTS) {
       settingsControls.filter((c) => c.small),
     );
 
-    // Fourteen controls: the profile row (issue #69), six toggles (issue #45
+    // Thirteen controls: the profile row (issue #69), six toggles (issue #45
     // added Highlight free tiles, issue #44 added Reduced motion, issue #59
     // added Show tutorial; the timer toggle was retired 2026-09-01), the
-    // tile-size slider row (issue #139 replaced four radios), the Shop row
-    // (issue #229), the Send feedback row (issue #118), the two Account rows
-    // (issue #201), the version row (issue #81), and Done. The Daily row moved
-    // to the HUD (issue #136; issue #183 made it the challenge panel).
-    check(settingsControls.length === 14, 'settings screen exposes all fourteen controls', {
+    // tile-size slider row (issue #139 replaced four radios), the Send feedback
+    // row (issue #118), the two Account rows (issue #201), the version row
+    // (issue #81), and Done. The Daily row moved to the HUD (issue #136; issue
+    // #183 made it the challenge panel) and the Shop row to the booster rail
+    // (issue #239), so Settings is preferences and account again.
+    check(settingsControls.length === 13, 'settings screen exposes all thirteen controls', {
       count: settingsControls.length,
     });
 

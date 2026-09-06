@@ -2784,9 +2784,16 @@ async function start(): Promise<void> {
 
   function renderShop(): void {
     const balance = trophyBalance(record.value);
-    shopBalance.textContent =
-      `${balance} ${balance === 1 ? 'trophy' : 'trophies'} to spend` +
-      (record.value.trophies === balance ? '' : ` · ${record.value.trophies} earned`);
+    // The spendable number is set apart (issue #239): it rides in the sticky
+    // bar, and it is what every price on the way down is read against.
+    const spend = document.createElement('span');
+    spend.className = 'shop-spend';
+    spend.textContent = String(balance);
+    const rest = document.createTextNode(
+      ` ${balance === 1 ? 'trophy' : 'trophies'} to spend` +
+        (record.value.trophies === balance ? '' : ` · ${record.value.trophies} earned`),
+    );
+    shopBalance.replaceChildren(spend, rest);
     for (const { list, rows, inUse } of SHOP_LISTS) {
       const current = inUse();
       list.replaceChildren(...rows.map((row) => shopRow(row, row.id === current)));
@@ -2842,8 +2849,12 @@ async function start(): Promise<void> {
       const confirm = document.createElement('button');
       confirm.type = 'button';
       confirm.dataset['confirm'] = row.id;
-      confirm.textContent = `Confirm ${trophies(row.price)}`;
-      confirm.setAttribute('aria-label', `Confirm: buy the ${row.spoken} for ${row.price} trophies`);
+      // Short labels in a card this narrow. The aria-label opens with the
+      // visible text verbatim and then names the item, so the visible words
+      // really are a prefix of the accessible name (WCAG 2.5.3) — voice
+      // control users can say what they can see.
+      confirm.textContent = `Confirm ${row.price}`;
+      confirm.setAttribute('aria-label', `Confirm ${row.price} trophies for the ${row.spoken}`);
       confirm.addEventListener('click', () => buyLook(row));
       const cancel = document.createElement('button');
       cancel.type = 'button';
@@ -2859,8 +2870,8 @@ async function start(): Promise<void> {
       const buy = document.createElement('button');
       buy.type = 'button';
       buy.dataset['buy'] = row.id;
-      buy.textContent = `Buy for ${trophies(row.price)}`;
-      buy.setAttribute('aria-label', `Buy the ${row.spoken} for ${row.price} trophies`);
+      buy.textContent = `Buy ${row.price}`;
+      buy.setAttribute('aria-label', `Buy ${row.price} trophies for the ${row.spoken}`);
       if (standing.state === 'locked') {
         buy.disabled = true;
         const short = document.createElement('span');
@@ -2877,7 +2888,9 @@ async function start(): Promise<void> {
       }
     }
 
-    li.append(head, desc, preview, actions);
+    // Preview first (issue #239): the shop sells looks, so the card leads with
+    // the look and the words underneath only name it.
+    li.append(preview, head, desc, actions);
     return li;
   }
 
@@ -2921,10 +2934,24 @@ async function start(): Promise<void> {
   }
 
   function openShop(): void {
-    if (shopVisible) return;
-    // Opened from inside Settings: that panel steps aside rather than stacking,
-    // the same as the profile.
-    closeSettings();
+    // The rail's Shop button goes inert behind any dialog, but the guard is
+    // cheap and does not rely on that staying true — the same list, and the
+    // same reasoning, as openSettings and openDailyPanel. Until issue #239 the
+    // shop was opened from inside Settings and stepped that panel aside
+    // instead; it is a HUD action now, so it guards like one.
+    if (
+      shopVisible ||
+      settingsVisible ||
+      overlayVisible ||
+      changelogVisible ||
+      profileVisible ||
+      feedbackVisible ||
+      welcomeVisible ||
+      confirmVisible ||
+      tutorialVisible ||
+      dailyPanelVisible
+    )
+      return;
     shopArmed = null;
     setShopStatus('');
     renderShop();
@@ -2933,7 +2960,8 @@ async function start(): Promise<void> {
     setBackgroundInert(true);
     // Done is the focus target like every other panel, but the card is taller
     // than a phone: letting the focus scroll it would open the shop at its
-    // foot, balance and first row out of view.
+    // foot, the first row out of view. Same preventScroll + explicit reset as
+    // the changelog (issue #168).
     shopClose.focus({ preventScroll: true });
     shopPanel.querySelector('.card')?.scrollTo({ top: 0 });
     const balance = trophyBalance(record.value);
@@ -2946,7 +2974,9 @@ async function start(): Promise<void> {
     shopArmed = null;
     shopPanel.classList.remove('visible');
     setBackgroundInert(false);
-    settingsButton.focus();
+    // Back to the control that opened it — the rail's Shop button since issue
+    // #239, not the gear.
+    shopButton.focus();
   }
 
   shopButton.addEventListener('click', () => openShop());

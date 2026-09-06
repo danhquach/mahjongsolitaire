@@ -369,6 +369,28 @@
         fill: currentColor;
         stroke: none;
       }
+      /* Six buttons on a phone (issue #239 puts the Shop in the meta group):
+         at 56px + 8px gaps the rail wants 368px, two more than a 390px
+         portrait viewport leaves it, and the landscape column is tighter
+         still. Trim both to 50px / 6px under 560px — over the spec §7 48dp
+         minimum, and small enough that the rail stays one line in either
+         placement. The band #board reserves (80px) is unchanged, so the fit
+         the chooser prices is exactly what it was. */
+      @media (max-width: 560px), (max-height: 560px) {
+        #booster-rail,
+        #booster-rail .boosters,
+        #booster-rail .meta {
+          gap: 6px;
+        }
+        #booster-rail button {
+          width: 50px;
+          height: 50px;
+        }
+        #booster-rail svg {
+          width: 26px;
+          height: 26px;
+        }
+      }
       #booster-rail .charges {
         position: absolute;
         top: -7px;
@@ -1122,7 +1144,6 @@
          row (issue #69) is the same idiom: a row that opens another screen. */
       #settings .card > button.version-row,
       #settings .card > button.feedback-row,
-      #settings .card > button.shop-row,
       #settings .card > button.profile-row {
         margin-top: 12px;
         text-align: left;
@@ -1299,63 +1320,134 @@
         color: #3f6212;
       }
 
-      /* --- Cosmetics shop (issue #229, decision 0038) ------------------------
-         One row per item: name and price on one line, four preview tiles baked
-         by the board renderer from the real set, then the row's one action —
-         Use / In use for what is owned, Buy (two taps: Buy, then Confirm) for
-         what is not, disabled with the shortfall when it cannot be afforded.
-         The row in use is marked three ways over (mint wash, green edge, the
-         pressed "In use" label) because colour alone never carries meaning
+      /* --- Cosmetics shop (issue #229, decision 0038; redesigned in #239) ----
+         A grid of cards, one per item, preview first: the shop sells looks, so
+         the look is the largest thing on the card and the words underneath
+         only name it. Each card is the preview on its own stage, then name and
+         price, then the item's one action — Use / In use for what is owned,
+         Buy (two taps: Buy, then Confirm) for what is not, disabled with the
+         shortfall when it cannot be afforded.
+
+         The card in use is marked three ways over (mint wash, dark green edge,
+         the pressed "In use" label) and a locked one two (dimmed stage, the
+         shortfall spelled out), because colour alone never carries meaning
          (spec §7). */
+      /* The card is the sticky bar's containing block: #shop is positioned but
+         has no z-index, so it opens no stacking context, and the bar's z-index
+         would otherwise be resolved against the root — painting a panel's
+         internals into the same contest as the panels themselves (the class of
+         bug issue #174 and test/panel-stacking.test.ts exist for). */
+      #shop .card {
+        position: relative;
+      }
+      #shop .shop-bar {
+        position: sticky;
+        /* The card's own padding: pull the bar out to its edges so the list
+           scrolls *under* an opaque strip rather than beside it. */
+        top: -20px;
+        z-index: 1;
+        margin: -20px -24px 12px;
+        padding: 20px 24px 10px;
+        background: #f0fdf4;
+        border-bottom: 1px solid #d1fae5;
+      }
+      #shop .shop-bar h2 {
+        margin: 0;
+      }
       #shop .shop-balance {
-        margin: 0 0 12px;
+        margin: 2px 0 0;
         font-size: 15px;
         color: #3f6212;
+      }
+      #shop .shop-balance .shop-spend {
+        font-size: 18px;
+        font-weight: 700;
+        color: #14532d;
+      }
+      /* The sections are headings over a grid, not boxes: a border around each
+         one would frame the cards twice. The reset also drops the default
+         fieldset padding and `min-inline-size`, which is what was squeezing the
+         grid down to a single column. */
+      #shop fieldset {
+        margin: 16px 0 0;
+        padding: 0;
+        border: none;
+        min-inline-size: 0;
+      }
+      #shop legend {
+        padding: 0;
+        margin-bottom: 6px;
+        font-weight: bold;
       }
       #shop .shop-list {
         list-style: none;
         margin: 0;
         padding: 0;
+        display: grid;
+        /* Two columns in the 420px card, one on a phone narrower than ~330px. */
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 10px;
       }
       #shop .shop-item {
-        padding: 10px 12px;
-        margin: 0 -12px;
-        border-left: 3px solid transparent;
-      }
-      #shop .shop-item + .shop-item {
-        border-top: 1px solid #d1fae5;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 8px;
+        border: 1px solid #d1fae5;
+        border-radius: 10px;
+        background: #f7fef9;
       }
       #shop .shop-item[data-state='in-use'] {
         background: #dcfce7;
-        border-left-color: #166534;
+        border-color: #166534;
+        box-shadow: inset 0 0 0 1px #166534;
       }
+      /* Name over price, always — never side by side. A card this narrow has
+         no room for "Vermilion Double" beside "25 trophies", and a rule that
+         wraps only sometimes gives a grid of cards two different layouts. On
+         its own line the price also reads as the card's state, which is what
+         "Free" and "Owned" are doing in that slot. */
       #shop .shop-head {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        gap: 12px;
+        display: block;
       }
+      /* Not monospace: a monospace capital O beside a price reads as a zero. */
       #shop .shop-price {
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 15px;
-        white-space: nowrap;
+        display: block;
+        margin-top: 1px;
+        font-size: 14px;
+        color: #3f6212;
       }
       #shop .shop-desc {
         display: block;
-        margin-top: 2px;
-        font-size: 15px;
+        font-size: 14px;
+        line-height: 1.35;
         color: #3f6212;
       }
+      /* The stage every preview stands on: one size whatever the look is, so a
+         column of cards has one rhythm and the glyph sets, felts, backs and
+         frames are compared against the same ground. */
       #shop .shop-preview {
         display: flex;
         align-items: center;
-        gap: 6px;
-        margin: 8px 0;
-        min-height: 52px;
+        justify-content: center;
+        gap: 4px;
+        height: 68px;
+        padding: 0 6px;
+        border-radius: 8px;
+        background: #e7f8ed;
+        overflow: hidden;
+      }
+      #shop .shop-item[data-state='locked'] .shop-preview {
+        opacity: 0.55;
       }
       #shop .shop-preview img {
-        width: 38px;
+        width: 32px;
         height: auto;
+      }
+      /* A back or a frame is one image, not a row of four: let it use the
+         stage it has to itself. */
+      #shop .shop-preview img:only-child {
+        width: 46px;
       }
       /* A felt's preview (slice 2): the felt itself, with one face-down
          Lantern back sitting on it — the pairing the felt has to hold. */
@@ -1363,8 +1455,10 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        width: 120px;
-        height: 52px;
+        /* Fills its card's stage rather than a fixed 120px, so a felt reads as
+           a table the tiles sit on and not as a chip beside them. */
+        width: 100%;
+        height: 56px;
         border-radius: 6px;
       }
       #shop .shop-swatch-back {
@@ -1375,15 +1469,21 @@
         border: 2px solid;
         box-shadow: 2px 3px 0 rgba(0, 0, 0, 0.35);
       }
+      /* The action sits at the foot of the card, and cards in a row are the
+         same height, so `margin-top: auto` lines every button up whether its
+         description ran to one line or three. */
       #shop .shop-actions {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
-        gap: 8px;
+        gap: 6px;
+        margin-top: auto;
+        padding-top: 4px;
       }
       #shop .shop-actions button {
+        flex: 1 1 auto;
         min-height: 48px; /* spec §7 touch target */
-        padding: 6px 14px;
+        padding: 6px 10px;
         border-radius: 8px;
         border: 1px solid #14532d;
         background: #166534;
@@ -1404,7 +1504,13 @@
       #shop .shop-actions button:disabled {
         opacity: 0.5;
       }
-      #shop .shop-short,
+      /* The shortfall gets the whole width under the disabled Buy — it is the
+         card's answer to "why can't I press this?", not a footnote beside it. */
+      #shop .shop-short {
+        flex: 1 0 100%;
+        font-size: 14px;
+        color: #3f6212;
+      }
       #shop .record-hint {
         font-size: 15px;
         color: #3f6212;
@@ -1967,9 +2073,21 @@
               <span class="charges" id="charges-shuffle">5</span>
             </button>
             </div>
-            <!-- The meta pair (issue #153): Leaderboard and Settings, beside the
-                 boosters but outside their a11y group. -->
+            <!-- The meta group (issue #153): Shop, Leaderboard and Settings,
+                 beside the boosters but outside their a11y group. -->
             <div class="meta">
+            <!-- The Shop (issue #239): it used to be a row inside Settings, two
+                 screens from the board, so a player holding trophies had no
+                 reason to think there was anywhere to spend them. It belongs
+                 with the other meta actions, not with New game / Restart —
+                 those act on the deal in front of you. -->
+            <button id="btn-shop" type="button" data-action="Shop" title="Shop" aria-label="Shop">
+              <!-- A shopping bag: body, then the handle arc above it. -->
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4.6 8.4h14.8l-1.3 12.2H5.9z" />
+                <path d="M8.9 8.4V6.5a3.1 3.1 0 0 1 6.2 0v1.9" />
+              </svg>
+            </button>
             <!-- The Daily board, one tap from the table: it used to be reachable
                  only through Settings → Profile, which is nowhere near where the
                  player is when they wonder how they placed. It sat in the header
@@ -2175,11 +2293,19 @@
           </div>
           <!-- Cosmetics shop (issue #229, decision 0038): trophies buy looks
                that change how the tiles are drawn, never what a face means.
-               Opened from the Shop row in Settings; main.ts fills the list. -->
+               Opened from the Shop button in the booster rail (issue #239);
+               main.ts fills the lists.
+
+               The title and the balance ride in a sticky bar (issue #239): the
+               card is taller than a phone, and the balance is the number every
+               price on the way down is read against — scrolling it away made
+               the player scroll back up to answer "can I afford this?". -->
           <div id="shop" role="dialog" aria-modal="true" aria-labelledby="shop-title">
             <div class="card">
-              <h2 id="shop-title">Shop</h2>
-              <p id="shop-balance" class="shop-balance"></p>
+              <div class="shop-bar">
+                <h2 id="shop-title">Shop</h2>
+                <p id="shop-balance" class="shop-balance"></p>
+              </div>
               <fieldset>
                 <legend>Glyph sets</legend>
                 <ul id="shop-glyphs" class="shop-list"></ul>
@@ -2442,14 +2568,6 @@
                   aria-valuetext="Extra large"
                 />
               </div>
-              <!-- Shop (issue #229): where trophies are spent. Same row idiom as
-                   the profile row — a row that opens another screen. -->
-              <button id="btn-shop" type="button" class="row shop-row">
-                <span>
-                  Shop
-                  <span class="hint">Spend trophies on new looks for the tiles.</span>
-                </span>
-              </button>
               <!-- Send feedback (issue #118): a short in-game form, delivered
                    by email via the Worker endpoint (worker/index.mjs). -->
               <button id="btn-feedback" type="button" class="row feedback-row">

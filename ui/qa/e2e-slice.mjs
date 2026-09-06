@@ -1264,6 +1264,79 @@ for (const vp of VIEWPORTS) {
     console.log(`${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: Level chip opens the profile`);
   }
 
+  // 2d. The Shop opens from the board in one tap (issue #239). It used to be a
+  //     row inside Settings — two screens from the tiles — so the thing this
+  //     asserts is the distance, not the panel: the rail's bag is on screen,
+  //     it is a 48dp target in either HUD placement, one tap opens the shop,
+  //     Escape closes it back onto the button, and the deal is untouched.
+  {
+    const before = failures;
+    const snap = () =>
+      page.evaluate(() => ({
+        hash: window.__slice.stateHash(),
+        score: window.__slice.game.score,
+        shopOpen: document.getElementById('shop').classList.contains('visible'),
+        settingsOpen: document.getElementById('settings').classList.contains('visible'),
+        focus: document.activeElement?.id,
+      }));
+    const button = await page.evaluate(() => {
+      const b = document.getElementById('btn-shop');
+      const r = b.getBoundingClientRect();
+      return {
+        inRail: b.closest('#booster-rail') !== null,
+        inSettings: b.closest('#settings') !== null,
+        name: b.getAttribute('aria-label'),
+        w: r.width,
+        h: r.height,
+        onScreen: r.x >= 0 && r.y >= 0 && r.right <= innerWidth && r.bottom <= innerHeight,
+      };
+    });
+    check(button.inRail && !button.inSettings, 'the Shop button lives in the rail, not in Settings', button);
+    check(button.name === 'Shop', 'the Shop button is named', button);
+    check(button.w >= 48 && button.h >= 48, 'the Shop button is a 48dp touch target', button);
+    check(button.onScreen, 'the Shop button fits on screen in this HUD placement', button);
+    const idle = await snap();
+    await page.click('#btn-shop');
+    const opened = await snap();
+    check(
+      opened.shopOpen && !opened.settingsOpen && opened.focus === 'shop-close',
+      'one tap opens the shop, with no visit to Settings',
+      opened,
+    );
+    // The balance is the number every price is read against, so it has to be
+    // on screen wherever the list is scrolled (issue #239).
+    const pinned = await page.evaluate(() => {
+      const card = document.querySelector('#shop .card');
+      card.scrollTo({ top: card.scrollHeight });
+      const bar = document.getElementById('shop-balance').getBoundingClientRect();
+      const box = card.getBoundingClientRect();
+      return { scrolled: card.scrollTop, top: bar.top, boxTop: box.top, boxBottom: box.bottom };
+    });
+    check(
+      pinned.scrolled > 0 && pinned.top >= pinned.boxTop - 1 && pinned.top < pinned.boxBottom,
+      'the balance stays in view at the foot of the list',
+      pinned,
+    );
+    await page.keyboard.press('Escape');
+    const closed = await snap();
+    check(!closed.shopOpen && closed.focus === 'btn-shop', 'Escape closes and returns focus to the Shop button', closed);
+    check(closed.hash === idle.hash && closed.score === idle.score, 'the game state is untouched', { idle, closed });
+    // Backdrop dismissal, like every other dialog (issue #223): a tap on the
+    // dimmed area closes, a tap on the card itself does not.
+    await page.click('#btn-shop');
+    await page.evaluate(() => document.querySelector('#shop .card').click());
+    const onCard = await snap();
+    check(onCard.shopOpen, 'a tap on the card does not dismiss the shop', onCard);
+    await page.evaluate(() => document.getElementById('shop').click());
+    const onBackdrop = await snap();
+    check(
+      !onBackdrop.shopOpen && onBackdrop.focus === 'btn-shop',
+      'a tap on the backdrop dismisses the shop',
+      onBackdrop,
+    );
+    console.log(`${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: Shop opens from the rail in one tap`);
+  }
+
   // 2b. The holder (issues #43, #93), driven the way a player drives it: park a
   //     free tile with one tap on the canvas, check the strip shows it and the
   //     tile it was covering is now free, clear it against its partner in a
