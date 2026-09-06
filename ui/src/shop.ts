@@ -14,6 +14,7 @@
 import { DEFAULT_GLYPH_SET } from './profile.js';
 import type { LookKind, PlayerRecord, RecordStore } from './profile.js';
 import { BACKS, FELTS } from './depth.js';
+import { FRAMES } from './frames.js';
 
 export interface ShopItem {
   readonly id: string;
@@ -127,6 +128,57 @@ export const SHOP_ITEMS: readonly ShopItem[] = [
     kind: 'back',
     label: BACKS['back-koi']!.label,
     description: 'A koi curling through ripples on deep water.',
+    price: 60,
+  },
+  // Avatar frames (slice 3, decision 0041): a ring around the avatar on the
+  // profile row and the leaderboard. Art under data/frames/ (frames.ts).
+  {
+    id: 'frame-gold-ring',
+    kind: 'frame',
+    label: FRAMES['frame-gold-ring']!.label,
+    description: 'A solid gold ring.',
+    price: 10,
+  },
+  {
+    id: 'frame-jade-square',
+    kind: 'frame',
+    label: FRAMES['frame-jade-square']!.label,
+    description: 'A rounded jade square.',
+    price: 10,
+  },
+  {
+    id: 'frame-vermilion-double',
+    kind: 'frame',
+    label: FRAMES['frame-vermilion-double']!.label,
+    description: 'Two thin vermilion rings.',
+    price: 25,
+  },
+  {
+    id: 'frame-wave',
+    kind: 'frame',
+    label: FRAMES['frame-wave']!.label,
+    description: 'A deep-sea ring with a scalloped wave edge.',
+    price: 25,
+  },
+  {
+    id: 'frame-lantern',
+    kind: 'frame',
+    label: FRAMES['frame-lantern']!.label,
+    description: 'A lacquer ring with a paper lantern hung from the top.',
+    price: 25,
+  },
+  {
+    id: 'frame-plum',
+    kind: 'frame',
+    label: FRAMES['frame-plum']!.label,
+    description: 'A plum ring with four blossoms at the compass points.',
+    price: 60,
+  },
+  {
+    id: 'frame-dragon',
+    kind: 'frame',
+    label: FRAMES['frame-dragon']!.label,
+    description: 'A slate ring with a silver dragon along the top.',
     price: 60,
   },
 ];

@@ -286,10 +286,10 @@ test('recordWin leaves the Daily fields alone', () => {
 test('a pre-#229 record owns nothing, looks Lantern, and has no look stamp', () => {
   const record = parsePlayerRecord({ trophies: 30 });
   assert.deepEqual(record.owned, []);
-  assert.deepEqual(record.looks, { back: 'lantern', felt: 'lantern', glyphs: 'lantern' });
+  assert.deepEqual(record.looks, { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'lantern' });
   assert.equal(record.looksAt, null);
   assert.deepEqual(EMPTY_RECORD.owned, []);
-  assert.deepEqual(EMPTY_RECORD.looks, { back: 'lantern', felt: 'lantern', glyphs: 'lantern' });
+  assert.deepEqual(EMPTY_RECORD.looks, { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'lantern' });
   assert.equal(EMPTY_RECORD.looksAt, null);
 });
 
@@ -304,14 +304,15 @@ test('owned ids are kept opaquely, sorted, deduplicated and filtered to plausibl
 });
 
 test('looks keep an unknown set id opaquely; garbage falls back to the default', () => {
-  assert.deepEqual(parsePlayerRecord({ looks: { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 5 }).looks, {
+  assert.deepEqual(parsePlayerRecord({ looks: { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 5 }).looks, {
     back: 'lantern',
     felt: 'lantern',
+    frame: 'lantern',
     glyphs: 'glyphs-fantasy',
   });
-  assert.equal(parsePlayerRecord({ looks: { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 5 }).looksAt, 5);
-  assert.deepEqual(parsePlayerRecord({ looks: { glyphs: 'not an id!' } }).looks, { back: 'lantern', felt: 'lantern', glyphs: 'lantern' });
-  assert.deepEqual(parsePlayerRecord({ looks: 'glyphs-fantasy' }).looks, { back: 'lantern', felt: 'lantern', glyphs: 'lantern' });
+  assert.equal(parsePlayerRecord({ looks: { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 5 }).looksAt, 5);
+  assert.deepEqual(parsePlayerRecord({ looks: { glyphs: 'not an id!' } }).looks, { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'lantern' });
+  assert.deepEqual(parsePlayerRecord({ looks: 'glyphs-fantasy' }).looks, { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'lantern' });
   // A stamp is a non-negative integer or nothing.
   assert.equal(parsePlayerRecord({ looksAt: -1 }).looksAt, null);
   assert.equal(parsePlayerRecord({ looksAt: 1.5 }).looksAt, null);
@@ -321,28 +322,31 @@ test('looks keep an unknown set id opaquely; garbage falls back to the default',
 test('looks keep a kind this build does not know, sorted, bounded, and never a malformed one', () => {
   // Slice 2 added `felt` to a `looks` slice 1 only knew `glyphs` in; from here
   // on a newer build's kind survives a round trip through this one.
-  assert.deepEqual(parsePlayerRecord({ looks: { frame: 'frame-gold-ring', glyphs: 'lantern' } }).looks, {
+  assert.deepEqual(parsePlayerRecord({ looks: { hat: 'hat-straw', glyphs: 'lantern' } }).looks, {
     back: 'lantern',
     felt: 'lantern',
-    frame: 'frame-gold-ring',
+    frame: 'lantern',
     glyphs: 'lantern',
+    hat: 'hat-straw',
   });
   assert.deepEqual(parsePlayerRecord({ looks: { felt: 'felt-walnut' } }).looks, {
     back: 'lantern',
     felt: 'felt-walnut',
+    frame: 'lantern',
     glyphs: 'lantern',
   });
   // Keys come out sorted whatever order they arrived in, so two devices
   // serialise the same picks to the same JSON (the merge's tie-break).
   assert.deepEqual(
     Object.keys(parsePlayerRecord({ looks: { glyphs: 'lantern', felt: 'felt-ink', back: 'back-koi' } }).looks),
-    ['back', 'felt', 'glyphs'],
+    ['back', 'felt', 'frame', 'glyphs'],
   );
-  assert.deepEqual(Object.keys(EMPTY_RECORD.looks), ['back', 'felt', 'glyphs']);
+  assert.deepEqual(Object.keys(EMPTY_RECORD.looks), ['back', 'felt', 'frame', 'glyphs']);
   // A key that is not a kind, or a value that is not an id, is dropped.
-  assert.deepEqual(parsePlayerRecord({ looks: { 'Not A Kind': 'x', felt: 7, frame: 'bad id!' } }).looks, {
+  assert.deepEqual(parsePlayerRecord({ looks: { 'Not A Kind': 'x', felt: 7, hat: 'bad id!' } }).looks, {
     back: 'lantern',
     felt: 'lantern',
+    frame: 'lantern',
     glyphs: 'lantern',
   });
   // More kinds than the shop could ever sell is a hand-edited record: capped.
@@ -370,14 +374,14 @@ test('setLook takes the default or an owned item, stamps the change, and refuses
   assert.equal(record.value.looksAt, null);
   record.acquire('glyphs-fantasy');
   assert.equal(record.setLook('glyphs', 'glyphs-fantasy', NOW), true);
-  assert.deepEqual(record.value.looks, { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-fantasy' });
+  assert.deepEqual(record.value.looks, { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-fantasy' });
   assert.equal(record.value.looksAt, NOW);
   // Same pick again: nothing changes, the stamp does not move.
   assert.equal(record.setLook('glyphs', 'glyphs-fantasy', NOW + 1), false);
   assert.equal(record.value.looksAt, NOW);
   // Back to the free default is always allowed.
   assert.equal(record.setLook('glyphs', 'lantern', NOW + 2), true);
-  assert.deepEqual(new RecordStore(storage).value.looks, { back: 'lantern', felt: 'lantern', glyphs: 'lantern' });
+  assert.deepEqual(new RecordStore(storage).value.looks, { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'lantern' });
   assert.equal(new RecordStore(storage).value.looksAt, NOW + 2);
 });
 
@@ -388,6 +392,6 @@ test('recordWin and creditDailyChallenge leave the cosmetics alone', () => {
   record.recordWin(100, { level: 1 }, NOW);
   record.creditDailyChallenge('2026-09-03');
   assert.deepEqual(record.value.owned, ['glyphs-fantasy']);
-  assert.deepEqual(record.value.looks, { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-fantasy' });
+  assert.deepEqual(record.value.looks, { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-fantasy' });
   assert.equal(record.value.looksAt, NOW);
 });

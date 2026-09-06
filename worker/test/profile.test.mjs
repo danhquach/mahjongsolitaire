@@ -137,7 +137,7 @@ test('a client record is sanitized field by field, not rejected', () => {
     trophies: 2,
     dailyCount: 0,
     owned: [],
-    looks: { back: 'lantern', felt: 'lantern', glyphs: 'lantern' },
+    looks: { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'lantern' },
     looksAt: null,
   });
 });
@@ -259,10 +259,10 @@ test('one side never having played contributes the other side\'s dailyCount', ()
 test('a pre-#229 record owns nothing, looks Lantern, and has no stamp', () => {
   const record = validateRecord({ trophies: 3 });
   assert.deepEqual(record.owned, []);
-  assert.deepEqual(record.looks, { back: 'lantern', felt: 'lantern', glyphs: 'lantern' });
+  assert.deepEqual(record.looks, { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'lantern' });
   assert.equal(record.looksAt, null);
   assert.deepEqual(EMPTY_RECORD.owned, []);
-  assert.deepEqual(EMPTY_RECORD.looks, { back: 'lantern', felt: 'lantern', glyphs: 'lantern' });
+  assert.deepEqual(EMPTY_RECORD.looks, { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'lantern' });
   assert.equal(EMPTY_RECORD.looksAt, null);
 });
 
@@ -277,34 +277,38 @@ test('owned ids are kept opaquely — plausible ids only, sorted, deduplicated, 
 });
 
 test('looks keep an unknown id opaquely and drop garbage; the stamp is a non-negative integer or null', () => {
-  assert.deepEqual(validateRecord({ looks: { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 5 }).looks, {
+  assert.deepEqual(validateRecord({ looks: { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 5 }).looks, {
     back: 'lantern',
     felt: 'lantern',
+    frame: 'lantern',
     glyphs: 'glyphs-fantasy',
   });
-  assert.equal(validateRecord({ looks: { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 5 }).looksAt, 5);
-  assert.deepEqual(validateRecord({ looks: { glyphs: 'not an id!' } }).looks, { back: 'lantern', felt: 'lantern', glyphs: 'lantern' });
-  assert.deepEqual(validateRecord({ looks: ['glyphs-fantasy'] }).looks, { back: 'lantern', felt: 'lantern', glyphs: 'lantern' });
+  assert.equal(validateRecord({ looks: { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 5 }).looksAt, 5);
+  assert.deepEqual(validateRecord({ looks: { glyphs: 'not an id!' } }).looks, { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'lantern' });
+  assert.deepEqual(validateRecord({ looks: ['glyphs-fantasy'] }).looks, { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'lantern' });
   assert.equal(validateRecord({ looksAt: -1 }).looksAt, null);
   assert.equal(validateRecord({ looksAt: 1.5 }).looksAt, null);
   assert.equal(validateRecord({ looksAt: '5' }).looksAt, null);
 });
 
 test('looks keep a kind this Worker does not know, sorted and bounded (ui/src/profile.ts parseLooks)', () => {
-  assert.deepEqual(validateRecord({ looks: { frame: 'frame-gold-ring', felt: 'felt-ink' } }).looks, {
+  assert.deepEqual(validateRecord({ looks: { hat: 'hat-straw', felt: 'felt-ink' } }).looks, {
     back: 'lantern',
     felt: 'felt-ink',
-    frame: 'frame-gold-ring',
+    frame: 'lantern',
     glyphs: 'lantern',
+    hat: 'hat-straw',
   });
   assert.deepEqual(Object.keys(validateRecord({ looks: { glyphs: 'lantern', back: 'back-koi' } }).looks), [
     'back',
     'felt',
+    'frame',
     'glyphs',
   ]);
-  assert.deepEqual(validateRecord({ looks: { 'Not A Kind': 'x', felt: 7, frame: 'bad id!' } }).looks, {
+  assert.deepEqual(validateRecord({ looks: { 'Not A Kind': 'x', felt: 7, hat: 'bad id!' } }).looks, {
     back: 'lantern',
     felt: 'lantern',
+    frame: 'lantern',
     glyphs: 'lantern',
   });
   const many = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`k${String.fromCharCode(97 + i)}`, 'x']));
@@ -312,31 +316,31 @@ test('looks keep a kind this Worker does not know, sorted and bounded (ui/src/pr
 });
 
 test('owned items merge as a union; the later look stamp wins the whole look', () => {
-  const a = { ...EMPTY_RECORD, owned: ['glyphs-fantasy'], looks: { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 2000 };
+  const a = { ...EMPTY_RECORD, owned: ['glyphs-fantasy'], looks: { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 2000 };
   const b = {
     ...EMPTY_RECORD,
     owned: ['glyphs-calligraphy', 'glyphs-fantasy'],
-    looks: { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-calligraphy' },
+    looks: { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-calligraphy' },
     looksAt: 1000,
   };
   const merged = mergeRecords(a, b);
   assert.deepEqual(merged.owned, ['glyphs-calligraphy', 'glyphs-fantasy']);
-  assert.deepEqual(merged.looks, { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-fantasy' });
+  assert.deepEqual(merged.looks, { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-fantasy' });
   assert.equal(merged.looksAt, 2000);
   assert.deepEqual(merged, mergeRecords(b, a));
   // A null stamp loses to any stamp; two nulls stay null.
-  assert.deepEqual(mergeRecords(EMPTY_RECORD, b).looks, { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-calligraphy' });
+  assert.deepEqual(mergeRecords(EMPTY_RECORD, b).looks, { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-calligraphy' });
   assert.equal(mergeRecords(b, EMPTY_RECORD).looksAt, 1000);
   assert.equal(mergeRecords(EMPTY_RECORD, EMPTY_RECORD).looksAt, null);
 });
 
 test('equal look stamps with different content resolve the same way from either side', () => {
-  const a = { ...EMPTY_RECORD, looks: { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-calligraphy' }, looksAt: 1000 };
-  const b = { ...EMPTY_RECORD, looks: { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 1000 };
+  const a = { ...EMPTY_RECORD, looks: { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-calligraphy' }, looksAt: 1000 };
+  const b = { ...EMPTY_RECORD, looks: { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 1000 };
   assert.deepEqual(mergeRecords(a, b), mergeRecords(b, a));
   assert.equal(mergeRecords(a, b).looksAt, 1000);
   // Both unstamped but different (a hand-edited record): still commutative.
-  const c = { ...EMPTY_RECORD, looks: { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-fantasy' } };
+  const c = { ...EMPTY_RECORD, looks: { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-fantasy' } };
   assert.deepEqual(mergeRecords(c, EMPTY_RECORD), mergeRecords(EMPTY_RECORD, c));
   assert.equal(mergeRecords(c, EMPTY_RECORD).looksAt, null);
 });
@@ -405,14 +409,14 @@ test('dailyCount round-trips through register and sync, exercising the daily_cou
 test('cosmetics round-trip through register, sync and read, exercising the 0007 columns', async () => {
   const env = { DB: createDb() };
   const { json: created } = await registerPlayer(env, makeDeps(), {
-    record: { ...EMPTY_RECORD, trophies: 30, owned: ['glyphs-calligraphy'], looks: { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-calligraphy' }, looksAt: 1000 },
+    record: { ...EMPTY_RECORD, trophies: 30, owned: ['glyphs-calligraphy'], looks: { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-calligraphy' }, looksAt: 1000 },
   });
   assert.deepEqual(created.profile.record.owned, ['glyphs-calligraphy']);
-  assert.deepEqual(created.profile.record.looks, { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-calligraphy' });
+  assert.deepEqual(created.profile.record.looks, { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-calligraphy' });
   assert.equal(created.profile.record.looksAt, 1000);
   const row = env.DB.raw.prepare('SELECT owned, looks, looks_at FROM players WHERE id = ?').get(created.playerId);
   assert.deepEqual(JSON.parse(row.owned), ['glyphs-calligraphy']);
-  assert.deepEqual(JSON.parse(row.looks), { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-calligraphy' });
+  assert.deepEqual(JSON.parse(row.looks), { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-calligraphy' });
   assert.equal(row.looks_at, 1000);
 
   // Another device bought the other set and picked it later: union + last-write.
@@ -420,7 +424,7 @@ test('cosmetics round-trip through register, sync and read, exercising the 0007 
     request('POST', '/api/profile/sync', {
       headers: bearer(created.code),
       body: {
-        record: { ...EMPTY_RECORD, trophies: 90, owned: ['glyphs-fantasy'], looks: { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 2000 },
+        record: { ...EMPTY_RECORD, trophies: 90, owned: ['glyphs-fantasy'], looks: { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-fantasy' }, looksAt: 2000 },
       },
     }),
     env,
@@ -429,14 +433,14 @@ test('cosmetics round-trip through register, sync and read, exercising the 0007 
   assert.equal(response.status, 200);
   const { profile } = await response.json();
   assert.deepEqual(profile.record.owned, ['glyphs-calligraphy', 'glyphs-fantasy']);
-  assert.deepEqual(profile.record.looks, { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-fantasy' });
+  assert.deepEqual(profile.record.looks, { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-fantasy' });
   assert.equal(profile.record.looksAt, 2000);
   assert.equal(profile.record.trophies, 90, 'nothing is deducted for a purchase');
 
   const read = await handleProfile(request('GET', '/api/profile', { headers: bearer(created.code) }), env, makeDeps());
   const stored = (await read.json()).profile.record;
   assert.deepEqual(stored.owned, ['glyphs-calligraphy', 'glyphs-fantasy']);
-  assert.deepEqual(stored.looks, { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-fantasy' });
+  assert.deepEqual(stored.looks, { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-fantasy' });
   assert.equal(stored.looksAt, 2000);
 });
 
@@ -448,7 +452,7 @@ test('a row from before migration 0007 reads as owning nothing with a null stamp
   const read = await handleProfile(request('GET', '/api/profile', { headers: bearer(created.code) }), env, makeDeps());
   const { record } = (await read.json()).profile;
   assert.deepEqual(record.owned, []);
-  assert.deepEqual(record.looks, { back: 'lantern', felt: 'lantern', glyphs: 'lantern' });
+  assert.deepEqual(record.looks, { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'lantern' });
   assert.equal(record.looksAt, null);
 });
 
@@ -984,7 +988,7 @@ async function playerWithEverything(env, deps) {
     // Issue #229: a reset returns the trophies that bought these, so a reset
     // must empty them too — the reset test deep-equals EMPTY_RECORD.
     owned: ['glyphs-calligraphy'],
-    looks: { back: 'lantern', felt: 'lantern', glyphs: 'glyphs-calligraphy' },
+    looks: { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'glyphs-calligraphy' },
     looksAt: 1000,
   };
   const synced = await handleProfile(
