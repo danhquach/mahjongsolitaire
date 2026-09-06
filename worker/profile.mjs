@@ -272,7 +272,7 @@ function counter(value) {
  *  DEFAULT_GLYPH_SET) — the one cosmetic id the server has to know, because
  *  it is what an absent or malformed look reads as. */
 /** Keys sorted, like ui/src/profile.ts `DEFAULT_LOOKS` and `parseLooks`. */
-const DEFAULT_LOOKS = { felt: 'lantern', glyphs: 'lantern' };
+const DEFAULT_LOOKS = { back: 'lantern', felt: 'lantern', glyphs: 'lantern' };
 /** Same bounds as ui/src/profile.ts `LOOK_KIND` / `MAX_LOOKS`. */
 const LOOK_KIND = /^[a-z]{1,16}$/;
 const MAX_LOOKS = 8;

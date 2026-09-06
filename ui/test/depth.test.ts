@@ -41,7 +41,7 @@ import {
   tileShade,
 } from '../src/depth.js';
 import type { BoardPalette } from '../src/depth.js';
-import { DEFAULT_FELT, FELTS, feltFor, withFelt } from '../src/depth.js';
+import { BACKS, DEFAULT_BACK, DEFAULT_FELT, FELTS, backFor, feltFor, withFelt } from '../src/depth.js';
 import { faceStyle } from '../src/faces.js';
 import { SIDE_DEPTH, TILE_H, TILE_W } from '../src/geometry.js';
 
@@ -434,6 +434,11 @@ test('cssColor pads to six hex digits', () => {
 
 // --- purchasable felts (issue #229 slice 2, decision 0039) ----------------------
 
+/** The lightest pixel a felt of base `color` puts on the table (its texture's,
+ *  or the colour itself for the flat default). */
+const feltLight = (color: number): number =>
+  Object.values(FELTS).find((felt) => felt.color === color)?.light ?? color;
+
 /** Lantern under every felt it can wear — what the ordinary board can look like. */
 const EVERY_FELTED_LANTERN: readonly BoardPalette[] = Object.values(FELTS).map((felt) => withFelt(LANTERN, felt));
 
@@ -446,6 +451,9 @@ test('a felt changes the felt and nothing else; the default felt is Lantern’s 
     assert.equal(felt.label.length > 0, true, felt.id);
     assert.match(felt.id, /^[a-z][a-z0-9-]{0,31}$/);
   }
+  // Base colours are unique: the proofs below look a palette's felt up by it.
+  const colors = Object.values(FELTS).map((felt) => felt.color);
+  assert.equal(new Set(colors).size, colors.length, 'two felts share a base colour');
   assert.equal(feltFor('felt-from-the-future').id, DEFAULT_FELT);
   assert.equal(feltFor('felt-walnut').id, 'felt-walnut');
 });
@@ -456,7 +464,10 @@ test('Lantern’s back holds 3:1 against every felt, on any undimmed layer (issu
     for (const { z, topZ, dimmed } of everyShade()) {
       if (dimmed) continue;
       const factor = 1 - LAYER_FACE_STEP * depthSteps(z, topZ);
-      const ratio = contrastRatio(scaleColor(palette.back, factor), palette.felt);
+      // Against the brightest pixel of the texture where there is one: the
+      // back has to clear the lightest thing on the table, not its average.
+      const table = feltLight(palette.felt);
+      const ratio = contrastRatio(scaleColor(palette.back, factor), table);
       if (ratio < worst.ratio) worst = { ratio, where: `z=${z} topZ=${topZ}` };
     }
     assert.ok(
@@ -465,6 +476,21 @@ test('Lantern’s back holds 3:1 against every felt, on any undimmed layer (issu
     );
     // And the soft-felt / strong-back rule: every felt is the dark variant.
     assert.ok(relativeLuminance(palette.back) > relativeLuminance(palette.felt) * 4, cssColor(palette.felt));
+  }
+});
+
+test('a textured felt’s brightest pixel is a whisper above its base, never a new colour', () => {
+  // The brief's ceiling: tone-on-tone, at most a small step above the base.
+  // A texture that drifted lighter would eat the back's contrast headroom.
+  for (const felt of Object.values(FELTS)) {
+    if (felt.texture === undefined) {
+      assert.equal(felt.id, DEFAULT_FELT, 'only the default is flat');
+      assert.equal(felt.light, undefined);
+      continue;
+    }
+    assert.ok(felt.light !== undefined, felt.id);
+    assert.ok(relativeLuminance(felt.light) >= relativeLuminance(felt.color), felt.id);
+    assert.ok(contrastRatio(felt.light, felt.color) < 1.6, `${felt.id}: texture is too bright for its base`);
   }
 });
 
@@ -477,5 +503,59 @@ test('no felt sits near the reserved Milestone burgundy or Daily indigo (decisio
     for (const taken of reserved) {
       assert.ok(distance(felt.color, taken) > 40, `${felt.id} ${cssColor(felt.color)} is near ${cssColor(taken)}`);
     }
+  }
+});
+
+// --- purchasable tile backs (issue #229 slice 2, decision 0040) -----------------
+//
+// A bought back is a bitmap: a dark ground with a light keyline and motif.
+// The ground alone cannot hold 3:1 against every dark felt (the brief's own
+// bamboo-grove ground *is* the Lantern felt), so what separates a face-down
+// tile from the table is the light work on it — the keyline the bitmap
+// carries, and the plain keyline drawn while it loads — plus the tile border
+// and shadow every tile has. The proof is therefore on the keyline: 3:1
+// against every felt it can sit on and against its own ground, on every
+// undimmed layer. Nothing on a back carries game meaning, so 4.5:1 is not owed.
+
+test('the default back is the Lantern palette’s own; every other has a bitmap id and a label', () => {
+  assert.equal(BACKS[DEFAULT_BACK]!.ground, LANTERN.back);
+  assert.equal(BACKS[DEFAULT_BACK]!.keyline, LANTERN.backKeyline);
+  for (const [id, back] of Object.entries(BACKS)) {
+    assert.equal(back.id, id);
+    assert.ok(back.label.length > 0, id);
+    assert.match(id, /^[a-z][a-z0-9-]{0,31}$/);
+  }
+  assert.equal(backFor('back-from-the-future').id, DEFAULT_BACK);
+  assert.equal(backFor('back-koi').id, 'back-koi');
+});
+
+/** The bitmap backs — the default is the palette's light back, proven above
+ *  (issue #82) the other way round: the ground itself against the felt. */
+const BITMAP_BACKS = Object.values(BACKS).filter((back) => back.id !== DEFAULT_BACK);
+
+test('every back’s keyline holds 3:1 against every felt and against its own ground, on any undimmed layer', () => {
+  assert.equal(BITMAP_BACKS.length, 7);
+  for (const back of BITMAP_BACKS) {
+    let worst = { ratio: Infinity, where: '' };
+    for (const { z, topZ, dimmed } of everyShade()) {
+      if (dimmed) continue;
+      const factor = 1 - LAYER_FACE_STEP * depthSteps(z, topZ);
+      const keyline = scaleColor(back.keyline, factor);
+      for (const felt of Object.values(FELTS)) {
+        const ratio = contrastRatio(keyline, felt.light ?? felt.color);
+        if (ratio < worst.ratio) worst = { ratio, where: `vs ${felt.id} at z=${z}/${topZ}` };
+      }
+      const own = contrastRatio(keyline, scaleColor(back.ground, factor));
+      if (own < worst.ratio) worst = { ratio: own, where: `vs its ground at z=${z}/${topZ}` };
+    }
+    assert.ok(worst.ratio >= MIN_NON_TEXT_CONTRAST, `${back.id}: ${worst.ratio.toFixed(2)}:1 ${worst.where}`);
+  }
+});
+
+test('no back is a face: every ground is darker than the cream face by a wide margin', () => {
+  // A back must never read as a face (the brief's rule): its ground stays
+  // far from BASE_FACE, so a face-down tile is never mistaken for a blank one.
+  for (const back of BITMAP_BACKS) {
+    assert.ok(contrastRatio(BASE_FACE, back.ground) >= 3, `${back.id}: ground too close to the face`);
   }
 });

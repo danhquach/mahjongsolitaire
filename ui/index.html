@@ -421,14 +421,19 @@
       /* The felt (issue #67): main.ts sets --felt from the board palette in
          force, so the holder strip and the board share one surface and a
          special level's colour covers the whole play column, not just the
-         canvas. The default is the lantern felt, the body's own green. */
+         canvas (which is transparent). The default is the lantern felt, the
+         body's own green. A bought felt (issue #229) adds --felt-image and
+         --felt-size, a seamless texture tiled at its own size (depth.ts
+         FELTS[id].texture); the colour stays underneath until the image is in. */
       #play-area {
         flex: 1;
         display: flex;
         flex-direction: column;
         min-width: 0;
         min-height: 0;
-        background: var(--felt, #14532d);
+        background-color: var(--felt, #14532d);
+        background-image: var(--felt-image, none);
+        background-size: var(--felt-size, auto);
       }
       /* The strip follows the HUD's own axis (issue #37): a row above the board
          when the HUD took the top edge, a column beside it when the HUD took a
@@ -2156,6 +2161,15 @@
               <p class="record-hint">
                 A felt recolours the table under the tiles and nothing else. Milestone levels
                 and the Daily keep their own colours whatever felt you own.
+              </p>
+              <fieldset>
+                <legend>Tile backs</legend>
+                <ul id="shop-backs" class="shop-list"></ul>
+              </fieldset>
+              <p class="record-hint">
+                A back is what a face-down tile shows. It never looks like a face, so a
+                concealed tile is always just a concealed tile. Milestone levels keep their
+                rose back.
               </p>
               <span id="shop-status" aria-live="polite"></span>
               <button id="shop-close" type="button">Done</button>

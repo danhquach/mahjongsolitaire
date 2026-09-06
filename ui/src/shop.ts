@@ -13,7 +13,7 @@
 
 import { DEFAULT_GLYPH_SET } from './profile.js';
 import type { LookKind, PlayerRecord, RecordStore } from './profile.js';
-import { FELTS } from './depth.js';
+import { BACKS, FELTS } from './depth.js';
 
 export interface ShopItem {
   readonly id: string;
@@ -76,6 +76,57 @@ export const SHOP_ITEMS: readonly ShopItem[] = [
     kind: 'felt',
     label: FELTS['felt-walnut']!.label,
     description: 'Warm dark walnut, like a wooden table.',
+    price: 60,
+  },
+  // Tile backs (slice 2, decision 0040): the face-down back as one bitmap.
+  // Colours live with the palette in depth.ts (BACKS); art under data/backs/.
+  {
+    id: 'back-night-sky',
+    kind: 'back',
+    label: BACKS['back-night-sky']!.label,
+    description: 'Gold stars and a crescent moon on midnight blue.',
+    price: 10,
+  },
+  {
+    id: 'back-blue-wave',
+    kind: 'back',
+    label: BACKS['back-blue-wave']!.label,
+    description: 'Overlapping seigaiha waves in sea green.',
+    price: 10,
+  },
+  {
+    id: 'back-bamboo-grove',
+    kind: 'back',
+    label: BACKS['back-bamboo-grove']!.label,
+    description: 'Three bamboo stalks on the lantern green.',
+    price: 25,
+  },
+  {
+    id: 'back-cloud-scroll',
+    kind: 'back',
+    label: BACKS['back-cloud-scroll']!.label,
+    description: 'Auspicious cloud scrolls in silver on charcoal.',
+    price: 25,
+  },
+  {
+    id: 'back-lacquer-lantern',
+    kind: 'back',
+    label: BACKS['back-lacquer-lantern']!.label,
+    description: 'One paper lantern on red lacquer.',
+    price: 25,
+  },
+  {
+    id: 'back-plum-branch',
+    kind: 'back',
+    label: BACKS['back-plum-branch']!.label,
+    description: 'A blossoming plum branch on deep plum.',
+    price: 60,
+  },
+  {
+    id: 'back-koi',
+    kind: 'back',
+    label: BACKS['back-koi']!.label,
+    description: 'A koi curling through ripples on deep water.',
     price: 60,
   },
 ];
