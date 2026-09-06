@@ -504,6 +504,7 @@ test('a submitted score takes a place on the board', async () => {
     playerId: alex.playerId,
     name: 'Alex',
     avatar: 'lantern',
+    frame: 'lantern',
     score: run.score,
     runs: 1,
   });
@@ -1011,6 +1012,30 @@ test('an anonymous read writes nothing to the limiter table, but is still limite
   );
   for (let i = 0; i < 55; i += 1) await board(env, deps, null);
   assert.equal((await board(env, deps, null)).status, 429);
+});
+
+test('a row carries the player’s avatar frame from their record, and only a well-formed id (issue #229)', async () => {
+  const env = { DB: createDb() };
+  const deps = makeDeps();
+  const alex = await addPlayer(env, deps, 'Alex');
+  const bo = await addPlayer(env, deps, 'Bo');
+  await post(env, deps, alex, playedRun(1, 0));
+  await post(env, deps, bo, playedRun(1, 0), NOW + 1000);
+  // Alex chose a frame; Bo's record has a mangled one that validation would
+  // normally never store — the board must still not echo it.
+  env.DB.raw.prepare("UPDATE players SET looks = ? WHERE id = ?").run(
+    JSON.stringify({ frame: 'frame-plum', glyphs: 'lantern' }),
+    alex.playerId,
+  );
+  env.DB.raw.prepare("UPDATE players SET looks = ? WHERE id = ?").run('{"frame":"<img src=x>"}', bo.playerId);
+  const { body } = await board(env, deps, null);
+  assert.deepEqual(
+    body.top.map((e) => [e.name, e.frame]),
+    [
+      ['Alex', 'frame-plum'],
+      ['Bo', 'lantern'],
+    ],
+  );
 });
 
 test('the routes work through the Worker entry point, which injects nothing', async () => {

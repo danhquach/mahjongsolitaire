@@ -25,6 +25,7 @@ import { apiRequest, defaultFetch } from './sync.js';
 import type { SyncCredentials, SyncDeps, SyncResult } from './sync.js';
 import { readRecord, writeRecord } from './storage.js';
 import type { KeyValueStorage } from './storage.js';
+import { DEFAULT_FRAME } from './frames.js';
 
 export const LEADERBOARD_STORAGE_KEY = 'mahjong.leaderboard.v1';
 
@@ -38,6 +39,9 @@ export interface BoardEntry {
   readonly playerId: string;
   readonly name: string;
   readonly avatar: string;
+  /** The avatar frame in use (issue #229), a cosmetic id resolved through
+   *  frames.ts and never shown raw; the default when the server predates it. */
+  readonly frame: string;
   /** Score accumulated across the week, not a single run's. */
   readonly score: number;
   /** How many clears went into it. */
@@ -85,14 +89,21 @@ function isEntry(value: unknown): value is BoardEntry {
     typeof raw['playerId'] === 'string' &&
     typeof raw['name'] === 'string' &&
     typeof raw['avatar'] === 'string' &&
+    (raw['frame'] === undefined || typeof raw['frame'] === 'string') &&
     typeof raw['score'] === 'number' &&
     typeof raw['runs'] === 'number'
   );
 }
 
+/** An entry as the renderer wants it: a server from before frames sends none,
+ *  and that reads as the default (no frame). */
+function withFrame(entry: BoardEntry): BoardEntry {
+  return entry.frame === undefined ? { ...entry, frame: DEFAULT_FRAME } : entry;
+}
+
 function entries(value: unknown): readonly BoardEntry[] | null {
   if (!Array.isArray(value)) return null;
-  return value.every(isEntry) ? (value as BoardEntry[]) : null;
+  return value.every(isEntry) ? (value as BoardEntry[]).map(withFrame) : null;
 }
 
 /** A board out of a response body, field by field — a server that answers
@@ -114,7 +125,7 @@ function toBoard(value: unknown): WeeklyBoard | null {
     weekStart: raw['weekStart'],
     resetsAt: raw['resetsAt'],
     top,
-    you: isEntry(you) ? you : null,
+    you: isEntry(you) ? withFrame(you) : null,
     around,
   };
 }

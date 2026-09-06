@@ -71,6 +71,7 @@ const entry = (rank: number, over: Partial<BoardEntry> = {}): BoardEntry => ({
   playerId: `P${rank}`,
   name: `Player ${rank}`,
   avatar: 'lantern',
+  frame: 'lantern',
   score: 2000 - rank * 100,
   runs: 3,
   ...over,
@@ -298,4 +299,19 @@ test('a neighbourhood entirely inside the top adds nothing at all', () => {
 
 test('an empty board has no rows and no break marker', () => {
   assert.deepEqual(boardRows(board({})), []);
+});
+
+test('an entry from a server without frames reads as unframed; a frame id passes through untouched', async () => {
+  const bare = { ...entry(1) } as Record<string, unknown>;
+  delete bare['frame'];
+  const framed = entry(2, { frame: 'frame-plum' });
+  const { fetchImpl } = stubFetch({
+    status: 200,
+    body: { weekStart: '2026-08-30', resetsAt: RESETS_AT, top: [bare, framed], you: bare, around: [] },
+  });
+  const result = await fetchWeeklyBoard(null, { fetchImpl });
+  assert.ok(result.ok);
+  assert.equal(result.value.top[0]!.frame, 'lantern');
+  assert.equal(result.value.top[1]!.frame, 'frame-plum');
+  assert.equal(result.value.you!.frame, 'lantern');
 });

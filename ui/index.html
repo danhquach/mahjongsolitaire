@@ -1219,6 +1219,41 @@
         font-size: 32px;
         line-height: 1;
       }
+      /* A bought avatar frame (issue #229, decision 0041): the frame bitmap is
+         the badge's background, fitted; the emoji sits on its cream disc. The
+         box is sized per context so a framed avatar takes no more room than a
+         bare one did: 44px where the glyph was 32px, 30px in a leaderboard row. */
+      .framed {
+        display: inline-flex;
+        flex: 0 0 auto; /* a flex row (the Settings profile row) must not shrink the badge */
+        align-items: center;
+        justify-content: center;
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: contain;
+      }
+      /* Badges keep one box framed or not, so a frame never shifts the row it
+         sits in: 44px on the profile row and in the shop, 30px on the board. */
+      #profile-row-glyph,
+      #shop .shop-preview .avatar-glyph,
+      #leaderboard .avatar {
+        display: inline-flex;
+        flex: 0 0 auto;
+        align-items: center;
+        justify-content: center;
+        width: 44px;
+        height: 44px;
+      }
+      .avatar-glyph.framed {
+        font-size: 22px;
+      }
+      #leaderboard .avatar {
+        width: 30px;
+        height: 30px;
+      }
+      #leaderboard .avatar.framed {
+        font-size: 14px;
+      }
       #profile input[type='text'] {
         flex: 1;
         min-width: 0;
@@ -2170,6 +2205,14 @@
                 A back is what a face-down tile shows. It never looks like a face, so a
                 concealed tile is always just a concealed tile. Milestone levels keep their
                 rose back.
+              </p>
+              <fieldset>
+                <legend>Avatar frames</legend>
+                <ul id="shop-frames" class="shop-list"></ul>
+              </fieldset>
+              <p class="record-hint">
+                A frame sits around your avatar on the profile row and next to your name on the
+                weekly leaderboard.
               </p>
               <span id="shop-status" aria-live="polite"></span>
               <button id="shop-close" type="button">Done</button>

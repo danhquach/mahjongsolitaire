@@ -242,7 +242,16 @@ export function validateSubmission(payload) {
 const ORDER = 'ORDER BY s.score DESC, s.updated_at ASC, s.player_id ASC';
 
 const ENTRY_COLUMNS = `s.player_id AS playerId, p.name AS name, p.avatar AS avatar,
+                       json_extract(p.looks, '$.frame') AS frame,
                        s.score AS score, s.runs AS runs, s.updated_at AS at`;
+
+/** The one cosmetic a board shows of another player (issue #229, decision
+ *  0041): their avatar frame id. It is their own record's opaque string, so it
+ *  goes out only if it is shaped like a cosmetic id (ui/src/profile.ts
+ *  `COSMETIC_ID`, same regex as worker/profile.mjs); anything else is the
+ *  default. The client resolves it through its frame table and never shows it. */
+const FRAME_ID = /^[a-z][a-z0-9-]{0,31}$/;
+const DEFAULT_FRAME = 'lantern';
 
 function toEntry(row, rank) {
   return {
@@ -250,6 +259,7 @@ function toEntry(row, rank) {
     playerId: row.playerId,
     name: row.name,
     avatar: row.avatar,
+    frame: typeof row.frame === 'string' && FRAME_ID.test(row.frame) ? row.frame : DEFAULT_FRAME,
     score: row.score,
     runs: row.runs,
   };

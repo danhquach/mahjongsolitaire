@@ -146,6 +146,8 @@ import { GLYPH_SETS, SHOP_ITEMS, affordability, glyphSetFor, purchase, trophyBal
 import type { GlyphSet } from './shop.js';
 import { GlyphSetLoader } from './glyphs.js';
 import { BackLoader } from './backs.js';
+import { DEFAULT_FRAME, FRAMES, applyFrame, frameFor } from './frames.js';
+import type { AvatarFrame } from './frames.js';
 import type { BackInUse, GlyphSetInUse } from './render.js';
 import {
   closeAccount,
@@ -345,6 +347,7 @@ async function start(): Promise<void> {
   const shopGlyphList = el<HTMLElement>('shop-glyphs');
   const shopFeltList = el<HTMLElement>('shop-felts');
   const shopBackList = el<HTMLElement>('shop-backs');
+  const shopFrameList = el<HTMLElement>('shop-frames');
   const shopStatus = el<HTMLElement>('shop-status');
   const shopClose = el<HTMLButtonElement>('shop-close');
   const feedbackPanel = el<HTMLDivElement>('feedback');
@@ -1424,6 +1427,7 @@ async function start(): Promise<void> {
   /** The Settings row that opens the profile shows who the player is. */
   function syncProfileRow(): void {
     profileRowGlyph.textContent = avatarGlyph(profile.value.avatar);
+    applyFrame(profileRowGlyph, record.value.looks.frame);
     profileRowName.textContent = profile.value.name;
     syncHudIdentity();
   }
@@ -2014,6 +2018,7 @@ async function start(): Promise<void> {
     // balance may have moved, so a Buy waiting for its Confirm is withdrawn.
     void applyGlyphSet();
     applyPalette();
+    syncProfileRow();
     shopArmed = null;
     if (shopVisible) renderShop();
   }
@@ -2234,8 +2239,12 @@ async function start(): Promise<void> {
       rank.className = 'rank';
       rank.textContent = `${entry.rank}.`;
       const glyph = document.createElement('span');
+      glyph.className = 'avatar';
       glyph.setAttribute('aria-hidden', 'true');
       glyph.textContent = avatarGlyph(entry.avatar);
+      // Another player's frame id (issue #229): resolved through the frame
+      // table inside applyFrame, so an unknown or hostile string draws nothing.
+      applyFrame(glyph, entry.frame);
       const who = document.createElement('span');
       who.className = 'who';
       who.textContent = entry.name;
@@ -2736,10 +2745,41 @@ async function start(): Promise<void> {
     apply: () => void applyBack(),
   }));
 
+  /** A frame's preview is the player's own avatar wearing it. */
+  function framePreview(frame: AvatarFrame): (into: HTMLElement) => void {
+    return (into) => {
+      const badge = document.createElement('span');
+      badge.className = 'avatar-glyph';
+      badge.textContent = avatarGlyph(profile.value.avatar);
+      applyFrame(badge, frame.id);
+      into.append(badge);
+    };
+  }
+
+  /** Every frame row, the free default first (issue #229 slice 3). */
+  const SHOP_FRAME_ROWS: readonly ShopRow[] = [
+    { frame: FRAMES[DEFAULT_FRAME]!, price: 0, description: 'Your avatar on its own.' },
+    ...SHOP_ITEMS.filter((item) => item.kind === 'frame').map((item) => ({
+      frame: frameFor(item.id),
+      price: item.price,
+      description: item.description,
+    })),
+  ].map(({ frame, price, description }) => ({
+    kind: 'frame',
+    id: frame.id,
+    label: frame.label,
+    spoken: `${frame.label} avatar frame`,
+    price,
+    description,
+    preview: framePreview(frame),
+    apply: syncProfileRow,
+  }));
+
   const SHOP_LISTS: readonly { list: HTMLElement; rows: readonly ShopRow[]; inUse: () => string }[] = [
     { list: shopGlyphList, rows: SHOP_GLYPH_ROWS, inUse: () => glyphSetFor(record.value.looks.glyphs).id },
     { list: shopFeltList, rows: SHOP_FELT_ROWS, inUse: () => feltFor(record.value.looks.felt).id },
     { list: shopBackList, rows: SHOP_BACK_ROWS, inUse: () => backFor(record.value.looks.back).id },
+    { list: shopFrameList, rows: SHOP_FRAME_ROWS, inUse: () => frameFor(record.value.looks.frame).id },
   ];
 
   function renderShop(): void {
