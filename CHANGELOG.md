@@ -6,7 +6,13 @@ commit and build time of the running bundle.
 
 ## 2026-09-05
 
-- Trophies now buy something: a Shop row in Settings sells two glyph sets,
+- The Shop moved out of Settings and onto the board: it is the bag in the
+  button rail now, beside the trophy and the gear, one tap from the tiles
+  instead of two screens down. The shop itself is a grid of cards that lead
+  with the look they sell — the tile faces, the felt, the back, the frame —
+  and the trophies you have left to spend stay pinned at the top however far
+  you scroll (#239).
+- Trophies now buy something: the Shop sells two glyph sets,
   Calligraphy (25 trophies) and Fantasy (60), that redraw every tile face in
   a new style without changing the pips, numerals or colours. Buying takes a
   Buy tap and a Confirm tap; a set you cannot afford yet shows how many
