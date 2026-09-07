@@ -4,6 +4,16 @@ Playtest builds deploy from `main` on every merge; entries are grouped by
 deploy day. The in-game Settings screen shows this file with the exact
 commit and build time of the running bundle.
 
+## 2026-09-07
+
+- New game and Restart ask before they throw a game away. Both buttons sit in
+  the header next to the boosters, and a mis-tap while reaching for Hint or
+  Undo used to re-deal the board on the spot — score, clock and parked tiles
+  gone, with the save overwritten and nothing to undo. A board you have played
+  on now answers with a confirmation naming the level and the score it is
+  about to cost, with Cancel under your finger; an untouched deal, or a level
+  that is already over, still deals on the first tap (#248).
+
 ## 2026-09-05
 
 - The Shop moved out of Settings and onto the board: it is the bag in the
