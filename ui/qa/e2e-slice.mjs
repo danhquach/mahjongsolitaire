@@ -143,8 +143,20 @@ async function restoreStores(page, entries) {
   await page.reload();
   await page.waitForFunction(() => window.__slice !== undefined);
   // A reload resumes the save, which is mid-board; Restart re-deals the level.
-  await page.click('#btn-restart');
+  await deal(page, 'btn-restart');
   await page.waitForFunction(() => !window.__slice.dealing);
+}
+
+/**
+ * Click a header deal button (issue #248): a board that has been played on
+ * now answers with a confirmation, and the deal only happens on the second
+ * tap. An untouched board deals on the first, so the dialog is confirmed only
+ * when it is actually up.
+ */
+async function deal(page, id) {
+  await page.click(`#${id}`);
+  if (await page.evaluate(() => window.__slice.dealConfirm() !== null))
+    await page.click('#confirm-go');
 }
 
 /** Deals one deadlock hunt will play through before giving up (see huntDeadlock). */
@@ -202,6 +214,8 @@ async function huntDeadlock(maxDeals) {
   };
   for (let deal = 0; deal < maxDeals; deal++) {
     document.getElementById('btn-new').click();
+    // Issue #248: a played-on board asks before it is thrown away.
+    if (slice.dealConfirm() !== null) document.getElementById('confirm-go').click();
     // Issue #99: New game rotates the layout, so the deal is async while the
     // file fetches; input is dropped until it lands, so wait it out.
     while (slice.dealing) await new Promise((r) => setTimeout(r, 10));
@@ -655,7 +669,7 @@ for (const vp of VIEWPORTS) {
     );
     check(rotatedActed, 'ROTATED FORGIVENESS', { want: probe.id, acted: rotatedActed });
     // A fresh deal: the probe parked a tile the sections below do not expect.
-    await page.click('#btn-restart');
+    await deal(page, 'btn-restart');
     await page.waitForFunction(() => !window.__slice.dealing);
 
     await page.setViewportSize({ width: vp.width, height: vp.height });
@@ -791,7 +805,7 @@ for (const vp of VIEWPORTS) {
     }
 
     // Back to a clean deal so the playthrough below starts where it expects.
-    await page.click('#btn-new');
+    await deal(page, 'btn-new');
     await page.waitForFunction(() => !window.__slice.dealing && !window.__slice.animating());
   }
 
@@ -841,7 +855,7 @@ for (const vp of VIEWPORTS) {
       failures++;
     }
     // A fresh deal: the forgiven tap parked a tile section 2b must not inherit.
-    await page.click('#btn-restart');
+    await deal(page, 'btn-restart');
     await page.waitForFunction(() => !window.__slice.dealing);
   }
 
@@ -904,7 +918,7 @@ for (const vp of VIEWPORTS) {
         layoutId: window.__slice.layoutId,
       }));
     const dealt = await state();
-    await page.click('#btn-new');
+    await deal(page, 'btn-new');
     await page.waitForFunction(() => !window.__slice.dealing);
     const rerolled = await state();
     check(rerolled.seed !== dealt.seed, 'New game re-rolls the seed (issue #94)', {
@@ -927,7 +941,7 @@ for (const vp of VIEWPORTS) {
       { was: dealt.layoutId, now: rerolled.layoutId },
     );
 
-    await page.click('#btn-restart');
+    await deal(page, 'btn-restart');
     await page.waitForFunction(() => !window.__slice.dealing);
     const restarted = await state();
     check(
@@ -1515,7 +1529,7 @@ for (const vp of VIEWPORTS) {
     // control, not localStorage + reload: the unload handler writes the save on
     // the way out, so a cleared slot would be refilled before the next boot.
     // Issue #99 makes the deal async (the rotated layout fetches), so wait.
-    await page.click('#btn-new');
+    await deal(page, 'btn-new');
     await page.waitForFunction(() => !window.__slice.dealing);
   }
 
@@ -1708,7 +1722,7 @@ for (const vp of VIEWPORTS) {
     console.log(
       `${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: one-way holder, loss, resume, restart`,
     );
-    await page.click('#btn-new');
+    await deal(page, 'btn-new');
     await page.waitForFunction(() => !window.__slice.dealing);
   }
 
@@ -2219,7 +2233,7 @@ for (const vp of VIEWPORTS) {
     );
     await page.reload();
     await page.waitForFunction(() => window.__slice !== undefined);
-    await page.click('#btn-new');
+    await deal(page, 'btn-new');
     // The deal is async when the ladder level's layout differs from the loaded
     // one (issue #79); input is dropped until it lands, so wait it out.
     await page.waitForFunction(() => !window.__slice.dealing);
@@ -2356,7 +2370,7 @@ for (const vp of VIEWPORTS) {
 
     // Finishing a level must leave nothing to resume into. Dealt fresh, because
     // the shuffle above invalidated this deal's witness.
-    await page.click('#btn-new');
+    await deal(page, 'btn-new');
     await page.waitForFunction(() => !window.__slice.dealing);
     const won = await page.evaluate(() => {
       const s = window.__slice;
@@ -2830,7 +2844,7 @@ for (const vp of VIEWPORTS) {
       setting: window.__slice.settings().showTutorial,
     }));
     check(!midLevel.visible && midLevel.setting === true, 'turning the toggle on arms the tutorial without opening it mid-level', midLevel);
-    await p2.click('#btn-new');
+    await deal(p2, 'btn-new');
     await p2.waitForFunction(() => !window.__slice.dealing);
     const replay = await p2.evaluate(() => window.__slice.tutorial());
     check(replay.visible && replay.step === 1, 'Settings → Show tutorial ON replays it from step 1 on the next deal', replay);

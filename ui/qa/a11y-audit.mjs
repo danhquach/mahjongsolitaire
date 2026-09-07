@@ -106,6 +106,19 @@ const check = (ok, msg, detail) => {
   return ok;
 };
 
+/**
+ * Re-deal through a header button, confirming if asked. Issue #248 puts a
+ * confirmation in front of New game and Restart whenever the board has been
+ * played on, so a section that only wants a clean board back has to answer it.
+ */
+async function dealNow(page, id) {
+  await page.evaluate((button) => {
+    document.getElementById(button).click();
+    if (window.__slice.dealConfirm() !== null) document.getElementById('confirm-go').click();
+  }, id);
+  await page.waitForFunction(() => !window.__slice.dealing);
+}
+
 const browser = await chromium.launch({ executablePath: CHROMIUM });
 
 for (const vp of VIEWPORTS) {
@@ -279,7 +292,7 @@ for (const vp of VIEWPORTS) {
     }
     // A fresh deal: the taps above parked tiles the sections below must not
     // inherit (and five parks would sit one short of the loss).
-    await page.evaluate(() => document.getElementById('btn-restart').click());
+    await dealNow(page, 'btn-restart');
   }
 
   // --- 3. Every action ≤ 2 taps from the board. ----------------------------
@@ -466,10 +479,7 @@ for (const vp of VIEWPORTS) {
     );
 
     // Leave the board as it was found.
-    await page.evaluate(() => document.getElementById('btn-new').click());
-    // Issue #99: New game rotates the layout, so the deal is async while the
-    // file fetches; input is dropped until it lands, so wait it out.
-    await page.waitForFunction(() => !window.__slice.dealing);
+    await dealNow(page, 'btn-new');
   }
 
   // --- 3c. The one-way holder's warning and its loss (issue #63). ----------
@@ -621,10 +631,131 @@ for (const vp of VIEWPORTS) {
 
     // Leave the board as it was found.
     await page.click('#overlay-restart');
+    await dealNow(page, 'btn-new');
+  }
+
+  // --- 3d. New game / Restart ask before throwing a game away (#248). ------
+  //         Both sit in the HUD beside the boosters, so a mis-reach used to
+  //         cost the whole board. A played-on board answers with the #201
+  //         alertdialog — no name to type, Cancel under focus — and an
+  //         untouched one still deals on the first tap.
+  {
+    const before = failures;
+    // Section 3c left a fresh deal on the table: nothing to lose, no dialog.
     await page.evaluate(() => document.getElementById('btn-new').click());
-    // Issue #99: New game rotates the layout, so the deal is async while the
-    // file fetches; input is dropped until it lands, so wait it out.
+    const untouched = await page.evaluate(() => window.__slice.dealConfirm());
+    check(untouched === null, 'an untouched deal re-deals on the first tap', { untouched });
     await page.waitForFunction(() => !window.__slice.dealing);
+
+    // One tap on a free, face-up tile is enough to have something to lose.
+    const played = await page.evaluate(() => {
+      const slice = window.__slice;
+      const tile = slice.game.board
+        .presentTiles()
+        .find((t) => slice.game.board.isFree(t.id) && !slice.game.isFaceHidden(t.id));
+      document.querySelector(`#a11y-layer [data-tile-id="${tile.id}"]`).click();
+      return { tilesLeft: slice.game.tilesLeft, undoDepth: slice.game.undoDepth };
+    });
+
+    await page.click('#btn-restart');
+    const open = await page.evaluate(() => {
+      const panel = document.getElementById('confirm');
+      return {
+        visible: panel.classList.contains('visible'),
+        role: panel.getAttribute('role'),
+        modal: panel.getAttribute('aria-modal'),
+        labelled: panel.getAttribute('aria-labelledby'),
+        described: panel.getAttribute('aria-describedby'),
+        title: document.getElementById('confirm-title').textContent,
+        text: document.getElementById('confirm-text').textContent,
+        goText: document.getElementById('confirm-go').textContent,
+        goDisabled: document.getElementById('confirm-go').disabled,
+        nameAsked: window.__slice.dealConfirm()?.nameAsked,
+        focus: document.activeElement?.id,
+        boardInert: document.getElementById('a11y-layer').hasAttribute('inert'),
+        announced: document.getElementById('a11y-status').textContent,
+        goH: Math.round(document.getElementById('confirm-go').getBoundingClientRect().height),
+        cancelH: Math.round(document.getElementById('confirm-cancel').getBoundingClientRect().height),
+      };
+    });
+    check(open.visible, 'Restart on a played-on board asks first', open);
+    check(
+      open.role === 'alertdialog' &&
+        open.modal === 'true' &&
+        open.labelled === 'confirm-title' &&
+        open.described === 'confirm-text',
+      'it is the same labelled, described alertdialog',
+      open,
+    );
+    check(
+      open.title === 'Restart this level?' && /cannot be undone\./.test(open.text),
+      'it names the action and says it cannot be undone',
+      open,
+    );
+    check(open.goText === 'Restart' && !open.goDisabled, 'the deal button is armed — a second tap is the step', open);
+    check(open.nameAsked === false, 'and no name is asked for: nothing is deleted', open);
+    check(open.focus === 'confirm-cancel' && open.boardInert, 'focus lands on Cancel and the board is inert', open);
+    check(open.announced.startsWith('Restart this level? '), 'opening announces the title and the warning', open);
+    check(open.goH >= MIN_TOUCH_TARGET && open.cancelH >= MIN_TOUCH_TARGET, 'both buttons are 48dp', open);
+
+    // Escape cancels: the board, its progress and its save are untouched, and
+    // focus goes back to the button — not into Settings, which never opened.
+    await page.keyboard.press('Escape');
+    const cancelled = await page.evaluate(() => ({
+      visible: document.getElementById('confirm').classList.contains('visible'),
+      settingsVisible: document.getElementById('settings').classList.contains('visible'),
+      focus: document.activeElement?.id,
+      boardInert: document.getElementById('a11y-layer').hasAttribute('inert'),
+      tilesLeft: window.__slice.game.tilesLeft,
+      undoDepth: window.__slice.game.undoDepth,
+      savedSeed: window.__slice.savedState()?.seed ?? null,
+      seed: window.__slice.game.level.seed,
+      savedHeld: (window.__slice.savedState()?.snapshot.holder ?? []).filter((id) => id !== null)
+        .length,
+    }));
+    check(!cancelled.visible && !cancelled.settingsVisible, 'Escape cancels without opening Settings behind it', cancelled);
+    check(cancelled.focus === 'btn-restart' && !cancelled.boardInert, 'focus returns to the button and the board is live', cancelled);
+    check(
+      cancelled.tilesLeft === played.tilesLeft && cancelled.undoDepth === played.undoDepth,
+      'the game it asked about is exactly as it was',
+      { was: played, now: cancelled },
+    );
+    check(
+      cancelled.savedSeed === cancelled.seed && cancelled.savedHeld === 1,
+      'and its save still holds this deal, parked tile and all',
+      cancelled,
+    );
+
+    // A backdrop tap is a cancel too, like every other dialog.
+    await page.click('#btn-new');
+    await page.evaluate(() => document.getElementById('confirm').click());
+    const backdrop = await page.evaluate(() => ({
+      visible: document.getElementById('confirm').classList.contains('visible'),
+      focus: document.activeElement?.id,
+      tilesLeft: window.__slice.game.tilesLeft,
+    }));
+    check(!backdrop.visible && backdrop.focus === 'btn-new', 'a backdrop tap cancels back to the button', backdrop);
+    check(backdrop.tilesLeft === played.tilesLeft, 'and still deals nothing', backdrop);
+
+    // Confirming deals, and hands the board back to the keyboard.
+    await page.click('#btn-new');
+    await page.click('#confirm-go');
+    await page.waitForFunction(() => !window.__slice.dealing);
+    const dealt = await page.evaluate(() => ({
+      visible: document.getElementById('confirm').classList.contains('visible'),
+      vacancies: window.__slice.holder().vacancies,
+      undoDepth: window.__slice.game.undoDepth,
+      focus: document.activeElement?.dataset?.tileId ?? document.activeElement?.id,
+      inLayer: document.activeElement?.closest('#a11y-layer') !== null,
+      boardInert: document.getElementById('a11y-layer').hasAttribute('inert'),
+    }));
+    check(
+      !dealt.visible && dealt.undoDepth === 0 && dealt.vacancies === 4,
+      'confirming deals a fresh board — the parked tile is gone with it',
+      dealt,
+    );
+    check(dealt.inLayer && !dealt.boardInert, 'and focus lands back on the board, not a button that is gone', dealt);
+    console.log(`${failures === before ? 'ok' : 'FAIL'} — ${vp.name}: New game / Restart confirmation`);
   }
 
   // --- 4. Keyboard-only play: traverse, match, hear the outcome. -----------

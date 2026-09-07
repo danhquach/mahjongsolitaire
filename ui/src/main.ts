@@ -142,6 +142,8 @@ import {
 import type { LookKind } from './profile.js';
 import { SaveStore, captureSave, reopen } from './save.js';
 import { confirmMatches, wipeDevice, wipeProgress } from './account.js';
+import { dealConfirmCopy, dealNeedsConfirm } from './deal-guard.js';
+import type { DealMode } from './deal-guard.js';
 import { GLYPH_SETS, SHOP_ITEMS, affordability, glyphSetFor, purchase, trophyBalance } from './shop.js';
 import type { GlyphSet } from './shop.js';
 import { GlyphSetLoader } from './glyphs.js';
@@ -222,6 +224,17 @@ function formatDateKey(key: string, style: 'short' | 'long'): string {
       ? { month: 'short', day: 'numeric', timeZone: 'UTC' }
       : { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' },
   ).format(at);
+}
+
+/** What the #confirm dialog (issue #201) is armed for: the two account
+ *  actions it was built for, and the two deal actions issue #248 put behind
+ *  it. `reroll` / `replay` are `startLevel`'s own names for its buttons. */
+type ConfirmAction = 'reset' | 'close' | DealMode;
+
+/** A deal action is the one that needs no typed name and no Settings behind
+ *  it — a re-deal is undone by playing again, not by a restore. */
+function isDealAction(action: ConfirmAction): action is DealMode {
+  return action === 'reroll' || action === 'replay';
 }
 
 function el<T extends Element>(id: string): T {
@@ -594,9 +607,11 @@ async function start(): Promise<void> {
   let dealing = false;
   let settingsVisible = false;
   /** The irreversible-action confirmation (issue #201), and which action it
-   *  is armed for. Only ever opened from Settings, which steps aside. */
+   *  is armed for. The two account actions are only ever opened from Settings,
+   *  which steps aside; the two deal actions (issue #248) come from the header
+   *  buttons, over the board, and ask for nothing but a second tap. */
   let confirmVisible = false;
-  let confirmAction: 'reset' | 'close' = 'reset';
+  let confirmAction: ConfirmAction = 'reset';
   let confirmBusy = false;
   let confirmOpener: HTMLElement = settingsButton;
   let changelogVisible = false;
@@ -3316,7 +3331,15 @@ async function start(): Promise<void> {
   /** The dialog's words for each action. Both say "cannot be undone" in so
    *  many words; the close text differs by whether there is a server-side
    *  account to delete at all. */
-  function confirmCopy(action: 'reset' | 'close'): { title: string; text: string; button: string } {
+  function confirmCopy(action: ConfirmAction): { title: string; text: string; button: string } {
+    // The deal wording lives with the gate that decides when it is shown
+    // (deal-guard.ts), so the two cannot drift apart.
+    if (isDealAction(action))
+      return dealConfirmCopy(action, {
+        level: progress.level,
+        score: game.score,
+        tilesLeft: game.tilesLeft,
+      });
     const synced = syncCredentials !== null;
     if (action === 'reset') {
       return {
@@ -3339,16 +3362,38 @@ async function start(): Promise<void> {
   }
 
   function renderConfirmControls(): void {
-    const armed = !confirmBusy && confirmMatches(confirmNameInput.value, profile.value.name);
+    // A deal action arms on open: the second tap *is* the deliberate step, and
+    // there is no name to type because nothing is deleted (issue #248).
+    const armed =
+      !confirmBusy &&
+      (isDealAction(confirmAction) || confirmMatches(confirmNameInput.value, profile.value.name));
     confirmGo.disabled = !armed;
     confirmCancel.disabled = confirmBusy;
     confirmNameInput.disabled = confirmBusy;
   }
 
-  function openConfirm(action: 'reset' | 'close', opener: HTMLElement): void {
+  function openConfirm(action: ConfirmAction, opener: HTMLElement): void {
     if (confirmVisible) return;
-    // Opened from inside Settings: that panel steps aside rather than stacking.
-    closeSettings();
+    const deal = isDealAction(action);
+    // An account action is opened from inside Settings: that panel steps aside
+    // rather than stacking. A deal action is opened from the header over a
+    // live board, so nothing may be up in front of it (issue #248) — the HUD
+    // is inert behind every panel, but the guard does not lean on that.
+    if (deal) {
+      if (
+        settingsVisible ||
+        overlayVisible ||
+        changelogVisible ||
+        profileVisible ||
+        shopVisible ||
+        feedbackVisible ||
+        welcomeVisible ||
+        tutorialVisible ||
+        dailyPanelVisible ||
+        leaderboardVisible
+      )
+        return;
+    } else closeSettings();
     confirmAction = action;
     confirmOpener = opener;
     const copy = confirmCopy(action);
@@ -3356,6 +3401,8 @@ async function start(): Promise<void> {
     confirmText.textContent = copy.text;
     confirmGo.textContent = copy.button;
     confirmNameLabel.textContent = `Type your name (${profile.value.name}) to confirm`;
+    confirmNameLabel.hidden = deal;
+    confirmNameInput.hidden = deal;
     confirmNameInput.value = '';
     confirmStatus.textContent = '';
     confirmBusy = false;
@@ -3363,17 +3410,28 @@ async function start(): Promise<void> {
     confirmVisible = true;
     confirmPanel.classList.add('visible');
     setBackgroundInert(true);
-    confirmNameInput.focus();
+    // Cancel takes focus on a deal action: the destructive button is one tab
+    // away, not under the finger that just mis-tapped.
+    if (deal) confirmCancel.focus();
+    else confirmNameInput.focus();
     announcer.say(`${copy.title} ${copy.text}`);
   }
 
-  /** Cancel: back into Settings, on the row that opened this. */
-  function closeConfirm(): void {
-    if (!confirmVisible || confirmBusy) return;
+  /** Take the panel down, leaving focus wherever the caller wants it. */
+  function hideConfirm(): void {
     confirmVisible = false;
     confirmPanel.classList.remove('visible');
     setBackgroundInert(false);
-    openSettings();
+  }
+
+  /** Cancel: back into Settings, on the row that opened this — or, for a deal
+   *  action (issue #248), straight back to the header button, board and save
+   *  untouched. */
+  function closeConfirm(): void {
+    if (!confirmVisible || confirmBusy) return;
+    const deal = isDealAction(confirmAction);
+    hideConfirm();
+    if (!deal) openSettings();
     confirmOpener.focus();
   }
 
@@ -3387,6 +3445,16 @@ async function start(): Promise<void> {
    */
   async function runConfirmedAction(): Promise<void> {
     if (confirmGo.disabled) return;
+    // A confirmed deal is the tap the player already asked for: take the
+    // dialog down and re-deal, then put focus back on the board rather than
+    // on a button that no longer exists (issue #248).
+    if (isDealAction(confirmAction)) {
+      const mode = confirmAction;
+      hideConfirm();
+      await startLevel(mode);
+      a11y.focusActive();
+      return;
+    }
     confirmBusy = true;
     renderConfirmControls();
     confirmStatus.textContent = confirmAction === 'reset' ? 'Resetting…' : 'Closing your account…';
@@ -3965,6 +4033,30 @@ async function start(): Promise<void> {
     startTutorialIfArmed();
   }
 
+  /**
+   * The header's New game / Restart tap (issue #248). Both buttons destroy a
+   * game in progress and overwrite its save on the spot, and both sit next to
+   * the boosters where a reach for Hint or Undo lands on them — so a board
+   * that has been played on asks first. An untouched deal, or one whose level
+   * is already over, re-deals on the first tap as it always did.
+   */
+  function requestDeal(mode: DealMode, opener: HTMLElement): void {
+    // Same gate the deal itself has: nothing is asked about a board that is
+    // already being replaced.
+    if (dealing) return;
+    const touched = dealNeedsConfirm({
+      playing: game.status() === 'playing',
+      tilesLeft: game.tilesLeft,
+      // The deal fills every slot in the layout, so this is `tilesLeft` at
+      // move zero — including for a board resumed from a save.
+      dealtTiles: layout.slots.length,
+      undoDepth: game.undoDepth,
+      shuffles: shuffleCount,
+    });
+    if (touched) openConfirm(mode, opener);
+    else void startLevel(mode);
+  }
+
   /** ", a milestone level" on a decade spike (issue #67) — the spoken half
    *  of the palette swap — and nothing otherwise. */
   function milestoneNote(): string {
@@ -4052,8 +4144,12 @@ async function start(): Promise<void> {
   boosterUi.shuffle.button.addEventListener('click', () => useBooster('shuffle'));
   overlayShuffle.addEventListener('click', () => useBooster('shuffle'));
   overlayUndo.addEventListener('click', () => useBooster('undo'));
-  el<HTMLButtonElement>('btn-new').addEventListener('click', () => void startLevel('reroll'));
-  el<HTMLButtonElement>('btn-restart').addEventListener('click', () => void startLevel('replay'));
+  const newGameButton = el<HTMLButtonElement>('btn-new');
+  const restartButton = el<HTMLButtonElement>('btn-restart');
+  // Both go through the issue #248 gate; the end-of-level dialog's own two
+  // buttons below do not — there is no game left for them to throw away.
+  newGameButton.addEventListener('click', () => requestDeal('reroll', newGameButton));
+  restartButton.addEventListener('click', () => requestDeal('replay', restartButton));
   // The dialog's primary is "Next level" after a win (the ladder's own deal)
   // and "New game" everywhere else (a re-roll, issue #94).
   overlayNew.addEventListener('click', () =>
@@ -4192,6 +4288,21 @@ async function start(): Promise<void> {
     },
     get dealing() {
       return dealing;
+    },
+    /** The confirmation in front of a deal button, null while down (#248 QA). */
+    dealConfirm(): {
+      action: ConfirmAction;
+      title: string;
+      text: string;
+      nameAsked: boolean;
+    } | null {
+      if (!confirmVisible) return null;
+      return {
+        action: confirmAction,
+        title: confirmTitle.textContent ?? '',
+        text: confirmText.textContent ?? '',
+        nameAsked: !confirmNameInput.hidden,
+      };
     },
     get layoutId() {
       return layout.id;
