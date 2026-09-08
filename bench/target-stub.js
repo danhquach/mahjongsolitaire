@@ -1,14 +1,16 @@
-// Stand-in bench target (issue #4).
+// Stand-in bench target (issue #4), now a test fixture.
 //
-// `/core` does not exist yet — this harness predates it (roadmap Phase 1 exit
-// gate). To validate the harness end-to-end on a real device today, this
-// module implements a workload with the same shape as the real one: a seeded
+// This harness predates `/core` (roadmap Phase 1 exit gate), so to validate it
+// end-to-end on a real device it needed a workload of its own: a seeded
 // reverse-construction generator plus a bounded-DFS + memo solver over a
 // 144-tile, 4-layer lattice (geometry borrowed from spike/tech-stack).
 //
 // It is NOT the real engine — no layout JSON, simplified lattice, no scoring.
-// Once `/core` ships its bench entry (see target.js for the contract), the
-// harness picks that up automatically and this file stops being loaded.
+// `/core` ships its bench entry now (see target.js for the contract), so the
+// harness picks that up and target.js's fallback to this module is unreachable
+// in a built tree. The file is still load-bearing: bench/test/harness.test.mjs
+// imports it directly as its deterministic workload, and CI runs those tests.
+// Do not delete it.
 
 const TILE_W = 54;
 const TILE_H = 68;

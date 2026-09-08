@@ -106,6 +106,7 @@ import type { Rect } from './geometry.js';
 import { hitTest } from './hit-test.js';
 import { HUD_PLACEMENTS, chooseHudPlacement } from './hud-fit.js';
 import type { HudCandidate, HudPlacement } from './hud-fit.js';
+import { PanelStack } from './panel.js';
 import { BoardRenderer } from './render.js';
 import { briefChangelog, versionLabel } from './changelog.js';
 import changelogMd from '../../CHANGELOG.md?raw';
@@ -292,7 +293,6 @@ async function start(): Promise<void> {
   const confirmGo = el<HTMLButtonElement>('confirm-go');
   const confirmCancel = el<HTMLButtonElement>('confirm-cancel');
   const changelogPanel = el<HTMLDivElement>('changelog');
-  const changelogCard = changelogPanel.querySelector<HTMLDivElement>('.card')!;
   const changelogTitle = el<HTMLHeadingElement>('changelog-title');
   const changelogBody = el<HTMLDivElement>('changelog-body');
   const changelogClose = el<HTMLButtonElement>('changelog-close');
@@ -554,13 +554,11 @@ async function start(): Promise<void> {
   /** Today's progress against today's three challenges (issue #183). Fed by
    *  play, not by a mode: there is nowhere else to play. */
   const dailyProgress = new DailyStore(storage);
-  let dailyPanelVisible = false;
 
   // Cosmetics (issue #229): the glyph set the record chose goes on the board
   // at boot, loading its bitmaps if it is a bought one. The default costs
   // nothing and the renderer already wears it, so this is a no-op then.
   const glyphLoader = new GlyphSetLoader();
-  let shopVisible = false;
   void applyGlyphSet();
 
   // Match / mismatch animation (issue #44). Reduced motion is the OS preference
@@ -605,24 +603,16 @@ async function start(): Promise<void> {
   /** A cross-layout level transition is in flight (issue #79): input on the
    *  outgoing board is dropped until the new deal is in. */
   let dealing = false;
-  let settingsVisible = false;
   /** The irreversible-action confirmation (issue #201), and which action it
    *  is armed for. The two account actions are only ever opened from Settings,
    *  which steps aside; the two deal actions (issue #248) come from the header
    *  buttons, over the board, and ask for nothing but a second tap. */
-  let confirmVisible = false;
   let confirmAction: ConfirmAction = 'reset';
   let confirmBusy = false;
   let confirmOpener: HTMLElement = settingsButton;
-  let changelogVisible = false;
-  let profileVisible = false;
-  let feedbackVisible = false;
   /** The success state's auto-close (issue #118); held so a Cancel-and-reopen
    *  inside that second cannot have a stale timer close the new dialog. */
   let feedbackCloseTimer: ReturnType<typeof setTimeout> | null = null;
-  let welcomeVisible = false;
-  /** The tutorial card (issue #59) is up over the board. */
-  let tutorialVisible = false;
   /** A tutorial that wanted to start while another panel (the welcome gate,
    *  the profile it may open) was up; it starts when that panel closes. */
   let tutorialPending = false;
@@ -1175,6 +1165,250 @@ async function start(): Promise<void> {
     }
   }
 
+  // --- the panels (issue #241) --------------------------------------------------
+  //
+  // One declaration per dialog; the contract they share — the visible class and
+  // flag, mutual exclusion, the background inert, focus in and back out, the
+  // card's scroll, backdrop dismissal, the Escape turn, the announcement —
+  // lives in panel.ts and is not restated here. What is left on each panel is
+  // only what is genuinely its own.
+  //
+  // Declared bottom of the stack first: that order *is* the Escape order,
+  // walked from the top, and this is the only place it is written down.
+  //
+  // The end-of-level dialog is not a panel (panel.ts says why); it reaches the
+  // stack as `baseHeld`, a hold on the background that blocks an open and
+  // outlives a panel's close.
+  const panels = new PanelStack({
+    setBackgroundInert,
+    baseHeld: () => overlayVisible,
+    say: (line) => announcer.say(line),
+  });
+
+  /** First launch only (issue #105): the player picks an identity before
+   *  playing. Required — no Escape, no backdrop dismiss — so it never re-opens
+   *  once answered, and there is no opener to hand focus back to. */
+  const welcomeDialog = panels.add({
+    name: 'welcome',
+    element: welcomePanel,
+    backdrop: false,
+    escape: null,
+    focusIn: () => el<HTMLButtonElement>('welcome-create').focus(),
+    opener: () => null,
+    announce: () => 'Welcome. Create a profile, or play as a guest.',
+  });
+
+  /**
+   * Settings screen (spec §7): one tap from the board to open, one tap to
+   * change anything — inside the "every action within 2 taps" budget. Each
+   * control writes through immediately (settings.ts persists per change), so
+   * there is no Save button to forget.
+   */
+  const settingsDialog = panels.add({
+    name: 'settings',
+    element: settingsPanel,
+    beforeOpen: () => syncSettingsControls(),
+    focusIn: () => settingsToggles[0]!.input.focus(),
+    opener: () => settingsButton,
+    announce: () => 'Settings.',
+  });
+
+  /** The player profile (issue #69). Two routes in — the Settings row and the
+   *  HUD's Level chip (issue #137) — so the opener is read per open. */
+  const profileDialog = panels.add({
+    name: 'profile',
+    element: profilePanel,
+    replaces: () => settingsDialog,
+    beforeOpen: () => {
+      // Every open starts with the recovery code masked again (issue #138).
+      syncCodeShown = false;
+      syncProfileControls();
+    },
+    focusIn: () => profileClose.focus(),
+    opener: () => profileOpener,
+    announce: () => 'Profile.',
+    beforeClose: () => {
+      // A name still sitting in the field commits on the way out: change
+      // events fire on blur, but Escape closes the screen without one.
+      const name = profile.setName(profileNameInput.value);
+      profileNameInput.value = name;
+      // Republished on every close, not only on a change: an earlier publish
+      // may have failed offline, and this is the cheap place to catch up.
+      void publishName(name);
+    },
+    // "Create profile" on the welcome gate opens this screen; a first
+    // install's tutorial (issue #59) waits behind it too.
+    afterClose: () => startPendingTutorial(),
+  });
+
+  /** The cosmetics shop (issue #229), a booster-rail action since #239. */
+  const shopDialog = panels.add({
+    name: 'shop',
+    element: shopPanel,
+    beforeOpen: () => {
+      shopArmed = null;
+      setShopStatus('');
+      renderShop();
+    },
+    // Done is the focus target like every other panel, but the card is taller
+    // than a phone: letting the focus scroll it would open the shop at its
+    // foot, the first row out of view. preventScroll leaves the card where
+    // the contract's own scroll reset put it — the top (issue #168).
+    focusIn: () => shopClose.focus({ preventScroll: true }),
+    // Back to the control that opened it — the rail's Shop button since issue
+    // #239, not the gear.
+    opener: () => shopButton,
+    announce: () => {
+      const balance = trophyBalance(record.value);
+      return `Shop. ${balance} ${balance === 1 ? 'trophy' : 'trophies'} to spend.`;
+    },
+    beforeClose: () => {
+      shopArmed = null;
+    },
+  });
+
+  /** Today's challenges, one tap from the HUD chip (issue #183). */
+  const dailyDialog = panels.add({
+    name: 'daily-panel',
+    element: dailyPanel,
+    beforeOpen: () => renderDailyPanel(),
+    focusIn: () => dailyPanelClose.focus(),
+    opener: () => dailyButton,
+    announce: () =>
+      `Daily challenges. ${dailyProgress.completedCount(dailyDateKey())} of ${DAILY_CHALLENGE_COUNT} complete.`,
+    afterClose: () => resetDailyShareButton(),
+  });
+
+  const changelogDialog = panels.add({
+    name: 'changelog',
+    element: changelogPanel,
+    replaces: () => settingsDialog,
+    // Focus goes to the heading, not the Done button at the end of the card
+    // (issue #168) — landing focus there dragged the scrollable card down to
+    // it, burying the newest release. preventScroll plus the contract's own
+    // scroll reset guarantee the top of the list is what's on screen, on
+    // every open including a reopen.
+    focusIn: () => changelogTitle.focus({ preventScroll: true }),
+    opener: () => settingsButton,
+    announce: () => 'What’s new.',
+  });
+
+  const feedbackDialog = panels.add({
+    name: 'feedback',
+    element: feedbackPanel,
+    replaces: () => settingsDialog,
+    beforeOpen: () => {
+      clearFeedbackCloseTimer();
+      resetFeedbackStatus();
+      updateFeedbackSendEnabled();
+    },
+    focusIn: () => feedbackSummaryInput.focus(),
+    opener: () => settingsButton,
+    announce: () => 'Send feedback.',
+    // The typed fields are deliberately kept: Cancel, Escape and a backdrop
+    // tap all leave whatever the player wrote for the rest of the session
+    // (issue #118); only a successful send clears them. The auto-close timer
+    // is dropped so a Cancel-and-reopen inside that second cannot have a
+    // stale timer close the new dialog.
+    beforeClose: () => clearFeedbackCloseTimer(),
+  });
+
+  /** The weekly board (issues #70, #176). The one panel that may open over
+   *  the end-of-level dialog, and it paints above it (issue #174). */
+  const leaderboardDialog = panels.add({
+    name: 'leaderboard',
+    element: leaderboardPanel,
+    overBase: true,
+    beforeOpen: () => {
+      rolloverRetries = 0;
+    },
+    focusIn: () => leaderboardClose.focus(),
+    opener: () => leaderboardOpener,
+    // No line on open: it announces itself when the board has loaded, which
+    // is a network round trip later (see loadBoard).
+    beforeClose: () => {
+      // Bumping the generation is what makes an in-flight response stale, so
+      // a close-then-reopen cannot render the old week over the new one.
+      loadGeneration += 1;
+      stopResetTicker();
+      boardResetsAt = null;
+      boardWeekStart = null;
+      rolloverRetries = 0;
+    },
+  });
+
+  /**
+   * The irreversible-action confirmation, for four actions (issues #201, #248).
+   *
+   * The two account actions are opened from a Settings row: Settings steps
+   * aside on the way in, and Cancel puts it back up with focus on that row.
+   * The two deal actions come from the header over a live board, so nothing
+   * may be in front of them and there is nothing to step aside or go back to —
+   * both hooks answer null, which also makes Settings a blocker rather than
+   * something this replaces.
+   */
+  const confirmDialog = panels.add({
+    name: 'confirm',
+    element: confirmPanel,
+    replaces: () => (isDealAction(confirmAction) ? null : settingsDialog),
+    returnsTo: () => (isDealAction(confirmAction) ? null : settingsDialog),
+    beforeOpen: () => {
+      const deal = isDealAction(confirmAction);
+      const copy = confirmCopy(confirmAction);
+      confirmTitle.textContent = copy.title;
+      confirmText.textContent = copy.text;
+      confirmGo.textContent = copy.button;
+      confirmNameLabel.textContent = `Type your name (${profile.value.name}) to confirm`;
+      // A deal deletes nothing, so it asks for no name (issue #248).
+      confirmNameLabel.hidden = deal;
+      confirmNameInput.hidden = deal;
+      confirmNameInput.value = '';
+      confirmStatus.textContent = '';
+      confirmBusy = false;
+      renderConfirmControls();
+    },
+    // Cancel takes focus on a deal action: the destructive button is one tab
+    // away, not under the finger that just mis-tapped.
+    focusIn: () => (isDealAction(confirmAction) ? confirmCancel.focus() : confirmNameInput.focus()),
+    opener: () => confirmOpener,
+    announce: () => {
+      const copy = confirmCopy(confirmAction);
+      return `${copy.title} ${copy.text}`;
+    },
+    // Nothing takes it down while the server call is in flight.
+    canClose: () => !confirmBusy,
+  });
+
+  /** The first-run tutorial's card (issue #59). Escape skips rather than
+   *  closes — a skipped tutorial is not re-offered, same as a finished one —
+   *  and focus goes back to the board's current tile: nothing opened this. */
+  const tutorialDialog = panels.add({
+    name: 'tutorial',
+    element: tutorialPanel,
+    backdrop: false,
+    escape: () => tutorial.skip(),
+    beforeOpen: () => tutorial.start(),
+    // The rings, tags and scrim are drawn once the card is up, and the step's
+    // own line is what the live region hears — so no `announce` here.
+    afterOpen: () => renderTutorialStep(),
+    // The card itself takes focus (not a button) so the dialog's name and
+    // description are read first; Tab reaches Skip and Next from there.
+    focusIn: () => tutorialCard.focus(),
+    opener: () => null,
+    // Highlight and scrim cleared, the board repainted without the hint pair,
+    // and focus handed back to the board's current tile.
+    afterClose: () => {
+      tutorialPanel.classList.remove('card-top', 'compact');
+      spotlightSvg.classList.remove('visible');
+      spotlightSvg.replaceChildren();
+      spotlightTiles = {};
+      spotlightHoles = [];
+      hintPair = [];
+      redraw();
+      a11y.focusActive();
+    },
+  });
+
   /** "+2 Hint, +1 Shuffle" — the non-zero parts of a grant, in rail order;
    *  "nothing (all full)" when every type was at the cap. */
   function describeGrant(got: Counts): string {
@@ -1187,7 +1421,9 @@ async function start(): Promise<void> {
     if (!overlayVisible) return false;
     overlayVisible = false;
     overlay.classList.remove('visible');
-    setBackgroundInert(false);
+    // Not a flat un-inert: the leaderboard opens over this dialog (issue
+    // #174) and the background stays inert for as long as it is up.
+    panels.settleInert();
     syncHolderWarning();
     return true;
   }
@@ -1358,45 +1594,6 @@ async function start(): Promise<void> {
     }
   }
 
-  /** The chip's tap (issue #183): today's challenges, not a board. Opens the
-   *  way every other dialog does — the `visible` class, the background inert,
-   *  focus in and back to the chip on the way out. */
-  function openDailyPanel(): void {
-    // The chip lives in the HUD, which goes inert behind any dialog — but the
-    // guard is cheap and does not rely on that staying true. Same list as
-    // openSettings, so the two read alike.
-    if (
-      dailyPanelVisible ||
-      settingsVisible ||
-      overlayVisible ||
-      changelogVisible ||
-      profileVisible ||
-      shopVisible ||
-      feedbackVisible ||
-      welcomeVisible ||
-      confirmVisible ||
-      tutorialVisible
-    )
-      return;
-    renderDailyPanel();
-    dailyPanelVisible = true;
-    dailyPanel.classList.add('visible');
-    setBackgroundInert(true);
-    dailyPanelClose.focus();
-    announcer.say(
-      `Daily challenges. ${dailyProgress.completedCount(dailyDateKey())} of ${DAILY_CHALLENGE_COUNT} complete.`,
-    );
-  }
-
-  function closeDailyPanel(): void {
-    if (!dailyPanelVisible) return;
-    dailyPanelVisible = false;
-    dailyPanel.classList.remove('visible');
-    setBackgroundInert(false);
-    dailyButton.focus();
-    resetDailyShareButton();
-  }
-
   /** What a completed challenge has to say, waiting for the next live-region
    *  write to carry it. Never spoken on its own from inside a tap: two writes
    *  in the same tick coalesce and the first is never heard (see finishTap),
@@ -1434,7 +1631,7 @@ async function start(): Promise<void> {
     pendingDailyPayout = [pendingDailyPayout, ...lines].filter((l) => l !== '').join(' ');
     syncBoosterButtons();
     syncDailyChip();
-    if (dailyPanelVisible) renderDailyPanel();
+    if (dailyDialog.visible) renderDailyPanel();
     // The record just moved; push it up if sync is on (issue #138).
     syncAfterWin();
   }
@@ -1531,36 +1728,6 @@ async function start(): Promise<void> {
     return best !== previous;
   }
 
-  function openSettings(): void {
-    if (
-      settingsVisible ||
-      overlayVisible ||
-      changelogVisible ||
-      profileVisible ||
-      shopVisible ||
-      feedbackVisible ||
-      welcomeVisible ||
-      confirmVisible ||
-      tutorialVisible ||
-      dailyPanelVisible
-    )
-      return;
-    syncSettingsControls();
-    settingsVisible = true;
-    settingsPanel.classList.add('visible');
-    setBackgroundInert(true);
-    settingsToggles[0]!.input.focus();
-    announcer.say('Settings.');
-  }
-
-  function closeSettings(): void {
-    if (!settingsVisible) return;
-    settingsVisible = false;
-    settingsPanel.classList.remove('visible');
-    setBackgroundInert(false);
-    settingsButton.focus();
-  }
-
   // --- first-run tutorial (issue #59) -------------------------------------------
 
   /** Both ends write the toggle OFF: a skipped tutorial is not re-offered on
@@ -1568,38 +1735,24 @@ async function start(): Promise<void> {
   const tutorial = new Tutorial((how) => {
     settings.set('showTutorial', false);
     syncSettingsControls();
-    closeTutorialCard();
+    tutorialDialog.close();
     announcer.say(how === 'done' ? 'Tutorial finished. The board is yours.' : 'Tutorial skipped. The board is yours.');
   });
 
   /**
-   * Open the card on step 1 over the dealt board. While another panel is up —
-   * the welcome gate on a fresh install, or the profile screen it opens — the
-   * start is deferred, and `startPendingTutorial` runs it as that panel closes.
+   * Open the card on step 1 over the dealt board. A card already up is a
+   * fresh deal restarting it, so it comes down first. While another panel or
+   * the end-of-level dialog holds the screen — the welcome gate on a fresh
+   * install, or the profile screen it opens — the panel refuses and the start
+   * is deferred; `startPendingTutorial` runs it as that panel closes.
    */
   function startTutorial(): void {
-    if (
-      welcomeVisible ||
-      profileVisible ||
-      settingsVisible ||
-      changelogVisible ||
-      feedbackVisible ||
-      confirmVisible ||
-      leaderboardVisible ||
-      overlayVisible
-    ) {
+    if (tutorialDialog.visible) tutorialDialog.close();
+    if (!tutorialDialog.open()) {
       tutorialPending = true;
       return;
     }
     tutorialPending = false;
-    tutorial.start();
-    tutorialVisible = true;
-    tutorialPanel.classList.add('visible');
-    setBackgroundInert(true);
-    renderTutorialStep();
-    // The card itself takes focus (not a button) so the dialog's name and
-    // description are read first; Tab reaches Skip and Next from there.
-    tutorialCard.focus();
   }
 
   function startPendingTutorial(): void {
@@ -1677,7 +1830,7 @@ async function start(): Promise<void> {
    */
   function layoutSpotlight(): void {
     const step = tutorial.step;
-    if (step === null || !tutorialVisible) return;
+    if (step === null || !tutorialDialog.visible) return;
     const holes: Hole[] = [];
     const pageRect = (elm: HTMLElement | null): Hole | null => {
       if (!elm) return null;
@@ -1792,22 +1945,6 @@ async function start(): Promise<void> {
     announcer.say(`Tutorial, step ${n} of ${tutorial.stepCount}. ${step.title}. ${step.body}${where}`);
   }
 
-  /** Take the card down and hand the board back: highlight and scrim cleared,
-   *  background live again, focus on the board's current tile. */
-  function closeTutorialCard(): void {
-    if (!tutorialVisible) return;
-    tutorialVisible = false;
-    tutorialPanel.classList.remove('visible', 'card-top', 'compact');
-    spotlightSvg.classList.remove('visible');
-    spotlightSvg.replaceChildren();
-    spotlightTiles = {};
-    spotlightHoles = [];
-    hintPair = [];
-    redraw();
-    setBackgroundInert(false);
-    a11y.focusActive();
-  }
-
   function wireTutorial(): void {
     tutorialNext.addEventListener('click', () => {
       tutorial.next();
@@ -1840,31 +1977,6 @@ async function start(): Promise<void> {
       heading.textContent = block.text;
       changelogBody.append(heading);
     }
-  }
-
-  function openChangelog(): void {
-    if (changelogVisible) return;
-    // Opened from inside Settings: that panel steps aside rather than stacking.
-    closeSettings();
-    changelogVisible = true;
-    changelogPanel.classList.add('visible');
-    setBackgroundInert(true);
-    // Focus goes to the heading, not the Done button at the end of the card
-    // (issue #168) — landing focus there dragged the scrollable card down to
-    // it, burying the newest release. preventScroll plus an explicit
-    // scrollTop reset guarantee the top of the list is what's on screen,
-    // on every open including a reopen.
-    changelogCard.scrollTop = 0;
-    changelogTitle.focus({ preventScroll: true });
-    announcer.say('What’s new.');
-  }
-
-  function closeChangelog(): void {
-    if (!changelogVisible) return;
-    changelogVisible = false;
-    changelogPanel.classList.remove('visible');
-    setBackgroundInert(false);
-    settingsButton.focus();
   }
 
   // --- player profile (issue #69) ----------------------------------------------
@@ -1923,36 +2035,8 @@ async function start(): Promise<void> {
   let profileOpener: HTMLElement = settingsButton;
 
   function openProfile(opener: HTMLElement = settingsButton): void {
-    if (profileVisible) return;
     profileOpener = opener;
-    // Every open starts with the recovery code masked again (issue #138).
-    syncCodeShown = false;
-    // Opened from inside Settings: that panel steps aside rather than stacking.
-    closeSettings();
-    syncProfileControls();
-    profileVisible = true;
-    profilePanel.classList.add('visible');
-    setBackgroundInert(true);
-    profileClose.focus();
-    announcer.say('Profile.');
-  }
-
-  function closeProfile(): void {
-    if (!profileVisible) return;
-    // A name still sitting in the field commits on the way out: change events
-    // fire on blur, but Escape closes the screen without one.
-    const name = profile.setName(profileNameInput.value);
-    profileNameInput.value = name;
-    // Republished on every close, not only on a change: an earlier publish may
-    // have failed offline, and this is the cheap place to catch up.
-    void publishName(name);
-    profileVisible = false;
-    profilePanel.classList.remove('visible');
-    setBackgroundInert(false);
-    profileOpener.focus();
-    // "Create profile" on the welcome gate opens this screen; a first install's
-    // tutorial (issue #59) waits behind it too.
-    startPendingTutorial();
+    profileDialog.open();
   }
 
   // --- cloud sync (issue #138) -------------------------------------------------
@@ -2028,14 +2112,14 @@ async function start(): Promise<void> {
    *  rename made on this device (only a restore does, below). */
   function adoptRemoteRecord(remote: RemoteProfile): void {
     record.adopt(mergeRecords(record.value, remote.record));
-    if (profileVisible) syncProfileControls();
+    if (profileDialog.visible) syncProfileControls();
     // Another device may have bought or picked a look (issue #229). The
     // balance may have moved, so a Buy waiting for its Confirm is withdrawn.
     void applyGlyphSet();
     applyPalette();
     syncProfileRow();
     shopArmed = null;
-    if (shopVisible) renderShop();
+    if (shopDialog.visible) renderShop();
   }
 
   /** Push the record up after a win, if sync is on. Fire-and-forget by
@@ -2199,7 +2283,6 @@ async function start(): Promise<void> {
   /** A second consent, separate from sync: syncing gives the profile a home,
    *  this puts the player's name in front of strangers. Off by default. */
   let boardOptIn = readOptIn(storage);
-  let leaderboardVisible = false;
   /** Where focus returns to — the Settings route, or the win screen's own
    *  Leaderboard button. */
   let leaderboardOpener: HTMLElement = settingsButton;
@@ -2333,27 +2416,9 @@ async function start(): Promise<void> {
     return true;
   }
 
-  function closeLeaderboard(): void {
-    if (!leaderboardVisible) return;
-    leaderboardVisible = false;
-    loadGeneration += 1;
-    stopResetTicker();
-    boardResetsAt = null;
-    boardWeekStart = null;
-    rolloverRetries = 0;
-    leaderboardPanel.classList.remove('visible');
-    setBackgroundInert(overlayVisible);
-    leaderboardOpener.focus();
-  }
-
   async function openLeaderboard(opener: HTMLElement): Promise<void> {
-    if (leaderboardVisible) return;
     leaderboardOpener = opener;
-    leaderboardVisible = true;
-    rolloverRetries = 0;
-    leaderboardPanel.classList.add('visible');
-    setBackgroundInert(true);
-    leaderboardClose.focus();
+    if (!leaderboardDialog.open()) return;
     await loadBoard(true);
   }
 
@@ -2375,11 +2440,11 @@ async function start(): Promise<void> {
     // off still sees the top of the board, just not a rank of their own.
     const result = await fetchWeeklyBoard(syncCredentials);
     // Stale response: the panel was closed, or reloaded, while this was in
-    // flight. Checking the generation rather than only `leaderboardVisible`
+    // flight. Checking the generation rather than only the panel's `visible`
     // matters because close-then-reopen makes that flag true again — this
     // response would then render over the newer one and start a second ticker
     // whose handle immediately overwrites the live one.
-    if (!leaderboardVisible || generation !== loadGeneration) return;
+    if (!leaderboardDialog.visible || generation !== loadGeneration) return;
     if (!result.ok) {
       leaderboardStatus.textContent = BOARD_FAILURE_TEXT[result.reason];
       return;
@@ -2412,7 +2477,7 @@ async function start(): Promise<void> {
       `Weekly leaderboard. Resets in ${speakResetCountdown(boardResetsAt - Date.now())}.`,
     );
     resetTicker = setInterval(() => {
-      if (!leaderboardVisible || generation !== loadGeneration) {
+      if (!leaderboardDialog.visible || generation !== loadGeneration) {
         stopResetTicker();
         return;
       }
@@ -2447,7 +2512,7 @@ async function start(): Promise<void> {
     leaderboardResetLine.textContent = 'Resetting…';
     rolloverTimer = setTimeout(() => {
       rolloverTimer = null;
-      if (!leaderboardVisible) return;
+      if (!leaderboardDialog.visible) return;
       void loadBoard(false);
     }, ROLLOVER_RETRY_MS);
   }
@@ -2523,20 +2588,10 @@ async function start(): Promise<void> {
     void openLeaderboard(leaderboardButton);
   });
 
-  leaderboardClose.addEventListener('click', closeLeaderboard);
-  // Tapping the dimmed backdrop dismisses the board like every other dialog
-  // (issue #223) — the target check keeps taps on the card itself from
-  // closing it.
-  leaderboardPanel.addEventListener('click', (ev) => {
-    if (ev.target === leaderboardPanel) closeLeaderboard();
-  });
+  leaderboardClose.addEventListener('click', () => leaderboardDialog.close());
 
   dailyShareButton.addEventListener('click', () => void shareDaily());
-  dailyPanelClose.addEventListener('click', closeDailyPanel);
-  // Same backdrop dismissal as every other dialog (issue #225).
-  dailyPanel.addEventListener('click', (ev) => {
-    if (ev.target === dailyPanel) closeDailyPanel();
-  });
+  dailyPanelClose.addEventListener('click', () => dailyDialog.close());
 
   // --- cosmetics shop (issue #229, decision 0038) --------------------------------
   //
@@ -2733,7 +2788,7 @@ async function start(): Promise<void> {
       if (back.id !== 'lantern' && backLoader.peek(back.id) === undefined) {
         void backLoader.get(back.id).then(
           () => {
-            if (shopVisible) renderShop();
+            if (shopDialog.visible) renderShop();
           },
           () => setShopStatus(`Couldn't load the ${back.label} preview. Check your connection and try again.`),
         );
@@ -2916,7 +2971,7 @@ async function start(): Promise<void> {
     if (set.dir === null) return;
     void glyphLoader.get(set.dir).then(
       () => {
-        if (shopVisible) renderShop();
+        if (shopDialog.visible) renderShop();
       },
       () => setShopStatus(`Couldn't load the ${set.label} preview. Check your connection and try again.`),
     );
@@ -2948,58 +3003,8 @@ async function start(): Promise<void> {
     shopPanel.querySelector<HTMLButtonElement>(`[aria-label="Use the ${row.spoken}"]`)?.focus();
   }
 
-  function openShop(): void {
-    // The rail's Shop button goes inert behind any dialog, but the guard is
-    // cheap and does not rely on that staying true — the same list, and the
-    // same reasoning, as openSettings and openDailyPanel. Until issue #239 the
-    // shop was opened from inside Settings and stepped that panel aside
-    // instead; it is a HUD action now, so it guards like one.
-    if (
-      shopVisible ||
-      settingsVisible ||
-      overlayVisible ||
-      changelogVisible ||
-      profileVisible ||
-      feedbackVisible ||
-      welcomeVisible ||
-      confirmVisible ||
-      tutorialVisible ||
-      dailyPanelVisible
-    )
-      return;
-    shopArmed = null;
-    setShopStatus('');
-    renderShop();
-    shopVisible = true;
-    shopPanel.classList.add('visible');
-    setBackgroundInert(true);
-    // Done is the focus target like every other panel, but the card is taller
-    // than a phone: letting the focus scroll it would open the shop at its
-    // foot, the first row out of view. Same preventScroll + explicit reset as
-    // the changelog (issue #168).
-    shopClose.focus({ preventScroll: true });
-    shopPanel.querySelector('.card')?.scrollTo({ top: 0 });
-    const balance = trophyBalance(record.value);
-    announcer.say(`Shop. ${balance} ${balance === 1 ? 'trophy' : 'trophies'} to spend.`);
-  }
-
-  function closeShop(): void {
-    if (!shopVisible) return;
-    shopVisible = false;
-    shopArmed = null;
-    shopPanel.classList.remove('visible');
-    setBackgroundInert(false);
-    // Back to the control that opened it — the rail's Shop button since issue
-    // #239, not the gear.
-    shopButton.focus();
-  }
-
-  shopButton.addEventListener('click', () => openShop());
-  shopClose.addEventListener('click', closeShop);
-  // Same backdrop dismissal as every other dialog.
-  shopPanel.addEventListener('click', (ev) => {
-    if (ev.target === shopPanel) closeShop();
-  });
+  shopButton.addEventListener('click', () => shopDialog.open());
+  shopClose.addEventListener('click', () => shopDialog.close());
 
   // --- feedback form (issue #118) ----------------------------------------------
 
@@ -3216,32 +3221,6 @@ async function start(): Promise<void> {
     }
   }
 
-  function openFeedback(): void {
-    if (feedbackVisible) return;
-    clearFeedbackCloseTimer();
-    // Opened from inside Settings: that panel steps aside rather than stacking.
-    closeSettings();
-    resetFeedbackStatus();
-    updateFeedbackSendEnabled();
-    feedbackVisible = true;
-    feedbackPanel.classList.add('visible');
-    setBackgroundInert(true);
-    feedbackSummaryInput.focus();
-    announcer.say('Send feedback.');
-  }
-
-  /** Fields are deliberately left as they are on close — Cancel/Escape keeps
-   *  whatever the player typed for the rest of the session (issue #118); only
-   *  a successful send clears them. */
-  function closeFeedback(): void {
-    if (!feedbackVisible) return;
-    clearFeedbackCloseTimer();
-    feedbackVisible = false;
-    feedbackPanel.classList.remove('visible');
-    setBackgroundInert(false);
-    settingsButton.focus();
-  }
-
   /** POST to the Worker endpoint (worker/index.mjs); on failure — network
    *  error or non-2xx — offer the mailto fallback so the feedback is never
    *  lost, with the typed text kept in the fields either way. */
@@ -3275,7 +3254,7 @@ async function start(): Promise<void> {
       // perceivable rather than an instant swap back to Settings.
       feedbackCloseTimer = setTimeout(() => {
         feedbackCloseTimer = null;
-        closeFeedback();
+        feedbackDialog.close();
       }, 1000);
     } else {
       feedbackStatus.textContent = "Couldn't send, try again";
@@ -3300,8 +3279,8 @@ async function start(): Promise<void> {
   }
 
   function wireFeedback(): void {
-    feedbackButton.addEventListener('click', () => openFeedback());
-    feedbackCancel.addEventListener('click', () => closeFeedback());
+    feedbackButton.addEventListener('click', () => feedbackDialog.open());
+    feedbackCancel.addEventListener('click', () => feedbackDialog.close());
     feedbackSend.addEventListener('click', () => void submitFeedback());
     // Issue #135: the inbox address is filled from the one constant so the
     // markup never carries a second copy of it.
@@ -3319,11 +3298,6 @@ async function start(): Promise<void> {
     });
     feedbackSummaryInput.addEventListener('input', () => updateFeedbackSendEnabled());
     feedbackBodyInput.addEventListener('input', () => updateFeedbackSendEnabled());
-    // Tapping the dimmed backdrop dismisses the panel, same as Settings
-    // (issue #107) — text is kept, same as Cancel.
-    feedbackPanel.addEventListener('click', (ev) => {
-      if (ev.target === feedbackPanel) closeFeedback();
-    });
   }
 
   // --- reset progress / close account (issue #201) -------------------------------
@@ -3373,66 +3347,9 @@ async function start(): Promise<void> {
   }
 
   function openConfirm(action: ConfirmAction, opener: HTMLElement): void {
-    if (confirmVisible) return;
-    const deal = isDealAction(action);
-    // An account action is opened from inside Settings: that panel steps aside
-    // rather than stacking. A deal action is opened from the header over a
-    // live board, so nothing may be up in front of it (issue #248) — the HUD
-    // is inert behind every panel, but the guard does not lean on that.
-    if (deal) {
-      if (
-        settingsVisible ||
-        overlayVisible ||
-        changelogVisible ||
-        profileVisible ||
-        shopVisible ||
-        feedbackVisible ||
-        welcomeVisible ||
-        tutorialVisible ||
-        dailyPanelVisible ||
-        leaderboardVisible
-      )
-        return;
-    } else closeSettings();
     confirmAction = action;
     confirmOpener = opener;
-    const copy = confirmCopy(action);
-    confirmTitle.textContent = copy.title;
-    confirmText.textContent = copy.text;
-    confirmGo.textContent = copy.button;
-    confirmNameLabel.textContent = `Type your name (${profile.value.name}) to confirm`;
-    confirmNameLabel.hidden = deal;
-    confirmNameInput.hidden = deal;
-    confirmNameInput.value = '';
-    confirmStatus.textContent = '';
-    confirmBusy = false;
-    renderConfirmControls();
-    confirmVisible = true;
-    confirmPanel.classList.add('visible');
-    setBackgroundInert(true);
-    // Cancel takes focus on a deal action: the destructive button is one tab
-    // away, not under the finger that just mis-tapped.
-    if (deal) confirmCancel.focus();
-    else confirmNameInput.focus();
-    announcer.say(`${copy.title} ${copy.text}`);
-  }
-
-  /** Take the panel down, leaving focus wherever the caller wants it. */
-  function hideConfirm(): void {
-    confirmVisible = false;
-    confirmPanel.classList.remove('visible');
-    setBackgroundInert(false);
-  }
-
-  /** Cancel: back into Settings, on the row that opened this — or, for a deal
-   *  action (issue #248), straight back to the header button, board and save
-   *  untouched. */
-  function closeConfirm(): void {
-    if (!confirmVisible || confirmBusy) return;
-    const deal = isDealAction(confirmAction);
-    hideConfirm();
-    if (!deal) openSettings();
-    confirmOpener.focus();
+    confirmDialog.open();
   }
 
   /**
@@ -3450,7 +3367,7 @@ async function start(): Promise<void> {
     // on a button that no longer exists (issue #248).
     if (isDealAction(confirmAction)) {
       const mode = confirmAction;
-      hideConfirm();
+      confirmDialog.close({ returnFocus: false });
       await startLevel(mode);
       a11y.focusActive();
       return;
@@ -3490,42 +3407,21 @@ async function start(): Promise<void> {
       if (ev.key === 'Enter') void runConfirmedAction();
     });
     confirmGo.addEventListener('click', () => void runConfirmedAction());
-    confirmCancel.addEventListener('click', closeConfirm);
-    // A backdrop tap is a cancel, like every other dialog (issue #107).
-    confirmPanel.addEventListener('click', (ev) => {
-      if (ev.target === confirmPanel) closeConfirm();
-    });
+    confirmCancel.addEventListener('click', () => confirmDialog.close());
   }
 
   // --- welcome gate (issue #105) -------------------------------------------------
-
-  /** First launch only: the player picks an identity before playing. Required
-   *  — no Escape, no backdrop dismiss — so it never re-opens once answered. */
-  function openWelcome(): void {
-    welcomeVisible = true;
-    welcomePanel.classList.add('visible');
-    setBackgroundInert(true);
-    el<HTMLButtonElement>('welcome-create').focus();
-    announcer.say('Welcome. Create a profile, or play as a guest.');
-  }
-
-  function closeWelcome(): void {
-    if (!welcomeVisible) return;
-    welcomeVisible = false;
-    welcomePanel.classList.remove('visible');
-    setBackgroundInert(false);
-  }
 
   function wireWelcome(): void {
     el<HTMLButtonElement>('welcome-create').addEventListener('click', () => {
       profile.setChoice('named');
       syncHudIdentity();
-      closeWelcome();
+      welcomeDialog.close();
       openProfile();
     });
     el<HTMLButtonElement>('welcome-guest').addEventListener('click', () => {
       profile.setChoice('guest');
-      closeWelcome();
+      welcomeDialog.close();
       settingsButton.focus();
       announcer.say('Playing as guest.');
       // A first install's tutorial (issue #59) waited behind the gate.
@@ -3536,13 +3432,7 @@ async function start(): Promise<void> {
   function wireProfile(): void {
     buildAvatarGrid();
     profileButton.addEventListener('click', () => openProfile());
-    profileClose.addEventListener('click', () => closeProfile());
-    // Tapping the dimmed backdrop dismisses the profile like every other
-    // dialog (issue #225); closeProfile commits a pending name the same way
-    // Escape does, so nothing typed is lost.
-    profilePanel.addEventListener('click', (ev) => {
-      if (ev.target === profilePanel) closeProfile();
-    });
+    profileClose.addEventListener('click', () => profileDialog.close());
     profileNameInput.addEventListener('change', () => {
       const name = profile.setName(profileNameInput.value);
       // The field shows the name as stored — trimmed, clamped, never empty.
@@ -3580,44 +3470,23 @@ async function start(): Promise<void> {
       syncSizeSlider();
       applyTileSize();
     });
-    el<HTMLButtonElement>('settings-close').addEventListener('click', () => closeSettings());
-    // Tapping the dimmed backdrop dismisses the panel (issue #107). Settings
-    // persist per change, so dismissal loses nothing; the target check keeps
-    // taps on the card itself from closing it.
-    settingsPanel.addEventListener('click', (ev) => {
-      if (ev.target === settingsPanel) closeSettings();
-    });
-    settingsButton.addEventListener('click', () => openSettings());
-    // What's new should close on a backdrop tap same as every other dialog
-    // (issue #168) — the target check keeps taps on the card itself from
-    // closing it.
-    changelogPanel.addEventListener('click', (ev) => {
-      if (ev.target === changelogPanel) closeChangelog();
-    });
+    el<HTMLButtonElement>('settings-close').addEventListener('click', () => settingsDialog.close());
+    settingsButton.addEventListener('click', () => settingsDialog.open());
     // The HUD's Daily chip (issue #183) opens today's challenges in one tap.
-    dailyButton.addEventListener('click', () => openDailyPanel());
+    dailyButton.addEventListener('click', () => dailyDialog.open());
     // The Level chip opens the profile (issue #137); focus comes back to it.
     levelButton.addEventListener('click', () => openProfile(levelButton));
     // Escape is the expected way out of a modal, and the only one for a
     // keyboard player who tabbed past the Done button. Listened for on the
     // document, not the panel: clicking the card's own text blurs focus to
     // <body>, and a panel-scoped handler would never see the key.
+    //
+    // The stack answers with the topmost panel and no other — a flat list of
+    // ifs would close the one underneath in the same keystroke (issue #174) —
+    // in the order the panels were declared.
     document.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Escape') return;
-      // Topmost first, and only one: the leaderboard (issue #70) opens *over*
-      // the profile and over the win screen, so a flat list of ifs would
-      // close the panel underneath it in the same keystroke.
-      // The tutorial card (issue #59) is only ever up over the bare board —
-      // every other panel is guarded against it — so Escape there is Skip.
-      if (tutorialVisible) tutorial.skip();
-      else if (confirmVisible) closeConfirm();
-      else if (leaderboardVisible) closeLeaderboard();
-      else if (feedbackVisible) closeFeedback();
-      else if (changelogVisible) closeChangelog();
-      else if (dailyPanelVisible) closeDailyPanel();
-      else if (shopVisible) closeShop();
-      else if (profileVisible) closeProfile();
-      else if (settingsVisible) closeSettings();
+      panels.escape();
     });
   }
 
@@ -3762,7 +3631,7 @@ async function start(): Promise<void> {
       // Issue #183: a charged hint or shuffle starts the clean run again.
       // Undo does not — it undoes a hold, never a match.
       if (kind === 'hint' || kind === 'shuffle') dailyProgress.onAssist(dailyDateKey());
-      if (dailyPanelVisible) renderDailyPanel();
+      if (dailyDialog.visible) renderDailyPanel();
     }
     // A rescue attempt (Undo/Shuffle) that leaves the board still 'stuck'
     // (issue #122 follow-up): the "No moves left" dialog stays open, so the
@@ -4170,8 +4039,8 @@ async function start(): Promise<void> {
     __BUILD_TIME__,
   );
   fillChangelog();
-  el<HTMLButtonElement>('btn-version').addEventListener('click', () => openChangelog());
-  changelogClose.addEventListener('click', () => closeChangelog());
+  el<HTMLButtonElement>('btn-version').addEventListener('click', () => changelogDialog.open());
+  changelogClose.addEventListener('click', () => changelogDialog.close());
   syncSettingsControls();
 
   // A hidden page is the last moment the browser reliably gives us before the
@@ -4227,7 +4096,7 @@ async function start(): Promise<void> {
 
   // Never asked who's playing (issue #105): ask now, over the dealt board.
   // The stored answer — named or guest — means this shows at most once.
-  if (profile.value.choice === null) openWelcome();
+  if (profile.value.choice === null) welcomeDialog.open();
 
   // First-run tutorial (issue #59): on a fresh deal only — resuming a saved
   // game never starts it. Behind the welcome gate it waits until that closes.
@@ -4296,7 +4165,7 @@ async function start(): Promise<void> {
       text: string;
       nameAsked: boolean;
     } | null {
-      if (!confirmVisible) return null;
+      if (!confirmDialog.visible) return null;
       return {
         action: confirmAction,
         title: confirmTitle.textContent ?? '',
@@ -4366,7 +4235,7 @@ async function start(): Promise<void> {
     },
     /** Tutorial card state (issue #59 QA): shown, and which step (1-based). */
     tutorial(): { visible: boolean; step: number; count: number } {
-      return { visible: tutorialVisible, step: tutorial.stepIndex + 1, count: tutorial.stepCount };
+      return { visible: tutorialDialog.visible, step: tutorial.stepIndex + 1, count: tutorial.stepCount };
     },
     /** Spotlight state (issue #150 QA): the chosen tiles and the holes as
      *  drawn, page CSS px. */
