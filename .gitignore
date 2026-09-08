@@ -6,3 +6,9 @@
 .claude/agent-memory/
 **/.claude/agent-memory/
 .DS_Store
+
+# Generated design source sheets (docs/design/*.jpg). The cut-*.py scripts read
+# them and the cut slices under data/ are what ships; the sheets themselves are
+# large, regenerable, and their filenames carry the generator's own tokens. The
+# committed contact sheets are .png, so this rule touches nothing tracked.
+docs/design/*.jpg
