@@ -89,7 +89,7 @@ import type { Cue } from './feedback.js';
 import { faceStyle } from './faces.js';
 import { Game, nearPairs } from './game.js';
 import { HolderStrip } from './holder.js';
-import { BACKS, FELTS, PALETTES, backFor, cssColor, feltFor, feltTextureUrl, withFelt } from './depth.js';
+import { BACKS, PALETTES, backFor, cssColor, feltFor, feltTextureUrl, withFelt } from './depth.js';
 import type { BoardPalette, Felt, TileBack } from './depth.js';
 import { SIDE_DEPTH, TILE_H, TILE_W, tileRect } from './geometry.js';
 import type { Rect } from './geometry.js';
@@ -107,6 +107,7 @@ import { dailyShareCard, shareDailyCard } from './share.js';
 import { ProgressStore } from './progress.js';
 import {
   AVATARS,
+  DEFAULT_LOOKS,
   ProfileStore,
   RecordStore,
   avatarGlyph,
@@ -120,11 +121,11 @@ import { SaveStore, captureSave, reopen } from './save.js';
 import { confirmMatches, wipeDevice, wipeProgress } from './account.js';
 import { dealConfirmCopy, dealNeedsConfirm } from './deal-guard.js';
 import type { DealMode } from './deal-guard.js';
-import { GLYPH_SETS, SHOP_ITEMS, affordability, glyphSetFor, purchase, trophyBalance } from './shop.js';
+import { SHOP_ITEMS, affordability, glyphSetFor, purchase, trophyBalance } from './shop.js';
 import type { GlyphSet } from './shop.js';
 import { GlyphSetLoader } from './glyphs.js';
 import { BackLoader } from './backs.js';
-import { DEFAULT_FRAME, FRAMES, applyFrame, frameFor } from './frames.js';
+import { applyFrame, frameFor } from './frames.js';
 import type { AvatarFrame } from './frames.js';
 import type { BackInUse, GlyphSetInUse } from './render.js';
 import { closeAccount, resetAccount } from './sync.js';
@@ -1642,44 +1643,6 @@ async function start(): Promise<void> {
     };
   }
 
-  /** Every glyph-set row, the free default first. */
-  const SHOP_GLYPH_ROWS: readonly ShopRow[] = [
-    { set: GLYPH_SETS['lantern']!, price: 0, description: 'The drawn faces every board starts with.' },
-    ...SHOP_ITEMS.filter((item) => item.kind === 'glyphs').map((item) => ({
-      set: GLYPH_SETS[item.id]!,
-      price: item.price,
-      description: item.description,
-    })),
-  ].map(({ set, price, description }) => ({
-    kind: 'glyphs',
-    id: set.id,
-    label: set.label,
-    spoken: `${set.label} glyph set`,
-    price,
-    description,
-    preview: glyphPreview(set),
-    apply: () => void applyGlyphSet(),
-  }));
-
-  /** Every felt row, the free default first (issue #229 slice 2). */
-  const SHOP_FELT_ROWS: readonly ShopRow[] = [
-    { felt: FELTS['lantern']!, price: 0, description: 'The green table every board starts on.' },
-    ...SHOP_ITEMS.filter((item) => item.kind === 'felt').map((item) => ({
-      felt: feltFor(item.id),
-      price: item.price,
-      description: item.description,
-    })),
-  ].map(({ felt, price, description }) => ({
-    kind: 'felt',
-    id: felt.id,
-    label: felt.label,
-    spoken: `${felt.label} felt`,
-    price,
-    description,
-    preview: feltPreview(felt),
-    apply: applyPalette,
-  }));
-
   /** A back's preview is a face-down tile wearing it, baked by the board
    *  renderer — the plain-keyline stand-in until its bitmap is in. */
   function backPreview(back: TileBack): (into: HTMLElement) => void {
@@ -1699,25 +1662,6 @@ async function start(): Promise<void> {
     };
   }
 
-  /** Every back row, the free default first (issue #229 slice 2). */
-  const SHOP_BACK_ROWS: readonly ShopRow[] = [
-    { back: BACKS['lantern']!, price: 0, description: 'The plain jade back every board starts with.' },
-    ...SHOP_ITEMS.filter((item) => item.kind === 'back').map((item) => ({
-      back: backFor(item.id),
-      price: item.price,
-      description: item.description,
-    })),
-  ].map(({ back, price, description }) => ({
-    kind: 'back',
-    id: back.id,
-    label: back.label,
-    spoken: `${back.label} tile back`,
-    price,
-    description,
-    preview: backPreview(back),
-    apply: () => void applyBack(),
-  }));
-
   /** A frame's preview is the player's own avatar wearing it. */
   function framePreview(frame: AvatarFrame): (into: HTMLElement) => void {
     return (into) => {
@@ -1729,30 +1673,62 @@ async function start(): Promise<void> {
     };
   }
 
-  /** Every frame row, the free default first (issue #229 slice 3). */
-  const SHOP_FRAME_ROWS: readonly ShopRow[] = [
-    { frame: FRAMES[DEFAULT_FRAME]!, price: 0, description: 'Your avatar on its own.' },
-    ...SHOP_ITEMS.filter((item) => item.kind === 'frame').map((item) => ({
-      frame: frameFor(item.id),
-      price: item.price,
-      description: item.description,
-    })),
-  ].map(({ frame, price, description }) => ({
-    kind: 'frame',
-    id: frame.id,
-    label: frame.label,
-    spoken: `${frame.label} avatar frame`,
-    price,
-    description,
-    preview: framePreview(frame),
-    apply: syncProfileRow,
-  }));
+  /** One shop list: its `<ul>`, its rows with the free default first, and
+   *  which row the record has in use. Every kind builds the same way — the
+   *  default resolved through the same `lookFor` the board uses (so an id this
+   *  build does not ship lands on the default row too), then the kind's items
+   *  in SHOP_ITEMS order. Only the lookup, the spoken suffix, the default's
+   *  description, the preview and apply differ (issue #243). */
+  function shopList<Look extends { readonly id: string; readonly label: string }>(
+    list: HTMLElement,
+    kind: LookKind,
+    lookFor: (id: string) => Look,
+    freeDescription: string,
+    spokenKind: string,
+    preview: (look: Look) => (into: HTMLElement) => void,
+    apply: () => void,
+  ): { list: HTMLElement; rows: readonly ShopRow[]; inUse: () => string } {
+    const rows = [
+      { look: lookFor(DEFAULT_LOOKS[kind]), price: 0, description: freeDescription },
+      ...SHOP_ITEMS.filter((item) => item.kind === kind).map((item) => ({
+        look: lookFor(item.id),
+        price: item.price,
+        description: item.description,
+      })),
+    ].map(({ look, price, description }) => ({
+      kind,
+      id: look.id,
+      label: look.label,
+      spoken: `${look.label} ${spokenKind}`,
+      price,
+      description,
+      preview: preview(look),
+      apply,
+    }));
+    return { list, rows, inUse: () => lookFor(record.value.looks[kind]).id };
+  }
 
-  const SHOP_LISTS: readonly { list: HTMLElement; rows: readonly ShopRow[]; inUse: () => string }[] = [
-    { list: shopGlyphList, rows: SHOP_GLYPH_ROWS, inUse: () => glyphSetFor(record.value.looks.glyphs).id },
-    { list: shopFeltList, rows: SHOP_FELT_ROWS, inUse: () => feltFor(record.value.looks.felt).id },
-    { list: shopBackList, rows: SHOP_BACK_ROWS, inUse: () => backFor(record.value.looks.back).id },
-    { list: shopFrameList, rows: SHOP_FRAME_ROWS, inUse: () => frameFor(record.value.looks.frame).id },
+  const SHOP_LISTS = [
+    shopList(
+      shopGlyphList,
+      'glyphs',
+      glyphSetFor,
+      'The drawn faces every board starts with.',
+      'glyph set',
+      glyphPreview,
+      () => void applyGlyphSet(),
+    ),
+    shopList(shopFeltList, 'felt', feltFor, 'The green table every board starts on.', 'felt', feltPreview, applyPalette),
+    shopList(
+      shopBackList,
+      'back',
+      backFor,
+      'The plain jade back every board starts with.',
+      'tile back',
+      backPreview,
+      () => void applyBack(),
+    ),
+    shopList(shopFrameList, 'frame', frameFor, 'Your avatar on its own.', 'avatar frame', framePreview, syncProfileRow),
   ];
 
   function renderShop(): void {
