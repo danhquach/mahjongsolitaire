@@ -16,10 +16,10 @@
 // off by default, and turning it off withdraws every entry the player has
 // posted rather than merely hiding them.
 //
-// No DOM here (main.ts owns the panel), and `fetch` arrives as an argument,
-// so the failure paths are unit-testable. Failures are the same taxonomy sync
-// uses — a leaderboard that is unreachable must read to the player exactly
-// like a profile that is unreachable.
+// No DOM here (leaderboard-panel.ts owns the panel), and `fetch` arrives as
+// an argument, so the failure paths are unit-testable. Failures are the same
+// taxonomy sync uses — a leaderboard that is unreachable must read to the
+// player exactly like a profile that is unreachable.
 
 import { apiRequest, defaultFetch } from './sync.js';
 import type { SyncCredentials, SyncDeps, SyncResult } from './sync.js';
