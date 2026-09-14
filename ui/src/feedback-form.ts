@@ -3,9 +3,9 @@
 // `mailto:` fallback so a submission is never lost if the endpoint is down.
 //
 // Pure helpers only — no DOM here, so the payload shape, the email text, and
-// the mailto fallback are all unit-testable without a browser (main.ts owns
-// the dialog wiring). Not to be confused with feedback.ts, which is the
-// audio/haptics cue player.
+// the mailto fallback are all unit-testable without a browser
+// (feedback-panel.ts owns the dialog wiring). Not to be confused with
+// feedback.ts, which is the audio/haptics cue player.
 //
 // Issue #130 adds optional attachments: up to three screenshots or a short
 // recording, base64-encoded into the same JSON payload (the Worker forwards

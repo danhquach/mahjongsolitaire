@@ -15,7 +15,7 @@
 // covered end-to-end in a browser by ui/qa/a11y-audit.mjs.
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { test } from 'node:test';
 import { Panel, PanelStack } from '../src/panel.js';
 import type { PanelSpec } from '../src/panel.js';
@@ -457,14 +457,20 @@ test('a second open, or a close of something already down, changes nothing', () 
   assert.equal(settings.panel.close(), false);
 });
 
-// --- and the panels main.ts actually declares -----------------------------------
+// --- and the panels the app actually declares -----------------------------------
 //
-// The contract above is only worth as much as the set of panels that adopt it,
-// and that set lives in main.ts. These two read the source: they are what would
-// have caught issue #239's dropped guard, and what stops a tenth dialog from
-// quietly shipping its own hand-written copy of the contract.
+// The contract above is only worth as much as the set of panels that adopt it.
+// That set was declared in main.ts alone until issue #244 started moving each
+// feature's wiring — its Panel declaration included — into the feature's own
+// module, so these read every source file under src/. They are what would have
+// caught issue #239's dropped guard, and what stops a tenth dialog from quietly
+// shipping its own hand-written copy of the contract.
 
-const main = readFileSync(new URL('../../src/main.ts', import.meta.url), 'utf8');
+const srcDir = new URL('../../src/', import.meta.url);
+const sources = readdirSync(srcDir)
+  .filter((name) => name.endsWith('.ts'))
+  .map((name) => readFileSync(new URL(name, srcDir), 'utf8'))
+  .join('\n');
 
 /** The dialogs main.ts is not asked to make panels of, and why. */
 const NOT_PANELS: Readonly<Record<string, string>> = {
@@ -490,7 +496,7 @@ test('every modal in the page is a registered panel, or is named as not one', ()
   for (const id of ids) {
     if (id in NOT_PANELS) continue;
     assert.ok(
-      new RegExp(`name:\\s*'${id}'`).test(main),
+      new RegExp(`name:\\s*'${id}'`).test(sources),
       `#${id} is not registered with the panel stack, and is not named in NOT_PANELS`,
     );
   }
@@ -518,7 +524,7 @@ test('no panel opener carries a hand-written list of the other panels', () => {
   // — the end-of-level dialog is not a panel (see NOT_PANELS).
   for (const flag of RETIRED_FLAGS) {
     assert.ok(
-      !new RegExp(`\\b${flag}\\b`).test(main),
+      !new RegExp(`\\b${flag}\\b`).test(sources),
       `${flag} is back: that panel's state belongs to its Panel, not to a loose boolean`,
     );
   }
