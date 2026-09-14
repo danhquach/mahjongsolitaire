@@ -8,9 +8,9 @@
 // one-time recovery code; from then on each sync pushes the local record up
 // and merges the server's back down.
 //
-// No DOM here (main.ts owns the panel), and `fetch` and the clock arrive as
-// arguments, so every path — including the failure paths, which are most of
-// them — is unit-testable.
+// No DOM here (cloud-sync.ts owns the section), and `fetch` and the clock
+// arrive as arguments, so every path — including the failure paths, which are
+// most of them — is unit-testable.
 //
 // What is stored on the device: the recovery code. It is the only credential,
 // so treat it like a session token — it is never logged, and the only place
