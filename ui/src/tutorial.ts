@@ -1,7 +1,7 @@
 // First-run tutorial (issue #59): six short steps over the dealt board, with
 // Next / Skip on every one. This is the step machine only — pure, no DOM — so
-// the flow (advance, skip, end) can be unit-tested; main.ts owns the card,
-// the announcements and the step-3 pair highlight.
+// the flow (advance, skip, end) can be unit-tested; tutorial-panel.ts owns
+// the card, the announcements and the step-3 pair highlight.
 //
 // The tutorial never gates play: it explains, then hands the board back. The
 // player is never required to perform the demonstrated match to move on, and

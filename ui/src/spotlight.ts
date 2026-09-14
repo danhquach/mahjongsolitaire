@@ -2,7 +2,8 @@
 // everything but the step's *actor* sits behind a dark scrim, and the actor
 // is cut out at full brightness with a ring around it. This module is the
 // geometry only — which tiles to point at, where the holes and tags go, the
-// scrim's path — so all of it is unit-testable; main.ts owns the DOM.
+// scrim's path — so all of it is unit-testable; tutorial-panel.ts owns the
+// DOM.
 //
 // Rules (PM-reviewed prototype, 2026-09-02):
 //   * a spotlighted tile must be *fully visible*: nothing on a higher layer
