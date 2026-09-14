@@ -118,7 +118,7 @@ export function particleFrame(p: Particle, tMs: number): ParticleFrame {
 // lanterns rising from the felt, a light confetti fall, and the dialog's own
 // score counting up. All four are driven from here; effects.ts and win-fx.ts
 // only own the display objects the curves below are painted onto. The dialog
-// itself is never delayed by *these* — main.ts's own timing (WIN_DIALOG_DELAY_MS)
+// itself is never delayed by *these* — celebrations.ts's own timing (WIN_DIALOG_DELAY_MS)
 // decides when it appears, and reduced motion cancels all four in favour of a
 // plain fade with the final score shown at once.
 
@@ -133,11 +133,11 @@ function lcg(seed: number): () => number {
   };
 }
 
-/** Delay before the win dialog appears (main.ts's `showStatus`): long enough
- *  for the cascade/lanterns/confetti to read as the reward, short enough that
- *  the dialog and its buttons are live well within the 1s the AC gives a
- *  player who wants straight out. Zero under reduced motion — nothing to wait
- *  for. */
+/** Delay before the win dialog appears (celebrations.ts's
+ *  `presentWinCelebration`): long enough for the cascade/lanterns/confetti to
+ *  read as the reward, short enough that the dialog and its buttons are live
+ *  well within the 1s the AC gives a player who wants straight out. Zero under
+ *  reduced motion — nothing to wait for. */
 export const WIN_DIALOG_DELAY_MS = 600;
 export function scheduleDialogDelay(reduced: boolean): number {
   return reduced ? 0 : WIN_DIALOG_DELAY_MS;
@@ -154,8 +154,8 @@ export function scoreCountUp(tMs: number, final: number): number {
 }
 
 /** Tile cascade: remaining board tiles lift and sweep off, column by column.
- *  `column` is any non-negative number that orders tiles left to right (main.ts
- *  passes the tile's own slot.x) — the stagger is proportional to it, so the
+ *  `column` is any non-negative number that orders tiles left to right
+ *  (celebrations.ts passes the tile's own slot.x) — the stagger is proportional to it, so the
  *  wave reads the same whether columns are packed or sparse. */
 export const CASCADE_TILE_MS = 700;
 export const CASCADE_COLUMN_STAGGER_MS = 40;
@@ -285,7 +285,7 @@ export function confettiFrame(spec: ConfettiSpec, tMs: number): ConfettiFrame {
 // over the board while whatever tiles are left slump and lose their colour,
 // and only then does the dialog appear. Every curve below is driven from a
 // single clock started at the tap that fills the holder — main.ts fires the
-// slam flight and schedules the rest off the same constants, so they land in
+// slam flight and celebrations.ts schedules the rest off the same constants, so they land in
 // step without the timeline having to hand off between modules.
 
 /** The slam's own travel time — heavier and faster than a normal park
@@ -337,7 +337,7 @@ export const LOSS_WASH_MS = 700;
 export const LOSS_DIALOG_DELAY_MS = 1400;
 
 /** The loss dialog's timing, collapsed to "now" under reduced motion (or a
- *  reload of an already-lost save — see main.ts's `presentLossCelebration`):
+ *  reload of an already-lost save — see celebrations.ts's `presentLossCelebration`):
  *  nothing to wait for when the theatre itself is skipped. */
 export function lossSchedule(skipTheatre: boolean): { readonly dialogAtMs: number } {
   return { dialogAtMs: skipTheatre ? 0 : LOSS_DIALOG_DELAY_MS };
@@ -355,7 +355,7 @@ export interface SlumpSpec {
 }
 
 /** One tile's slump layout, seeded by its own id (any `lcg`-seedable number
- *  works — main.ts passes the TileId). */
+ *  works — celebrations.ts passes the TileId). */
 export function slumpLayout(seed: number): SlumpSpec {
   const random = lcg(seed);
   const sign = random() < 0.5 ? -1 : 1;

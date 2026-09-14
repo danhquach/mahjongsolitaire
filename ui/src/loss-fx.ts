@@ -8,7 +8,7 @@
 // awaited by the input path (already blocked once the holder is full — the
 // canvas ignores taps once `status()` leaves 'playing') and nothing touches
 // game state, only pictures and a CSS class. Reduced motion (read once per
-// call, from main.ts) skips the shake outright and collapses the wash to an
+// call, from celebrations.ts) skips the shake outright and collapses the wash to an
 // instant appearance rather than a fade — see `wash`'s `instant` option,
 // which a reload of an already-lost save also uses (spec §3.5: resuming into
 // a fight that already happened replays its result, not the fight).
