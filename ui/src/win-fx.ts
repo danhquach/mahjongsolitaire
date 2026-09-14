@@ -72,7 +72,7 @@ export class WinFx {
   /**
    * Lanterns rising from the felt and a light confetti fall behind the
    * dialog (issue #120). `tint` is a CSS colour drawn from the board's own
-   * palette (main.ts), so a Daily or milestone board's lanterns read
+   * palette (celebrations.ts), so a Daily or milestone board's lanterns read
    * differently from an ordinary level's. No-op under reduced motion.
    */
   celebrate(tint: string): void {
