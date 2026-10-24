@@ -6,6 +6,12 @@ commit and build time of the running bundle.
 
 ## 2026-10-24
 
+- Levels 61 to 150 stop flipping between the same two boards. Every level in
+  that stretch used to be Pyramid or Terrace, back and forth; it now rotates
+  through four layouts, adding Fortress and Bridge, and no two levels in a row
+  share a board anywhere on the ladder. Difficulty stays where it was. A run
+  started on one of the re-dealt levels before this update still resumes, but
+  will not count on the weekly board (#261).
 - Back, closing the tab or reloading in the middle of a level now asks
   first. One stray swipe-back used to leave the game on the spot; a board you
   have played on now gets the browser's "Leave site?" prompt, by the same rule
