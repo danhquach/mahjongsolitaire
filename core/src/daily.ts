@@ -81,3 +81,7 @@ export function dailyTrophies(streak: number): number {
   if (!Number.isInteger(streak) || streak < 1) throw new RangeError(`streak must be ≥ 1: ${streak}`);
   return 1 + STREAK_TIERS.filter((tier) => streak >= tier).length;
 }
+
+/** Extra trophies for completing all of a day's challenges (issue #268),
+ *  paid on top of the last one's own trophy. */
+export const DAILY_SWEEP_TROPHIES = 2;

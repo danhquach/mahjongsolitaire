@@ -2,7 +2,7 @@
 // change how the board is drawn and never what a face means.
 //
 // This is the one place prices live. The record (profile.ts) only knows what
-// is *owned*; the spendable balance is `trophies − Σ price(owned)`, computed
+// is *owned*; the spendable balance is `earned − Σ price(owned)`, computed
 // here, never stored — so the record's never-regress merge (sync.ts) cannot
 // undo a purchase or refund one, and two devices buying different items
 // offline reconcile to the exact sum. The consequence is that a price is part
@@ -11,7 +11,7 @@
 //
 // Prices are the issue's proposed numbers until the PM sets final ones.
 
-import { DEFAULT_GLYPH_SET } from './profile.js';
+import { DEFAULT_GLYPH_SET, earnedTrophies } from './profile.js';
 import type { LookKind, PlayerRecord, RecordStore } from './profile.js';
 import { BACKS, FELTS } from './depth.js';
 import { FRAMES } from './frames.js';
@@ -210,11 +210,12 @@ export function itemPrice(id: string): number {
   return SHOP_ITEMS.find((item) => item.id === id)?.price ?? 0;
 }
 
-/** Trophies left to spend: earned less the price of everything owned, floored
- *  at 0 so a re-priced record never reads as a debt. */
+/** Trophies left to spend: earned (Daily and ladder milestones, issue #268)
+ *  less the price of everything owned, floored at 0 so a re-priced record
+ *  never reads as a debt. */
 export function trophyBalance(record: PlayerRecord): number {
   const spent = record.owned.reduce((sum, id) => sum + itemPrice(id), 0);
-  return Math.max(0, record.trophies - spent);
+  return Math.max(0, earnedTrophies(record) - spent);
 }
 
 export type Affordability =

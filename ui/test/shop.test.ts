@@ -122,6 +122,9 @@ test('the balance is trophies less the price of everything owned, floored at zer
   // can go negative on paper and reads as 0, never as a debt.
   assert.equal(trophyBalance(withRecord({ trophies: 10, owned: ['future-item'] })), 10);
   assert.equal(trophyBalance(withRecord({ trophies: 10, owned: ['glyphs-fantasy'] })), 0);
+  // Cleared milestone levels are earned trophies too (issue #268): 4 + 5×2 = 14.
+  assert.equal(trophyBalance(withRecord({ trophies: 4, cleared: [10, 20, 21] })), 14);
+  assert.equal(trophyBalance(withRecord({ trophies: 20, cleared: [10], owned: ['glyphs-calligraphy'] })), 0);
   assert.equal(itemPrice('future-item'), 0);
   assert.equal(itemPrice('glyphs-fantasy'), 60);
 });

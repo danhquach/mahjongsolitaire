@@ -19,11 +19,13 @@
 
 import {
   DAILY_CHALLENGE_COUNT,
+  DAILY_SWEEP_TROPHIES,
   LADDER_LENGTH,
   dailyTrophies,
   daysBetween,
   isDateKey,
   isWeekKey,
+  ladderTrophies,
   weekStartKey,
 } from '@mahjongsolitaire/core';
 import { readRecord, writeRecord } from './storage.js';
@@ -187,7 +189,9 @@ export interface PlayerRecord {
    *  before today is alive, anything older is over (see `liveStreak`). */
   readonly lastDaily: string | null;
   /** Trophies collected from completed Daily challenges (issue #183: one per
-   *  completion, plus the streak tier bonus on the day's first). */
+   *  completion, plus the streak tier bonus on the day's first, plus the
+   *  sweep bonus on the day's last — issue #268). Ladder milestone trophies
+   *  are not in here: they are derived from `cleared` (see `earnedTrophies`). */
   readonly trophies: number;
   /** How many Daily challenges have been credited on `lastDaily` (issue #227).
    *  Paired with `lastDaily` the way `weekScore` is paired with `weekStart`:
@@ -394,6 +398,13 @@ export function clearedLevelCount(record: PlayerRecord): number {
   return record.cleared.length;
 }
 
+/** Every trophy the player has earned (issue #268): the Daily's counted
+ *  `trophies` plus the ladder milestones derived from `cleared`. What the
+ *  profile shows and the shop spends from. */
+export function earnedTrophies(record: PlayerRecord): number {
+  return record.trophies + ladderTrophies(record.cleared);
+}
+
 /** The streak as it stands on `today`: the stored count if the last Daily
  *  was today or yesterday, else 0 — a missed day ends it, and the profile
  *  must not keep showing a streak that is already over. */
@@ -410,6 +421,9 @@ export interface DailyCredit {
   readonly credited: boolean;
   readonly streak: number;
   readonly trophies: number;
+  /** This completion was the day's last, and `trophies` includes the sweep
+   *  bonus (issue #268). */
+  readonly sweep: boolean;
 }
 
 /** The player's own record, updated once per win (main.ts calls this inside
@@ -506,30 +520,34 @@ export class RecordStore {
    * A day serves three, and each one pays. The *day's* first completion is
    * what moves the streak and pays its escalating bonus (`dailyTrophies`);
    * the second and third pay a flat trophy, because the streak counts days,
-   * not challenges. A date *earlier* than the last credited one pays nothing
-   * at all — winding the device clock back must not re-earn a day.
+   * not challenges. The day's last (third) also pays the sweep bonus (issue
+   * #268). A date *earlier* than the last credited one pays nothing at all —
+   * winding the device clock back must not re-earn a day.
    *
    * The cap is enforced here, in the record, not in the local Daily-progress
    * store (issue #227): a fourth call for the same date — however it was
    * reached, including a cleared `mahjong.daily.v1` — pays nothing and writes
-   * nothing.
+   * nothing. The sweep rides on the same count, so it too pays once a day.
    */
   creditDailyChallenge(dateKey: string): DailyCredit {
     const { lastDaily, dailyStreak, dailyCount } = this.current;
     const gap = lastDaily === null ? null : daysBetween(lastDaily, dateKey);
-    if (gap !== null && gap < 0) return { credited: false, streak: dailyStreak, trophies: 0 };
+    if (gap !== null && gap < 0) return { credited: false, streak: dailyStreak, trophies: 0, sweep: false };
     if (gap === 0) {
       if (dailyCount >= DAILY_CHALLENGE_COUNT) {
-        return { credited: false, streak: dailyStreak, trophies: 0 };
+        return { credited: false, streak: dailyStreak, trophies: 0, sweep: false };
       }
-      // Another challenge off the same day's three: a trophy, no streak move.
+      // Another challenge off the same day's three: a trophy, no streak move,
+      // and the sweep bonus if it is the last of them.
+      const sweep = dailyCount + 1 === DAILY_CHALLENGE_COUNT;
+      const trophies = 1 + (sweep ? DAILY_SWEEP_TROPHIES : 0);
       this.current = {
         ...this.current,
-        trophies: this.current.trophies + 1,
+        trophies: this.current.trophies + trophies,
         dailyCount: dailyCount + 1,
       };
       writeRecord(this.storage, this.key, this.current);
-      return { credited: true, streak: dailyStreak, trophies: 1 };
+      return { credited: true, streak: dailyStreak, trophies, sweep };
     }
     const streak = gap === 1 ? dailyStreak + 1 : 1;
     const trophies = dailyTrophies(streak);
@@ -541,6 +559,6 @@ export class RecordStore {
       trophies: this.current.trophies + trophies,
     };
     writeRecord(this.storage, this.key, this.current);
-    return { credited: true, streak, trophies };
+    return { credited: true, streak, trophies, sweep: false };
   }
 }
