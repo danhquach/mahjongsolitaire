@@ -12,7 +12,7 @@ import type { TileId } from '@mahjongsolitaire/core';
 import { Game } from '../src/game.js';
 import type { Hit } from '../src/hit-test.js';
 import { drawOrder } from '../src/geometry.js';
-import { BoardRenderer } from '../src/render.js';
+import { BoardRenderer, GLYPH_BITMAP_SCALE } from '../src/render.js';
 import type { DrawState } from '../src/render.js';
 
 const ROWS = SEED_LAYOUTS.find((l) => l.id === 'seed-rows')!;
@@ -214,6 +214,25 @@ test('handing over a glyph set rebuilds every face-up tile as a sprite; the defa
   for (const [id, node] of h.nodes()) {
     assert.notEqual(node, bitmap.get(id), `tile ${id} went back to drawn art`);
     assert.equal(spritesIn(node), 1);
+  }
+});
+
+test("a set's own scale sizes its bitmaps; without one they draw at a quarter", () => {
+  const faceScales = (h: ReturnType<typeof harness>) =>
+    [...h.game.board.presentTiles()]
+      .filter((t) => !h.game.isFaceHidden(t.id))
+      .flatMap((t) => h.renderer.tileNode(t.id)!.children)
+      // The face sprite is the centred one; the shadow sprite is not.
+      .filter((c): c is Sprite => c instanceof Sprite && c.anchor.x === 0.5)
+      .map((s) => s.scale.x);
+  for (const [scale, expected] of [[undefined, GLYPH_BITMAP_SCALE], [0.4, 0.4]] as const) {
+    const h = harness();
+    const textures = texturesFor(h.game);
+    h.renderer.setGlyphSet(scale === undefined ? { id: 'glyphs-a', textures } : { id: 'glyphs-b', textures, scale });
+    h.renderer.draw(h.game, PLAIN);
+    const scales = faceScales(h);
+    assert.ok(scales.length > 0);
+    for (const s of scales) assert.equal(s, expected);
   }
 });
 
