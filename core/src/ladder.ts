@@ -53,11 +53,16 @@ export const LADDER_WINDOWS: Record<LadderBand, { readonly min: number; readonly
  * exposure rework (issue #213) was tuned so this assignment still holds on
  * the re-swept score: every pool's layouts stay in score order with the
  * pools around them.
+ *
+ * Medium-plus also borrows two hard layouts, fortress and bridge (issue #261):
+ * with only pyramid and terrace, levels 61–150 alternated between two boards.
+ * Their seeds still have to land inside the medium-plus window, so the score
+ * ordering holds; the band just plays on denser silhouettes more often.
  */
 export const LADDER_POOLS: Record<LadderBand, readonly string[]> = {
   easy: ['spider', 'butterfly', 'windmill'],
   medium: ['cat', 'turtle_classic'],
-  'medium-plus': ['pyramid', 'terrace'],
+  'medium-plus': ['pyramid', 'fortress', 'terrace', 'bridge'],
   hard: ['fortress', 'moon_gate', 'bridge'],
 };
 

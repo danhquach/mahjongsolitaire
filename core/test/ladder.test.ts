@@ -59,11 +59,17 @@ test('band windows are disjoint, ordered, and below the expert cut', () => {
   assert.ok(LADDER_WINDOWS.hard.max <= 0.8, 'expert does not ship in v1');
 });
 
-test('layout pools partition the 10 shipped layouts across the bands (issue #99)', () => {
+test('layout pools cover the 10 shipped layouts across the bands (issues #99, #261)', () => {
   const all = Object.values(LADDER_POOLS).flat();
-  assert.equal(all.length, new Set(all).size, 'no layout serves two bands');
+  for (const pool of Object.values(LADDER_POOLS)) {
+    assert.equal(pool.length, new Set(pool).size, 'no layout twice in one pool');
+  }
+  // The only layouts serving two bands are the hard ones medium-plus borrows.
+  const shared = LADDER_POOLS['medium-plus'].filter((id) => LADDER_POOLS.hard.includes(id));
+  assert.deepEqual([...shared].sort(), ['bridge', 'fortress']);
+  assert.equal(all.length, new Set(all).size + shared.length, 'no other layout serves two bands');
   assert.deepEqual(
-    [...all].sort(),
+    [...new Set(all)].sort(),
     [
       'bridge',
       'butterfly',
@@ -101,6 +107,19 @@ test('every shipped ladder entry pins a layout from its own band pool (issue #99
     assert.ok(
       LADDER_POOLS[band].includes(entry.layoutId),
       `level ${entry.level}: ${entry.layoutId} is not in the ${band} pool`,
+    );
+  }
+});
+
+test('no two consecutive shipped levels share a layout (issue #261)', () => {
+  const ladder = parseLadder(
+    JSON.parse(readFileSync(new URL('../../../data/ladder.json', import.meta.url), 'utf8')),
+  );
+  for (let i = 1; i < ladder.length; i++) {
+    assert.notEqual(
+      ladder[i]!.layoutId,
+      ladder[i - 1]!.layoutId,
+      `levels ${i} and ${i + 1} both deal ${ladder[i]!.layoutId}`,
     );
   }
 });

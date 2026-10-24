@@ -40,14 +40,20 @@ interface BuiltLevel extends LadderEntry {
  * Find a (layout, seed) whose score fits the level's window, searching only
  * the band's own pool (issue #99: New game rotates within the pool, so the
  * ladder's pinned layout must come from it too). Rotation starts at a
- * level-dependent offset so consecutive levels vary visually.
+ * level-dependent offset so consecutive levels vary visually, and the previous
+ * level's layout is tried last: medium-plus and hard share fortress and bridge
+ * (issue #261), so a spike could otherwise repeat its neighbour's board.
  */
-function buildLevel(level: number): BuiltLevel {
+function buildLevel(level: number, previousLayoutId: string | undefined): BuiltLevel {
   const { band, spike } = bandForLevel(level);
   const window = LADDER_WINDOWS[band];
   const pool = layouts.filter((l) => LADDER_POOLS[band].includes(l.id));
-  for (let l = 0; l < pool.length; l++) {
-    const layout = pool[(level + l) % pool.length]!;
+  const order = pool.map((_, l) => pool[(level + l) % pool.length]!);
+  const candidates = [
+    ...order.filter((l) => l.id !== previousLayoutId),
+    ...order.filter((l) => l.id === previousLayoutId),
+  ];
+  for (const layout of candidates) {
     for (let s = 0; s < SEEDS_PER_LAYOUT; s++) {
       const seed = level * 100_000 + s;
       const generated = generateValidatedLevel(layout, seed);
@@ -63,7 +69,7 @@ function buildLevel(level: number): BuiltLevel {
 
 const built: BuiltLevel[] = [];
 for (let level = 1; level <= LADDER_LENGTH; level++) {
-  built.push(buildLevel(level));
+  built.push(buildLevel(level, built.at(-1)?.layoutId));
   if (level % 10 === 0) console.log(`built ${level}/${LADDER_LENGTH}`);
 }
 
