@@ -4,6 +4,15 @@ Playtest builds deploy from `main` on every merge; entries are grouped by
 deploy day. The in-game Settings screen shows this file with the exact
 commit and build time of the running bundle.
 
+## 2026-10-24
+
+- Back, closing the tab or reloading in the middle of a level now asks
+  first. One stray swipe-back used to leave the game on the spot; a board you
+  have played on now gets the browser's "Leave site?" prompt, by the same rule
+  as New game and Restart — an untouched deal or a finished level still leaves
+  without asking. Leaving anyway is still safe: the level is saved and picks
+  up where you left off next visit. Some phone browsers skip this prompt (#260).
+
 ## 2026-09-07
 
 - New game and Restart ask before they throw a game away. Both buttons sit in

@@ -462,6 +462,10 @@ async function start(): Promise<void> {
   let confirmAction: ConfirmAction = 'reset';
   let confirmBusy = false;
   let confirmOpener: HTMLElement = settingsButton;
+  /** The page is reloading itself (a reset or a closed account, issue #201),
+   *  or a mailto: link was just tapped — the leave prompt (issue #260) stands
+   *  aside for a navigation the game chose. */
+  let leavingOnPurpose = false;
   /** Tiles the last Hint pointed at — highlighted until the board changes. */
   let hintPair: readonly TileId[] = [];
   /** Shuffles taken on this deal; feeds the shuffle seed so a given
@@ -1653,6 +1657,7 @@ async function start(): Promise<void> {
     if (confirmAction === 'reset') wipeProgress(storage);
     else wipeDevice(storage);
     announcer.say(confirmAction === 'reset' ? 'Progress reset.' : 'Account closed.');
+    leavingOnPurpose = true;
     window.location.reload();
   }
 
@@ -2155,7 +2160,14 @@ async function start(): Promise<void> {
     // Same gate the deal itself has: nothing is asked about a board that is
     // already being replaced.
     if (dealing) return;
-    const touched = dealNeedsConfirm({
+    if (boardTouched()) openConfirm(mode, opener);
+    else void startLevel(mode);
+  }
+
+  /** Has the board in play been played on? The #248 rule, shared by the deal
+   *  buttons and the leave prompt (issue #260). */
+  function boardTouched(): boolean {
+    return dealNeedsConfirm({
       playing: game.status() === 'playing',
       tilesLeft: game.tilesLeft,
       // The deal fills every slot in the layout, so this is `tilesLeft` at
@@ -2164,8 +2176,6 @@ async function start(): Promise<void> {
       undoDepth: game.undoDepth,
       shuffles: shuffleCount,
     });
-    if (touched) openConfirm(mode, opener);
-    else void startLevel(mode);
   }
 
   /** ", a milestone level" on a decade spike (issue #67) — the spoken half
@@ -2318,6 +2328,31 @@ async function start(): Promise<void> {
   window.addEventListener('pagehide', () => {
     persist();
   });
+  // Issue #260: Back, a tab close or a reload mid-level asks first, by the
+  // same rule as New game / Restart. The auto-save above still runs if the
+  // player leaves anyway — this is a second layer, and mobile browsers often
+  // skip the prompt. The browser writes the dialog's text; nothing here can.
+  window.addEventListener('beforeunload', (event) => {
+    if (leavingOnPurpose || dealing || !boardTouched()) return;
+    event.preventDefault();
+    // Chrome before 119 and older Safari only prompt when this is set — to
+    // anything but '', which the spec reads as "no prompt".
+    event.returnValue = true;
+  });
+  // A mailto: link (the feedback form's "Email it instead", issue #118) hands
+  // off to the mail app and the page stays — but Chromium still fires
+  // beforeunload for it. Stand the prompt aside for that one tick.
+  document.addEventListener(
+    'click',
+    (event) => {
+      if (!(event.target instanceof Element) || event.target.closest('a[href^="mailto:"]') === null) return;
+      leavingOnPurpose = true;
+      setTimeout(() => {
+        leavingOnPurpose = false;
+      }, 0);
+    },
+    true,
+  );
 
   // Pixi sized itself to #board during init, before any placement existed, so
   // the canvas has to be re-read once there is one — this is also the call that
