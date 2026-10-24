@@ -301,7 +301,7 @@
   },
   {
     "level": 61,
-    "layoutId": "terrace",
+    "layoutId": "fortress",
     "seed": 6100000
   },
   {
@@ -316,13 +316,13 @@
   },
   {
     "level": 64,
-    "layoutId": "pyramid",
-    "seed": 6400003
+    "layoutId": "bridge",
+    "seed": 6400000
   },
   {
     "level": 65,
-    "layoutId": "terrace",
-    "seed": 6500001
+    "layoutId": "fortress",
+    "seed": 6500002
   },
   {
     "level": 66,
@@ -336,17 +336,17 @@
   },
   {
     "level": 68,
-    "layoutId": "pyramid",
+    "layoutId": "bridge",
     "seed": 6800009
   },
   {
     "level": 69,
-    "layoutId": "terrace",
-    "seed": 6900002
+    "layoutId": "fortress",
+    "seed": 6900000
   },
   {
     "level": 70,
-    "layoutId": "fortress",
+    "layoutId": "moon_gate",
     "seed": 7000000
   },
   {
@@ -356,13 +356,13 @@
   },
   {
     "level": 72,
-    "layoutId": "pyramid",
-    "seed": 7200001
+    "layoutId": "bridge",
+    "seed": 7200005
   },
   {
     "level": 73,
-    "layoutId": "terrace",
-    "seed": 7300000
+    "layoutId": "fortress",
+    "seed": 7300001
   },
   {
     "level": 74,
@@ -376,12 +376,12 @@
   },
   {
     "level": 76,
-    "layoutId": "pyramid",
-    "seed": 7600000
+    "layoutId": "bridge",
+    "seed": 7600035
   },
   {
     "level": 77,
-    "layoutId": "terrace",
+    "layoutId": "fortress",
     "seed": 7700000
   },
   {
@@ -401,7 +401,7 @@
   },
   {
     "level": 81,
-    "layoutId": "terrace",
+    "layoutId": "fortress",
     "seed": 8100004
   },
   {
@@ -416,13 +416,13 @@
   },
   {
     "level": 84,
-    "layoutId": "pyramid",
-    "seed": 8400005
+    "layoutId": "bridge",
+    "seed": 8400008
   },
   {
     "level": 85,
-    "layoutId": "terrace",
-    "seed": 8500002
+    "layoutId": "fortress",
+    "seed": 8500000
   },
   {
     "level": 86,
@@ -436,13 +436,13 @@
   },
   {
     "level": 88,
-    "layoutId": "pyramid",
-    "seed": 8800004
+    "layoutId": "bridge",
+    "seed": 8800012
   },
   {
     "level": 89,
-    "layoutId": "terrace",
-    "seed": 8900002
+    "layoutId": "fortress",
+    "seed": 8900003
   },
   {
     "level": 90,
@@ -456,13 +456,13 @@
   },
   {
     "level": 92,
-    "layoutId": "pyramid",
-    "seed": 9200000
+    "layoutId": "bridge",
+    "seed": 9200017
   },
   {
     "level": 93,
-    "layoutId": "terrace",
-    "seed": 9300001
+    "layoutId": "fortress",
+    "seed": 9300009
   },
   {
     "level": 94,
@@ -476,13 +476,13 @@
   },
   {
     "level": 96,
-    "layoutId": "pyramid",
-    "seed": 9600004
+    "layoutId": "bridge",
+    "seed": 9600033
   },
   {
     "level": 97,
-    "layoutId": "terrace",
-    "seed": 9700001
+    "layoutId": "fortress",
+    "seed": 9700003
   },
   {
     "level": 98,
@@ -501,48 +501,48 @@
   },
   {
     "level": 101,
-    "layoutId": "terrace",
-    "seed": 10100002
+    "layoutId": "pyramid",
+    "seed": 10100000
   },
   {
     "level": 102,
-    "layoutId": "pyramid",
-    "seed": 10200002
+    "layoutId": "terrace",
+    "seed": 10200000
   },
   {
     "level": 103,
-    "layoutId": "terrace",
-    "seed": 10300001
+    "layoutId": "bridge",
+    "seed": 10300016
   },
   {
     "level": 104,
-    "layoutId": "pyramid",
-    "seed": 10400004
+    "layoutId": "fortress",
+    "seed": 10400000
   },
   {
     "level": 105,
-    "layoutId": "terrace",
-    "seed": 10500000
+    "layoutId": "pyramid",
+    "seed": 10500004
   },
   {
     "level": 106,
-    "layoutId": "pyramid",
-    "seed": 10600007
+    "layoutId": "terrace",
+    "seed": 10600005
   },
   {
     "level": 107,
-    "layoutId": "terrace",
-    "seed": 10700000
+    "layoutId": "bridge",
+    "seed": 10700009
   },
   {
     "level": 108,
-    "layoutId": "pyramid",
-    "seed": 10800002
+    "layoutId": "fortress",
+    "seed": 10800001
   },
   {
     "level": 109,
-    "layoutId": "terrace",
-    "seed": 10900002
+    "layoutId": "pyramid",
+    "seed": 10900003
   },
   {
     "level": 110,
@@ -556,13 +556,13 @@
   },
   {
     "level": 112,
-    "layoutId": "pyramid",
-    "seed": 11200000
+    "layoutId": "bridge",
+    "seed": 11200001
   },
   {
     "level": 113,
-    "layoutId": "terrace",
-    "seed": 11300002
+    "layoutId": "fortress",
+    "seed": 11300003
   },
   {
     "level": 114,
@@ -576,13 +576,13 @@
   },
   {
     "level": 116,
-    "layoutId": "pyramid",
-    "seed": 11600000
+    "layoutId": "bridge",
+    "seed": 11600009
   },
   {
     "level": 117,
-    "layoutId": "terrace",
-    "seed": 11700002
+    "layoutId": "fortress",
+    "seed": 11700001
   },
   {
     "level": 118,
@@ -601,8 +601,8 @@
   },
   {
     "level": 121,
-    "layoutId": "terrace",
-    "seed": 12100000
+    "layoutId": "fortress",
+    "seed": 12100001
   },
   {
     "level": 122,
@@ -616,12 +616,12 @@
   },
   {
     "level": 124,
-    "layoutId": "pyramid",
-    "seed": 12400001
+    "layoutId": "bridge",
+    "seed": 12400004
   },
   {
     "level": 125,
-    "layoutId": "terrace",
+    "layoutId": "fortress",
     "seed": 12500002
   },
   {
@@ -636,18 +636,18 @@
   },
   {
     "level": 128,
-    "layoutId": "pyramid",
-    "seed": 12800001
+    "layoutId": "bridge",
+    "seed": 12800005
   },
   {
     "level": 129,
-    "layoutId": "terrace",
-    "seed": 12900000
+    "layoutId": "fortress",
+    "seed": 12900001
   },
   {
     "level": 130,
-    "layoutId": "fortress",
-    "seed": 13000001
+    "layoutId": "moon_gate",
+    "seed": 13000000
   },
   {
     "level": 131,
@@ -656,12 +656,12 @@
   },
   {
     "level": 132,
-    "layoutId": "pyramid",
-    "seed": 13200000
+    "layoutId": "bridge",
+    "seed": 13200010
   },
   {
     "level": 133,
-    "layoutId": "terrace",
+    "layoutId": "fortress",
     "seed": 13300000
   },
   {
@@ -676,12 +676,12 @@
   },
   {
     "level": 136,
-    "layoutId": "pyramid",
-    "seed": 13600003
+    "layoutId": "bridge",
+    "seed": 13600004
   },
   {
     "level": 137,
-    "layoutId": "terrace",
+    "layoutId": "fortress",
     "seed": 13700000
   },
   {
@@ -701,8 +701,8 @@
   },
   {
     "level": 141,
-    "layoutId": "terrace",
-    "seed": 14100002
+    "layoutId": "fortress",
+    "seed": 14100001
   },
   {
     "level": 142,
@@ -716,13 +716,13 @@
   },
   {
     "level": 144,
-    "layoutId": "pyramid",
-    "seed": 14400003
+    "layoutId": "bridge",
+    "seed": 14400001
   },
   {
     "level": 145,
-    "layoutId": "terrace",
-    "seed": 14500002
+    "layoutId": "fortress",
+    "seed": 14500000
   },
   {
     "level": 146,
@@ -736,13 +736,13 @@
   },
   {
     "level": 148,
-    "layoutId": "pyramid",
-    "seed": 14800004
+    "layoutId": "bridge",
+    "seed": 14800002
   },
   {
     "level": 149,
-    "layoutId": "terrace",
-    "seed": 14900000
+    "layoutId": "fortress",
+    "seed": 14900002
   },
   {
     "level": 150,
