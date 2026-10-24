@@ -23,6 +23,9 @@ import {
   bandForLevel,
   concealBucketForBand,
   concealRatioForLevel,
+  DEEP_CONCEAL_RATIO,
+  DEEP_LADDER_FROM,
+  DEEPER_LADDER_FROM,
   EASY_CONCEAL_RATIO,
   FIRST_CONCEALED_LEVEL,
   LADDER_LENGTH,
@@ -182,9 +185,10 @@ test('on a 144-tile deal that is 0, 5, 8 and 11 tiles', () => {
   assert.equal(concealedCount(144, concealRatioForLevel(20)), 11);
 });
 
-test('level 20 and up are untouched: the ratio is still the band bucket', () => {
+test('levels 20-69 and every spike keep the band bucket ratio', () => {
   for (let level = 20; level <= LADDER_LENGTH; level++) {
-    const { band } = bandForLevel(level);
+    const { band, spike } = bandForLevel(level);
+    if (level >= DEEP_LADDER_FROM && !spike) continue;
     assert.equal(
       concealRatioForLevel(level),
       CONCEAL_RATIO[concealBucketForBand(band)],
@@ -205,6 +209,49 @@ test('concealment never dips on the way into a decade milestone', () => {
     assert.ok(spike >= concealRatioForLevel(level - 1), `level ${level} dips below ${level - 1}`);
     if (level < LADDER_LENGTH) {
       assert.ok(spike >= concealRatioForLevel(level + 1), `level ${level} dips below ${level + 1}`);
+    }
+  }
+});
+
+// --- The deep ladder conceals more (issue #264) ------------------------------
+//
+// Levels 61-149 all dealt 8% face-down, so the climb flattened out. Base
+// levels step up to 10% from level 70 and 12% from level 110; the hard spikes
+// keep their 15%, so every milestone still conceals more than its neighbours.
+
+test('medium-plus base levels ramp 8%, 10%, 12% and the spikes keep 15%', () => {
+  for (let level = 61; level <= LADDER_LENGTH; level++) {
+    const { spike } = bandForLevel(level);
+    const expected = spike
+      ? CONCEAL_RATIO.hard
+      : level < DEEP_LADDER_FROM
+        ? CONCEAL_RATIO.medium
+        : level < DEEPER_LADDER_FROM
+          ? DEEP_CONCEAL_RATIO.lower
+          : DEEP_CONCEAL_RATIO.upper;
+    assert.equal(concealRatioForLevel(level), expected, `level ${level}`);
+  }
+});
+
+test('on a 144-tile deal the deep ladder is 11, 14 and 17 tiles, spikes 21', () => {
+  // Pinned as tile counts, both edges of each step named (see the easy ramp).
+  assert.equal(concealedCount(144, concealRatioForLevel(61)), 11);
+  assert.equal(concealedCount(144, concealRatioForLevel(69)), 11);
+  assert.equal(concealedCount(144, concealRatioForLevel(70)), 21);
+  assert.equal(concealedCount(144, concealRatioForLevel(71)), 14);
+  assert.equal(concealedCount(144, concealRatioForLevel(109)), 14);
+  assert.equal(concealedCount(144, concealRatioForLevel(110)), 21);
+  assert.equal(concealedCount(144, concealRatioForLevel(111)), 17);
+  assert.equal(concealedCount(144, concealRatioForLevel(149)), 17);
+  assert.equal(concealedCount(144, concealRatioForLevel(150)), 21);
+});
+
+test('every milestone from 30 on conceals strictly more than its neighbours', () => {
+  for (let level = 30; level <= LADDER_LENGTH; level += 10) {
+    const spike = concealRatioForLevel(level);
+    assert.ok(spike > concealRatioForLevel(level - 1), `level ${level} must beat ${level - 1}`);
+    if (level < LADDER_LENGTH) {
+      assert.ok(spike > concealRatioForLevel(level + 1), `level ${level} must beat ${level + 1}`);
     }
   }
 });
@@ -290,4 +337,14 @@ test('release gate: all shipped seeds solvable, every band window and ordering c
     if (level % 10 === 0) continue;
     assert.ok(scores[level]! >= mediumMedian, `level ${level} below the medium median`);
   }
+
+  // The deep ladder ships the hardest in-window seed (issue #264), so its base
+  // levels average near the top of the window, not its middle: the first-hit
+  // ladder averaged 0.485 there, the hardest-of-80 ladder 0.517.
+  const deep: number[] = [];
+  for (let level = DEEP_LADDER_FROM; level <= LADDER_LENGTH; level++) {
+    if (level % 10 !== 0) deep.push(scores[level]!);
+  }
+  const deepMean = deep.reduce((a, b) => a + b, 0) / deep.length;
+  assert.ok(deepMean >= 0.51, `levels ${DEEP_LADDER_FROM}+ base mean ${deepMean.toFixed(4)} < 0.51`);
 });

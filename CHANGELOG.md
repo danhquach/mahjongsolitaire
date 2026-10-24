@@ -6,6 +6,13 @@ commit and build time of the running bundle.
 
 ## 2026-10-24
 
+- Levels 70 to 150 keep getting harder. Every level from 61 on used to play
+  about like level 61: the same middling deals and the same 8% of tiles
+  face-down. From level 71, each level now deals the hardest board its band
+  allows, and more tiles start face-down: 10% from level 71, 12% from level
+  111. Milestone levels stay a step above. A run started on one of the
+  re-dealt levels before this update still resumes, but will not count on the
+  weekly board (#264).
 - Levels 61 to 150 stop flipping between the same two boards. Every level in
   that stretch used to be Pyramid or Terrace, back and forth; it now rotates
   through four layouts, adding Fortress and Bridge, and no two levels in a row

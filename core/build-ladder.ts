@@ -14,7 +14,13 @@ import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 
 import { assessDifficulty } from './src/difficulty.js';
 import { generateValidatedLevel } from './src/generator.js';
-import { bandForLevel, LADDER_LENGTH, LADDER_POOLS, LADDER_WINDOWS } from './src/ladder.js';
+import {
+  bandForLevel,
+  DEEP_LADDER_FROM,
+  LADDER_LENGTH,
+  LADDER_POOLS,
+  LADDER_WINDOWS,
+} from './src/ladder.js';
 import type { LadderEntry } from './src/ladder.js';
 import { parseLayout } from './src/layouts.js';
 import type { LayoutFile } from './src/layouts.js';
@@ -24,6 +30,9 @@ const LADDER_FILE = new URL('../../data/ladder.json', import.meta.url);
 const REPORT_FILE = new URL('../../data/ladder-report.md', import.meta.url);
 
 const SEEDS_PER_LAYOUT = 200;
+
+/** Seeds a deep base level picks its hardest in-window deal from (issue #264). */
+const DEEP_SEEDS_PER_LAYOUT = 80;
 
 const layouts: LayoutFile[] = readdirSync(LAYOUT_DIR)
   .filter((f) => f.endsWith('.json'))
@@ -43,6 +52,11 @@ interface BuiltLevel extends LadderEntry {
  * level-dependent offset so consecutive levels vary visually, and the previous
  * level's layout is tried last: medium-plus and hard share fortress and bridge
  * (issue #261), so a spike could otherwise repeat its neighbour's board.
+ *
+ * Base levels from `DEEP_LADDER_FROM` on ship the *hardest* in-window seed of
+ * the first `DEEP_SEEDS_PER_LAYOUT` instead of the first hit (issue #264), so
+ * the deep ladder sits near the top of its window rather than its middle.
+ * Ties keep the earlier seed.
  */
 function buildLevel(level: number, previousLayoutId: string | undefined): BuiltLevel {
   const { band, spike } = bandForLevel(level);
@@ -53,16 +67,21 @@ function buildLevel(level: number, previousLayoutId: string | undefined): BuiltL
     ...order.filter((l) => l.id !== previousLayoutId),
     ...order.filter((l) => l.id === previousLayoutId),
   ];
+  const hardest = !spike && level >= DEEP_LADDER_FROM;
   for (const layout of candidates) {
-    for (let s = 0; s < SEEDS_PER_LAYOUT; s++) {
+    let best: BuiltLevel | undefined;
+    for (let s = 0; s < (hardest ? DEEP_SEEDS_PER_LAYOUT : SEEDS_PER_LAYOUT); s++) {
       const seed = level * 100_000 + s;
       const generated = generateValidatedLevel(layout, seed);
       const { score } = assessDifficulty(generated);
       if (score >= window.min && score < window.max) {
         // Store the seed that validated (generateValidatedLevel may reseed).
-        return { level, layoutId: layout.id, seed: generated.seed, band, spike, score };
+        const found = { level, layoutId: layout.id, seed: generated.seed, band, spike, score };
+        if (!hardest) return found;
+        if (best === undefined || score > best.score) best = found;
       }
     }
+    if (best !== undefined) return best;
   }
   throw new Error(`level ${level}: no (layout, seed) hit the ${band} window after full search`);
 }

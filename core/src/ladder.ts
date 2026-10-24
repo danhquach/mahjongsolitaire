@@ -159,9 +159,33 @@ export const EASY_CONCEAL_RATIO = {
 export const FIRST_CONCEALED_LEVEL = 5;
 
 /**
+ * Where the deep ladder starts (issue #264). Every medium-plus base level from
+ * 61 to 150 used to deal the first seed in the band window at 8% face-down, so
+ * level 145 played like level 61. From here on, base levels ship the hardest
+ * seed in the window (see build-ladder) and conceal more.
+ */
+export const DEEP_LADDER_FROM = 70;
+
+/** Where the deep ladder's second concealment step starts (issue #264). */
+export const DEEPER_LADDER_FROM = 110;
+
+/**
+ * Face-down tiles on the medium-plus base levels from `DEEP_LADDER_FROM` on
+ * (issue #264). Starting points to playtest — the difficulty score does not
+ * measure concealment — kept below the hard spikes' 15%.
+ */
+export const DEEP_CONCEAL_RATIO = {
+  /** Levels 71–109: 14 tiles of a 144-tile deal. */
+  lower: 0.1,
+  /** Levels 111–149: 17 tiles of a 144-tile deal. */
+  upper: 0.12,
+} as const;
+
+/**
  * The fraction of a deal dealt face-down at ladder `level`.
  *
- * Only the easy band's *base* levels ramp. Every other level keeps its band's
+ * Only *base* levels ramp: the easy band's (issue #175) and the medium-plus
+ * band's from level 70 on (issue #264). Every other level keeps its band's
  * bucket ratio, so the decade spikes are untouched: `bandForLevel` already
  * reports level 10 and level 20 as medium, and they keep concealing at 8% —
  * a step above the base levels on either side, the way every other spike sits
@@ -170,6 +194,9 @@ export const FIRST_CONCEALED_LEVEL = 5;
  */
 export function concealRatioForLevel(level: number): number {
   const { band } = bandForLevel(level);
+  if (band === 'medium-plus' && level >= DEEP_LADDER_FROM) {
+    return level < DEEPER_LADDER_FROM ? DEEP_CONCEAL_RATIO.lower : DEEP_CONCEAL_RATIO.upper;
+  }
   if (band !== 'easy') return CONCEAL_RATIO[concealBucketForBand(band)];
   if (level < FIRST_CONCEALED_LEVEL) return EASY_CONCEAL_RATIO.teaching;
   return level <= 9 ? EASY_CONCEAL_RATIO.lower : EASY_CONCEAL_RATIO.upper;
