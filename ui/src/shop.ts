@@ -191,11 +191,16 @@ export interface GlyphSet {
   /** Directory under `glyphs/` in the static assets, or null for the drawn
    *  default, which loads nothing. */
   readonly dir: string | null;
+  /** Bitmap px → tile units, for a set whose art is smaller than the brief's
+   *  safe area; absent means render.ts's GLYPH_BITMAP_SCALE. */
+  readonly scale?: number;
 }
 
 export const GLYPH_SETS: Readonly<Record<string, GlyphSet>> = {
   [DEFAULT_GLYPH_SET]: { id: DEFAULT_GLYPH_SET, label: 'Lantern', dir: null },
-  'glyphs-calligraphy': { id: 'glyphs-calligraphy', label: 'Calligraphy', dir: 'calligraphy' },
+  // The calligraphy art came back well inside its 200 x 260 safe area, so at
+  // the default quarter scale its numerals read about half the Lantern size.
+  'glyphs-calligraphy': { id: 'glyphs-calligraphy', label: 'Calligraphy', dir: 'calligraphy', scale: 0.4 },
   'glyphs-fantasy': { id: 'glyphs-fantasy', label: 'Fantasy', dir: 'fantasy' },
 };
 

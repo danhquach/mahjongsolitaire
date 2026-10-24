@@ -1499,7 +1499,11 @@ async function start(): Promise<void> {
   /** The renderer's view of a glyph set: its textures if they are loaded, else
    *  null — which draws the default. `applyGlyphSet` is what loads them. */
   function glyphSetInUse(set: GlyphSet): GlyphSetInUse {
-    return { id: set.id, textures: set.dir === null ? null : (glyphLoader.peek(set.dir) ?? null) };
+    return {
+      id: set.id,
+      textures: set.dir === null ? null : (glyphLoader.peek(set.dir) ?? null),
+      ...(set.scale === undefined ? {} : { scale: set.scale }),
+    };
   }
 
   /**

@@ -82,8 +82,10 @@ const TILE_IMAGE_RESOLUTION = 4;
  *  in docs/design/glyph-sheet-brief.md), so a bitmap is drawn at a fixed
  *  quarter of its pixel size. Fixed, not fit-to-box: fitting would blow a
  *  single pip up to fill the face and lose the relative sizing the grids
- *  depend on. A glyph that would still leave PIP_AREA is clamped to it. */
-const GLYPH_BITMAP_SCALE = 0.25;
+ *  depend on. A glyph that would still leave PIP_AREA is clamped to it. A set
+ *  whose art came back smaller than the brief's safe area carries its own
+ *  scale instead (GlyphSetInUse.scale). */
+export const GLYPH_BITMAP_SCALE = 0.25;
 
 /** The drawn default set's id — the one set that loads no textures. */
 export const DRAWN_GLYPH_SET = 'lantern';
@@ -106,6 +108,8 @@ export const DRAWN_BACK = 'lantern';
 export interface GlyphSetInUse {
   readonly id: string;
   readonly textures: GlyphTextures | null;
+  /** Bitmap px → tile units for this set; GLYPH_BITMAP_SCALE when absent. */
+  readonly scale?: number;
 }
 
 // --- face-down back (issue #64) ----------------------------------------------
@@ -596,10 +600,11 @@ export class BoardRenderer {
       readonly dimmed: boolean;
       /** Face-down this frame (issue #64): back art instead of the face. */
       readonly hidden?: boolean;
-      /** Draw from these glyph textures instead of the set in force (issue
-       *  #229): the shop's previews show a set the board is not wearing.
-       *  `null` forces the drawn default; undefined means the set in force. */
-      readonly glyphs?: GlyphTextures | null;
+      /** Draw from this glyph set instead of the set in force (issue #229):
+       *  the shop's previews show a set the board is not wearing. A set with
+       *  null textures forces the drawn default; undefined means the set in
+       *  force. */
+      readonly glyphs?: GlyphSetInUse;
       /** Draw this back instead of the one in force (issue #229): the shop's
        *  previews show a back the board is not wearing. */
       readonly back?: BackInUse;
@@ -682,7 +687,8 @@ export class BoardRenderer {
     // Ink recedes with the face it sits on, faster than the face does, so
     // the 4.5:1 figure/ground budget widens as layers go back (depth.ts).
     const ink = shade.ink(style.color);
-    const bitmap = (opts.glyphs === undefined ? this.glyphSet.textures : opts.glyphs)?.get(tile.face);
+    const glyphSet = opts.glyphs ?? this.glyphSet;
+    const bitmap = glyphSet.textures?.get(tile.face);
     if (bitmap) {
       // A bought glyph set (issue #229): the whole face as one sprite where the
       // drawn art would go, receding per layer by the ink factor — white
@@ -691,7 +697,7 @@ export class BoardRenderer {
       sprite.anchor.set(0.5);
       sprite.position.set(r.x + PIP_AREA.x + PIP_AREA.w / 2, r.y + PIP_AREA.y + PIP_AREA.h / 2);
       sprite.scale.set(
-        Math.min(GLYPH_BITMAP_SCALE, PIP_AREA.w / Math.max(1, bitmap.width), PIP_AREA.h / Math.max(1, bitmap.height)),
+        Math.min(glyphSet.scale ?? GLYPH_BITMAP_SCALE, PIP_AREA.w / Math.max(1, bitmap.width), PIP_AREA.h / Math.max(1, bitmap.height)),
       );
       sprite.tint = shade.ink(0xffffff);
       node.addChild(sprite);
@@ -799,7 +805,7 @@ export class BoardRenderer {
    *  sets in the shop does not re-bake, and dropped with the rest of the cache
    *  on a palette or set change. */
   tileImageIn(face: string, set: GlyphSetInUse): string {
-    return this.bakeTile(`${set.id} ${face}`, face, false, set.textures);
+    return this.bakeTile(`${set.id} ${face}`, face, false, set);
   }
 
   /** A face-down tile wearing `back`, for the shop's back previews (issue
@@ -812,7 +818,7 @@ export class BoardRenderer {
     key: string,
     face: string,
     hidden: boolean,
-    glyphs?: GlyphTextures | null,
+    glyphs?: GlyphSetInUse,
     back?: BackInUse,
   ): string {
     const cached = this.tileImages.get(key);
