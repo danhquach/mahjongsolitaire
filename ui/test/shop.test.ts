@@ -64,6 +64,8 @@ test('every purchasable glyph set has art metadata, and the default is free and 
     assert.ok(set, `${item.id} has a glyph set`);
     assert.match(set!.dir!, /^[a-z]+$/);
     assert.equal(set!.label, item.label);
+    // Both shipped sets' art sits well inside the brief's safe area (issue #266).
+    assert.equal(set!.scale, 0.4, `${item.id} draws at Lantern size`);
   }
   assert.equal(SHOP_ITEMS.some((i) => i.id === 'lantern'), false);
 });

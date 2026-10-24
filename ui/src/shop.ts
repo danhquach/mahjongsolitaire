@@ -198,10 +198,11 @@ export interface GlyphSet {
 
 export const GLYPH_SETS: Readonly<Record<string, GlyphSet>> = {
   [DEFAULT_GLYPH_SET]: { id: DEFAULT_GLYPH_SET, label: 'Lantern', dir: null },
-  // The calligraphy art came back well inside its 200 x 260 safe area, so at
-  // the default quarter scale its numerals read about half the Lantern size.
+  // Both bought sets came back well inside their 200 x 260 safe area, so at
+  // the default quarter scale their glyphs read about half the Lantern size.
+  // At 0.4 the widest faces (dragons, nine dots) clamp to PIP_AREA instead.
   'glyphs-calligraphy': { id: 'glyphs-calligraphy', label: 'Calligraphy', dir: 'calligraphy', scale: 0.4 },
-  'glyphs-fantasy': { id: 'glyphs-fantasy', label: 'Fantasy', dir: 'fantasy' },
+  'glyphs-fantasy': { id: 'glyphs-fantasy', label: 'Fantasy', dir: 'fantasy', scale: 0.4 },
 };
 
 /** The set a record's `looks.glyphs` names — Lantern for an id this build does
