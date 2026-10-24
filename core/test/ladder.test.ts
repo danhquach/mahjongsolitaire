@@ -31,6 +31,8 @@ import {
   LADDER_LENGTH,
   LADDER_POOLS,
   LADDER_WINDOWS,
+  MILESTONE_TROPHIES,
+  ladderTrophies,
   nextPoolLayout,
   parseLadder,
 } from '../src/ladder.js';
@@ -347,4 +349,20 @@ test('release gate: all shipped seeds solvable, every band window and ordering c
   }
   const deepMean = deep.reduce((a, b) => a + b, 0) / deep.length;
   assert.ok(deepMean >= 0.51, `levels ${DEEP_LADDER_FROM}+ base mean ${deepMean.toFixed(4)} < 0.51`);
+});
+
+test('ladderTrophies pays MILESTONE_TROPHIES per cleared milestone level, once each (issue #268)', () => {
+  assert.equal(ladderTrophies([]), 0);
+  assert.equal(ladderTrophies([1, 2, 9, 11, 19]), 0, 'only the decade levels pay');
+  assert.equal(ladderTrophies([9, 10]), MILESTONE_TROPHIES);
+  assert.equal(ladderTrophies([10, 10, 20]), 2 * MILESTONE_TROPHIES, 'a repeated level pays once');
+  // Every level of the ladder: one per decade, 10 … LADDER_LENGTH.
+  const all = Array.from({ length: LADDER_LENGTH }, (_, i) => i + 1);
+  assert.equal(ladderTrophies(all), (LADDER_LENGTH / 10) * MILESTONE_TROPHIES);
+  // Outside the ladder or not a level at all: nothing.
+  assert.equal(ladderTrophies([0, -10, LADDER_LENGTH + 10, 10.5, Number.NaN]), 0);
+  // Every milestone level is a spike level, and no other level is.
+  for (const level of all) {
+    assert.equal(ladderTrophies([level]) > 0, bandForLevel(level).spike, `level ${level}`);
+  }
 });

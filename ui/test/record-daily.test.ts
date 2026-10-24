@@ -7,11 +7,12 @@ import { test } from 'node:test';
 
 /** A fixed Thursday, so a run that straddles a Sunday cannot flake. */
 const NOW = Date.parse('2026-09-03T12:00:00Z');
-import { LADDER_LENGTH } from '@mahjongsolitaire/core';
+import { DAILY_SWEEP_TROPHIES, LADDER_LENGTH, MILESTONE_TROPHIES } from '@mahjongsolitaire/core';
 import {
   EMPTY_RECORD,
   RECORD_STORAGE_KEY,
   RecordStore,
+  earnedTrophies,
   hasCleared,
   liveStreak,
   parsePlayerRecord,
@@ -84,7 +85,7 @@ test('a record carrying both a cleared list and an old stars map merges them (is
 test("the day's first completion starts a 1-day streak and pays one trophy", () => {
   const storage = fakeStorage();
   const record = new RecordStore(storage);
-  assert.deepEqual(record.creditDailyChallenge('2026-09-01'), { credited: true, streak: 1, trophies: 1 });
+  assert.deepEqual(record.creditDailyChallenge('2026-09-01'), { credited: true, streak: 1, trophies: 1, sweep: false });
   assert.deepEqual(new RecordStore(storage).value, {
     ...EMPTY_RECORD,
     dailyStreak: 1,
@@ -103,29 +104,33 @@ test('consecutive days extend the streak and reset dailyCount to 1', () => {
     credited: true,
     streak: 2,
     trophies: 1,
+    sweep: false,
   });
   assert.equal(record.value.trophies, 3);
   assert.equal(record.value.lastDaily, '2026-09-02');
   assert.equal(record.value.dailyCount, 1, 'a new date starts the count over, not maxed with yesterday');
 });
 
-test("the day's second and third completions pay a flat trophy and leave the streak", () => {
+test("the day's second and third completions pay a trophy each and leave the streak; the third adds the sweep", () => {
   // A day serves three challenges (issue #183) and each one pays, but the
-  // streak counts days, not challenges.
+  // streak counts days, not challenges. Finishing all three pays the sweep
+  // bonus on the last (issue #268).
   const record = new RecordStore(fakeStorage());
   const first = record.creditDailyChallenge('2026-09-01');
-  assert.deepEqual(first, { credited: true, streak: 1, trophies: 1 });
+  assert.deepEqual(first, { credited: true, streak: 1, trophies: 1, sweep: false });
   assert.deepEqual(record.creditDailyChallenge('2026-09-01'), {
     credited: true,
     streak: 1,
     trophies: 1,
+    sweep: false,
   });
   assert.deepEqual(record.creditDailyChallenge('2026-09-01'), {
     credited: true,
     streak: 1,
-    trophies: 1,
+    trophies: 1 + DAILY_SWEEP_TROPHIES,
+    sweep: true,
   });
-  assert.equal(record.value.trophies, 3, 'three challenges, three trophies');
+  assert.equal(record.value.trophies, 3 + DAILY_SWEEP_TROPHIES, 'three challenges, three trophies, one sweep');
   assert.equal(record.value.dailyStreak, 1);
   assert.equal(record.value.lastDaily, '2026-09-01');
   assert.equal(record.value.dailyCount, 3, 'the record itself now enforces the three-a-day cap');
@@ -139,8 +144,8 @@ test('a fourth completion the same date pays nothing and writes nothing (issue #
   record.creditDailyChallenge('2026-09-01');
   const before = new RecordStore(storage).value; // what actually got persisted
   const fourth = record.creditDailyChallenge('2026-09-01');
-  assert.deepEqual(fourth, { credited: false, streak: 1, trophies: 0 });
-  assert.equal(record.value.trophies, 3, 'no fourth trophy');
+  assert.deepEqual(fourth, { credited: false, streak: 1, trophies: 0, sweep: false });
+  assert.equal(record.value.trophies, 3 + DAILY_SWEEP_TROPHIES, 'no fourth trophy, no second sweep');
   assert.equal(record.value.dailyCount, 3, 'the cap does not overshoot');
   assert.deepEqual(new RecordStore(storage).value, before, 'a refused credit writes nothing');
 });
@@ -163,7 +168,7 @@ test(
     const exploitAttempt = record.creditDailyChallenge('2026-09-01');
     assert.equal(exploitAttempt.credited, false, 'the record refuses a fourth credit for the same date');
     assert.equal(exploitAttempt.trophies, 0);
-    assert.equal(record.value.trophies, 3, 'no trophy minted by the replay');
+    assert.equal(record.value.trophies, 3 + DAILY_SWEEP_TROPHIES, 'no trophy minted by the replay');
   },
 );
 
@@ -176,11 +181,27 @@ test('a streak bonus is paid once a day, not once a challenge', () => {
   assert.equal(record.creditDailyChallenge('2026-09-07').trophies, 1, 'the bonus is per day');
 });
 
+test('a sweep on a 7-day streak pays the tier on the first and the sweep on the third (issue #268)', () => {
+  const record = new RecordStore(fakeStorage());
+  for (let day = 1; day <= 6; day++) record.creditDailyChallenge(`2026-09-0${day}`);
+  const paid = [1, 2, 3].map(() => record.creditDailyChallenge('2026-09-07'));
+  assert.deepEqual(
+    paid.map((c) => [c.trophies, c.sweep]),
+    [
+      [2, false],
+      [1, false],
+      [1 + DAILY_SWEEP_TROPHIES, true],
+    ],
+  );
+  // The next day starts over: its first challenge is not a sweep.
+  assert.equal(record.creditDailyChallenge('2026-09-08').sweep, false);
+});
+
 test('a missed day restarts the streak at 1', () => {
   const record = new RecordStore(fakeStorage());
   record.creditDailyChallenge('2026-09-01');
   record.creditDailyChallenge('2026-09-02');
-  assert.deepEqual(record.creditDailyChallenge('2026-09-04'), { credited: true, streak: 1, trophies: 1 });
+  assert.deepEqual(record.creditDailyChallenge('2026-09-04'), { credited: true, streak: 1, trophies: 1, sweep: false });
   assert.equal(record.value.trophies, 3);
 });
 
@@ -188,7 +209,7 @@ test('a date before the last credited one pays nothing', () => {
   const record = new RecordStore(fakeStorage());
   record.creditDailyChallenge('2026-09-05');
   // Yesterday's board finished after today's: the streak is what it is.
-  assert.deepEqual(record.creditDailyChallenge('2026-09-04'), { credited: false, streak: 1, trophies: 0 });
+  assert.deepEqual(record.creditDailyChallenge('2026-09-04'), { credited: false, streak: 1, trophies: 0, sweep: false });
   assert.equal(record.value.lastDaily, '2026-09-05');
   assert.equal(record.value.dailyCount, 1, 'the refused earlier date leaves the count untouched');
 });
@@ -201,7 +222,7 @@ test('the streak crosses month, year and DST boundaries', () => {
   }
   assert.equal(record.value.dailyStreak, 5);
   record.creditDailyChallenge('2026-12-31');
-  assert.deepEqual(record.creditDailyChallenge('2027-01-01'), { credited: true, streak: 2, trophies: 1 });
+  assert.deepEqual(record.creditDailyChallenge('2027-01-01'), { credited: true, streak: 2, trophies: 1, sweep: false });
 });
 
 test('trophies escalate at the 7- and 30-day tiers', () => {
@@ -273,3 +294,19 @@ function storageKeyIsStable(): boolean {
   return RECORD_STORAGE_KEY === 'mahjong.record.v1';
 }
 
+test('earnedTrophies adds the cleared milestone levels to the Daily trophies (issue #268)', () => {
+  assert.equal(earnedTrophies(EMPTY_RECORD), 0);
+  assert.equal(earnedTrophies({ ...EMPTY_RECORD, trophies: 4 }), 4);
+  assert.equal(earnedTrophies({ ...EMPTY_RECORD, trophies: 4, cleared: [1, 9, 10, 20] }), 4 + 2 * MILESTONE_TROPHIES);
+});
+
+test('a milestone pays on its first clear and never again on a replay (issue #268)', () => {
+  const record = new RecordStore(fakeStorage());
+  for (let level = 1; level <= 9; level++) record.recordWin(100, { level }, NOW);
+  assert.equal(earnedTrophies(record.value), 0);
+  record.recordWin(100, { level: 10 }, NOW);
+  assert.equal(earnedTrophies(record.value), MILESTONE_TROPHIES);
+  record.recordWin(100, { level: 10 }, NOW);
+  assert.equal(earnedTrophies(record.value), MILESTONE_TROPHIES, 'a replay pays nothing');
+  assert.equal(record.value.trophies, 0, 'the milestone is derived, never added to the counter');
+});

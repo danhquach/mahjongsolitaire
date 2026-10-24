@@ -54,6 +54,7 @@ import {
   scoreMultiplierForLevel,
   BAND_SCORE_MULTIPLIER,
   DAILY_CHALLENGE_COUNT,
+  MILESTONE_TROPHIES,
   dailyDateKey,
   faceSuit,
   nextPoolLayout,
@@ -111,6 +112,7 @@ import {
   RecordStore,
   avatarGlyph,
   clearedLevelCount,
+  earnedTrophies,
   hasCleared,
   liveStreak,
   weekScoreNow,
@@ -723,9 +725,11 @@ async function start(): Promise<void> {
           const got = charges.grantSplit(THIRD_CLEAR_GRANT, Math.random);
           grantLines.push(`${distinct} levels cleared: ${describeGrant(got)}.`);
         }
-        // The decade spike (a milestone level, issue #67) pays one of each.
+        // The decade spike (a milestone level, issue #67) pays one of each,
+        // and its trophies (issue #268, derived from the record's cleared set).
         if (bandForLevel(cleared).spike) {
-          grantLines.push(`Milestone level: ${describeGrant(charges.grantEach(MILESTONE_LEVEL_GRANT))}.`);
+          const got = describeGrant(charges.grantEach(MILESTONE_LEVEL_GRANT));
+          grantLines.push(`Milestone level: ${MILESTONE_TROPHIES} trophies, ${got}.`);
         }
         syncBoosterButtons();
       }
@@ -1187,7 +1191,7 @@ async function start(): Promise<void> {
       }),
     );
     dailyPanelStreak.textContent = String(liveStreak(record.value, today));
-    dailyPanelTrophies.textContent = String(record.value.trophies);
+    dailyPanelTrophies.textContent = String(earnedTrophies(record.value));
     resetDailyShareButton();
   }
 
@@ -1266,7 +1270,8 @@ async function start(): Promise<void> {
       // A refused credit (issue #227: the day's record cap already reached)
       // pays no trophy — say nothing about trophies rather than "0 trophies".
       const trophyClause = credit.credited
-        ? `${credit.trophies === 1 ? '1 trophy' : `${credit.trophies} trophies`}, `
+        ? `${credit.trophies === 1 ? '1 trophy' : `${credit.trophies} trophies`}` +
+          `${credit.sweep ? ' with the all-three bonus' : ''}, `
         : '';
       lines.push(
         `Daily challenge complete: ${goal.toLowerCase()}. ${trophyClause}${describeGrant(got)}.`,
@@ -1443,7 +1448,7 @@ async function start(): Promise<void> {
     // The streak as it stands today, not as it was last written: a missed
     // day has already ended it (issue #19).
     el<HTMLElement>('record-streak').textContent = String(liveStreak(record.value, dailyDateKey()));
-    el<HTMLElement>('record-trophies').textContent = String(record.value.trophies);
+    el<HTMLElement>('record-trophies').textContent = String(earnedTrophies(record.value));
     cloud.render();
     leaderboard.renderSection();
   }

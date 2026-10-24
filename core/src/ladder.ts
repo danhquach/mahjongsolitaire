@@ -98,6 +98,27 @@ export function bandForLevel(level: number): LadderPosition {
   return { band: base === 'easy' ? 'medium' : 'hard', spike: true };
 }
 
+/** Trophies each milestone level (10, 20, … LADDER_LENGTH) pays once it has
+ *  been cleared (issue #268). */
+export const MILESTONE_TROPHIES = 5;
+
+/**
+ * Trophies the ladder has paid for the levels in `cleared` (issue #268,
+ * decision 0042): MILESTONE_TROPHIES per milestone level among them. Derived
+ * from the cleared set rather than counted on a win, so a replay, a cleared
+ * local store or a sync merge (cleared merges by union) can never pay a
+ * milestone twice.
+ */
+export function ladderTrophies(cleared: Iterable<number>): number {
+  const milestones = new Set<number>();
+  for (const level of cleared) {
+    if (Number.isInteger(level) && level >= 1 && level <= LADDER_LENGTH && level % 10 === 0) {
+      milestones.add(level);
+    }
+  }
+  return milestones.size * MILESTONE_TROPHIES;
+}
+
 /**
  * The concealment band a ladder level plays at (decision 0011): easy 0%,
  * medium and medium-plus 8%, hard spikes 15%. Expert never ships in v1.

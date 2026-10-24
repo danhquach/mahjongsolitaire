@@ -22,7 +22,7 @@ import { applyFrame, frameFor } from './frames.js';
 import type { AvatarFrame } from './frames.js';
 import type { GlyphSetLoader } from './glyphs.js';
 import type { PanelStack } from './panel.js';
-import { DEFAULT_LOOKS, avatarGlyph } from './profile.js';
+import { DEFAULT_LOOKS, avatarGlyph, earnedTrophies } from './profile.js';
 import type { LookKind, ProfileStore, RecordStore } from './profile.js';
 import type { BackInUse, BoardRenderer, GlyphSetInUse } from './render.js';
 import { SHOP_ITEMS, affordability, glyphSetFor, purchase, trophyBalance } from './shop.js';
@@ -285,6 +285,7 @@ export function mountShopPanel(deps: ShopPanelDeps): ShopPanel {
 
   function renderShop(): void {
     const balance = trophyBalance(record.value);
+    const earned = earnedTrophies(record.value);
     // The spendable number is set apart (issue #239): it rides in the sticky
     // bar, and it is what every price on the way down is read against.
     const spend = document.createElement('span');
@@ -292,7 +293,7 @@ export function mountShopPanel(deps: ShopPanelDeps): ShopPanel {
     spend.textContent = String(balance);
     const rest = document.createTextNode(
       ` ${balance === 1 ? 'trophy' : 'trophies'} to spend` +
-        (record.value.trophies === balance ? '' : ` · ${record.value.trophies} earned`),
+        (earned === balance ? '' : ` · ${earned} earned`),
     );
     shopBalance.replaceChildren(spend, rest);
     for (const { list, rows, inUse } of SHOP_LISTS) {

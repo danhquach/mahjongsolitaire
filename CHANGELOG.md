@@ -6,6 +6,10 @@ commit and build time of the running bundle.
 
 ## 2026-10-24
 
+- More ways to earn trophies. Finishing all three Daily challenges in a day
+  now pays 2 extra trophies on top of the third. Each milestone level on the
+  ladder (10, 20, 30 … 150) pays 5 trophies the first time you clear it.
+  Milestones you have already cleared count right away (#268).
 - Levels 70 to 150 keep getting harder. Every level from 61 on used to play
   about like level 61: the same middling deals and the same 8% of tiles
   face-down. From level 71, each level now deals the hardest board its band
