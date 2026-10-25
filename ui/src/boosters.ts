@@ -29,6 +29,19 @@
 // failed write loses both together and the next launch simply grants again
 // from the balance it actually persisted — never twice on top of a grant that
 // stuck. The full board auto-save is issue #14; this only owns the charges.
+//
+// Issue #272: the charges follow a synced profile to other devices. A balance
+// cannot merge by "take the larger" the way the record does — it goes down
+// when spent, so the larger side would hand spent charges back. What is stored
+// and synced instead is a ledger: per device, every charge it was ever granted
+// and every one it spent, per kind. Both only grow, so two devices merge by
+// taking the larger of each (per device), and the balance everywhere is the
+// starting grant plus everything earned minus everything spent, clamped to
+// 0..BOOSTER_CAP. The starting grant is the profile's, paid once — a second
+// device restoring the profile does not bring a second one. The ledger also
+// carries the last day the daily grant was paid on *any* device, so a profile
+// collects it once a day, not once per device (as long as the devices have
+// synced in between — two devices launched offline on the same day each pay it).
 
 import { daysBetween, isDateKey } from '@mahjongsolitaire/core';
 
@@ -62,41 +75,169 @@ export interface ChargeStorage {
 
 export type Counts = Record<BoosterKind, number>;
 
-function freshGrant(): Counts {
-  return { hint: STARTING_GRANT, undo: STARTING_GRANT, shuffle: STARTING_GRANT };
+/** One device's side of the wallet (issue #272): every charge it was ever
+ *  granted and every one it spent, per kind. Both only grow, which is what
+ *  lets two devices merge by taking the larger of each — a merge can never
+ *  undo a spend, and nothing earned anywhere is lost. */
+export interface DeviceTally {
+  readonly earned: Counts;
+  readonly spent: Counts;
 }
 
-/** A stored count is only honoured when it is a non-negative integer; one
- *  above the cap (hand-edited) is clamped rather than thrown away. */
+/** The wallet as it syncs: one tally per device that has played the profile,
+ *  and the last day the daily grant was paid on any of them. */
+export interface BoosterLedger {
+  /** Date key of the last daily-login grant, or null if never granted. */
+  readonly day: string | null;
+  readonly devices: Readonly<Record<string, DeviceTally>>;
+}
+
+export const EMPTY_LEDGER: BoosterLedger = { day: null, devices: {} };
+
+/** A device id is short lowercase base32 (`randomDeviceId`); any other key in
+ *  a ledger is hand-edited and dropped. Same shape as worker/profile.mjs. */
+const DEVICE_ID = /^[a-z0-9]{1,16}$/;
+/** More devices than one player could plausibly own is a hand-edited ledger.
+ *  The cut keeps the lowest ids, so both sides of a merge cut the same ones
+ *  (worker/profile.mjs `MAX_DEVICES`, kept identical). */
+export const MAX_DEVICES = 32;
+/** A tally past this is hand-edited (the Worker's MAX_COUNTER). */
+const MAX_TALLY = 1e12;
+
+function zero(): Counts {
+  return { hint: 0, undo: 0, shuffle: 0 };
+}
+
+function tally(raw: unknown): number {
+  return typeof raw === 'number' && Number.isInteger(raw) && raw >= 0 && raw <= MAX_TALLY ? raw : 0;
+}
+
+function parseCounts(raw: unknown): Counts {
+  const counts = zero();
+  if (typeof raw === 'object' && raw !== null) {
+    for (const kind of BOOSTER_KINDS) counts[kind] = tally((raw as Record<string, unknown>)[kind]);
+  }
+  return counts;
+}
+
+function capDevices(devices: Record<string, DeviceTally>): Record<string, DeviceTally> {
+  return Object.fromEntries(
+    Object.keys(devices)
+      .sort()
+      .slice(0, MAX_DEVICES)
+      .map((id) => [id, devices[id]!]),
+  );
+}
+
+/** A ledger from storage or the server, field by field: a malformed tally
+ *  reads as zero, a malformed device id or day is dropped. */
+export function parseLedger(raw: unknown): BoosterLedger {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return EMPTY_LEDGER;
+  const r = raw as Record<string, unknown>;
+  const devices: Record<string, DeviceTally> = {};
+  const rawDevices = r['devices'];
+  if (typeof rawDevices === 'object' && rawDevices !== null && !Array.isArray(rawDevices)) {
+    for (const [id, t] of Object.entries(rawDevices as Record<string, unknown>)) {
+      if (!DEVICE_ID.test(id) || typeof t !== 'object' || t === null) continue;
+      const side = t as Record<string, unknown>;
+      devices[id] = { earned: parseCounts(side['earned']), spent: parseCounts(side['spent']) };
+    }
+  }
+  const day = r['day'];
+  return { day: isDateKey(day) ? day : null, devices: capDevices(devices) };
+}
+
+function maxCounts(a: Counts, b: Counts): Counts {
+  return { hint: Math.max(a.hint, b.hint), undo: Math.max(a.undo, b.undo), shuffle: Math.max(a.shuffle, b.shuffle) };
+}
+
+/** Merge two ledgers: per device, the larger of each tally; the later daily
+ *  grant day. Commutative and idempotent — both sides run it, and sync runs
+ *  it again and again on already-merged ledgers (worker/profile.mjs
+ *  `mergeLedgers`, kept identical). */
+export function mergeLedgers(a: BoosterLedger, b: BoosterLedger): BoosterLedger {
+  const devices: Record<string, DeviceTally> = {};
+  for (const id of new Set([...Object.keys(a.devices), ...Object.keys(b.devices)])) {
+    const x = a.devices[id];
+    const y = b.devices[id];
+    devices[id] =
+      x === undefined ? y! : y === undefined ? x : { earned: maxCounts(x.earned, y.earned), spent: maxCounts(x.spent, y.spent) };
+  }
+  const day = a.day === null ? b.day : b.day === null || a.day >= b.day ? a.day : b.day;
+  return { day, devices: capDevices(devices) };
+}
+
+/** What the player has of `kind`: the starting grant, plus everything earned,
+ *  minus everything spent, on every device. Clamped to 0..BOOSTER_CAP. Two
+ *  devices spending the same charges offline can leave the sum below zero;
+ *  later grants pay that back before the badge moves. */
+export function balanceOf(ledger: BoosterLedger, kind: BoosterKind): number {
+  let net = STARTING_GRANT;
+  for (const t of Object.values(ledger.devices)) net += t.earned[kind] - t.spent[kind];
+  return Math.min(Math.max(net, 0), BOOSTER_CAP);
+}
+
+const ID_ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz';
+
+/** A fresh device id: 10 random base32 symbols (2^50), plenty to keep one
+ *  player's handful of devices apart. */
+export function randomDeviceId(): string {
+  const bytes = new Uint8Array(10);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => ID_ALPHABET[b & 31]).join('');
+}
+
+/** A stored count from before issue #272 is only honoured when it is a
+ *  non-negative integer; one above the cap (hand-edited) is clamped rather
+ *  than thrown away. */
 function readCount(raw: unknown): number | null {
   return typeof raw === 'number' && Number.isInteger(raw) && raw >= 0 ? Math.min(raw, BOOSTER_CAP) : null;
 }
 
 interface Stored {
-  readonly counts: Counts;
-  /** Date key of the last daily-login grant, or null if never granted. */
-  readonly lastLoginGrant: string | null;
+  readonly device: string;
+  readonly ledger: BoosterLedger;
+  /** False for a record from before issue #272, whose tally the constructor
+   *  writes at once under its new id. A fresh device has no tally to protect,
+   *  so it writes nothing until it first earns or spends. */
+  readonly settled: boolean;
 }
 
-function load(storage: ChargeStorage | undefined, key: string): Stored {
-  const counts = freshGrant();
-  if (!storage) return { counts, lastLoginGrant: null };
+function load(storage: ChargeStorage | undefined, key: string, newDeviceId: () => string): Stored {
+  const fresh = (): Stored => ({ device: newDeviceId(), ledger: EMPTY_LEDGER, settled: true });
+  if (!storage) return fresh();
   let record: unknown;
   try {
     const raw = storage.getItem(key);
-    if (raw === null) return { counts, lastLoginGrant: null };
+    if (raw === null) return fresh();
     record = JSON.parse(raw);
   } catch {
-    return { counts, lastLoginGrant: null }; // unreadable storage or malformed JSON: start fresh
+    return fresh(); // unreadable storage or malformed JSON: start fresh
   }
-  if (typeof record !== 'object' || record === null) return { counts, lastLoginGrant: null };
+  if (typeof record !== 'object' || record === null) return fresh();
   const raw = record as Record<string, unknown>;
+  const device = raw['device'];
+  if (typeof device === 'string' && DEVICE_ID.test(device)) {
+    return { device, ledger: parseLedger(raw['ledger']), settled: true };
+  }
+  // A record from before issue #272 holds balances, not a ledger. This
+  // device's tally is whatever moved each balance off the starting grant, so
+  // the badges read the same after the upgrade as before it.
+  const id = newDeviceId();
+  const earned = zero();
+  const spent = zero();
   for (const kind of BOOSTER_KINDS) {
-    const value = readCount(raw[kind]);
-    if (value !== null) counts[kind] = value;
+    const count = readCount(raw[kind]);
+    if (count === null) continue;
+    if (count > STARTING_GRANT) earned[kind] = count - STARTING_GRANT;
+    else spent[kind] = STARTING_GRANT - count;
   }
   const last = raw['lastLoginGrant'];
-  return { counts, lastLoginGrant: isDateKey(last) ? last : null };
+  return {
+    device: id,
+    ledger: { day: isDateKey(last) ? last : null, devices: { [id]: { earned, spent } } },
+    settled: false,
+  };
 }
 
 /** Does the Nth distinct first-clear pay the every-third bonus (issue #51)? */
@@ -113,30 +254,47 @@ export function thirdClearDue(distinctCleared: number): boolean {
  * solver cannot validate therefore costs the player nothing.
  */
 export class BoosterCharges {
-  private readonly counts: Counts;
-  private lastLoginGrant: string | null;
+  private ledger: BoosterLedger;
+  /** This device's key in the ledger: the only tally it ever writes to. */
+  private readonly device: string;
 
   constructor(
     private readonly storage: ChargeStorage | undefined = undefined,
     private readonly key: string = CHARGES_STORAGE_KEY,
+    newDeviceId: () => string = randomDeviceId,
   ) {
-    const stored = load(storage, key);
-    this.counts = stored.counts;
-    this.lastLoginGrant = stored.lastLoginGrant;
+    const stored = load(storage, key, newDeviceId);
+    this.device = stored.device;
+    this.ledger = stored.ledger;
+    // The id is written straight away: a migrated tally that synced under one
+    // id and came back next launch under another would count twice.
+    if (!stored.settled) this.persist();
   }
 
   remaining(kind: BoosterKind): number {
-    return this.counts[kind];
+    return balanceOf(this.ledger, kind);
   }
 
   has(kind: BoosterKind): boolean {
-    return this.counts[kind] > 0;
+    return this.remaining(kind) > 0;
+  }
+
+  /** The ledger as it syncs (issue #272). */
+  get synced(): BoosterLedger {
+    return this.ledger;
+  }
+
+  /** Merge a synced ledger in — after a push's reply, or a restore. Never
+   *  loses a charge earned or spent on this device. */
+  adopt(remote: BoosterLedger): void {
+    this.ledger = mergeLedgers(this.ledger, remote);
+    this.persist();
   }
 
   /** Spend one charge. Returns false, changing nothing, when none remain. */
   spend(kind: BoosterKind): boolean {
     if (!this.has(kind)) return false;
-    this.counts[kind]--;
+    this.bump('spent', kind, 1);
     this.persist();
     return true;
   }
@@ -145,9 +303,9 @@ export class BoosterCharges {
    *  landed (0 at the cap), so the caller can say what was granted. */
   grant(kind: BoosterKind, n: number): number {
     if (!Number.isInteger(n) || n < 0) throw new RangeError(`grant must be a non-negative integer: ${n}`);
-    const added = Math.min(n, BOOSTER_CAP - this.counts[kind]);
+    const added = Math.min(n, BOOSTER_CAP - this.remaining(kind));
     if (added <= 0) return 0;
-    this.counts[kind] += added;
+    this.bump('earned', kind, added);
     this.persist();
     return added;
   }
@@ -175,10 +333,11 @@ export class BoosterCharges {
    */
   grantDailyLogin(today: string): Counts | null {
     if (!isDateKey(today)) throw new RangeError(`not a date key: ${today}`);
-    if (this.lastLoginGrant !== null && daysBetween(this.lastLoginGrant, today) < 1) return null;
+    const last = this.ledger.day;
+    if (last !== null && daysBetween(last, today) < 1) return null;
     // The date is set before the single write below, so a failed write drops
     // the date and the charges together.
-    this.lastLoginGrant = today;
+    this.ledger = { ...this.ledger, day: today };
     return this.grantEach(DAILY_LOGIN_GRANT);
   }
 
@@ -188,18 +347,26 @@ export class BoosterCharges {
     if (!Number.isInteger(n) || n < 0) throw new RangeError(`grant must be a non-negative integer: ${n}`);
     const got: Counts = { hint: 0, undo: 0, shuffle: 0 };
     for (const kind of BOOSTER_KINDS) {
-      const added = Math.min(n, BOOSTER_CAP - this.counts[kind]);
-      this.counts[kind] += added;
+      const added = Math.min(n, BOOSTER_CAP - this.remaining(kind));
+      this.bump('earned', kind, added);
       got[kind] = added;
     }
     this.persist();
     return got;
   }
 
+  /** Add `n` to one side of this device's own tally. */
+  private bump(side: keyof DeviceTally, kind: BoosterKind, n: number): void {
+    if (n <= 0) return;
+    const own = this.ledger.devices[this.device] ?? { earned: zero(), spent: zero() };
+    const next: DeviceTally = { ...own, [side]: { ...own[side], [kind]: own[side][kind] + n } };
+    this.ledger = { ...this.ledger, devices: { ...this.ledger.devices, [this.device]: next } };
+  }
+
   private persist(): void {
     if (!this.storage) return;
     try {
-      this.storage.setItem(this.key, JSON.stringify({ ...this.counts, lastLoginGrant: this.lastLoginGrant }));
+      this.storage.setItem(this.key, JSON.stringify({ device: this.device, ledger: this.ledger }));
     } catch {
       // Write-blocked storage (private mode, quota): charges stay in memory for
       // this session rather than taking the game down.

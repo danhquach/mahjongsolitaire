@@ -463,6 +463,83 @@ function mergeLooks(a, b) {
   return JSON.stringify(a.looks) >= JSON.stringify(b.looks) ? pick(a) : pick(b);
 }
 
+// --- booster ledger (issue #272) ---------------------------------------------
+//
+// The booster wallet rides beside the record, not in it: a balance goes down
+// when spent, so it cannot merge by max. What syncs is a ledger — per device,
+// every charge granted and every one spent, per kind — and the balance is
+// derived on the device. Keep this in step with ui/src/boosters.ts
+// (`parseLedger`, `mergeLedgers`); both sides run the merge.
+
+const BOOSTER_KINDS = ['hint', 'undo', 'shuffle'];
+/** Same shape and cap as ui/src/boosters.ts `DEVICE_ID` / `MAX_DEVICES`. */
+const DEVICE_ID = /^[a-z0-9]{1,16}$/;
+const MAX_DEVICES = 32;
+
+export const EMPTY_LEDGER = { day: null, devices: {} };
+
+/** A real calendar day, like core's `isDateKey` that the client checks the
+ *  same field with — the format alone would keep a hand-edited 2026-02-30. */
+function isCalendarDay(value) {
+  if (typeof value !== 'string' || !DATE_KEY.test(value)) return false;
+  const time = Date.parse(`${value}T00:00:00Z`);
+  return !Number.isNaN(time) && new Date(time).toISOString().slice(0, 10) === value;
+}
+
+function ledgerCounts(raw) {
+  const counts = {};
+  for (const kind of BOOSTER_KINDS) {
+    counts[kind] = raw !== null && typeof raw === 'object' ? counter(raw[kind]) : 0;
+  }
+  return counts;
+}
+
+function capDevices(devices) {
+  return Object.fromEntries(
+    Object.keys(devices)
+      .sort()
+      .slice(0, MAX_DEVICES)
+      .map((id) => [id, devices[id]]),
+  );
+}
+
+/** A ledger from a client or a row, field by field: a malformed tally reads
+ *  as zero, a malformed device id or day is dropped. Never null — a client
+ *  from before #272 sends none, and that is an empty ledger. */
+export function validateLedger(raw) {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return EMPTY_LEDGER;
+  const devices = {};
+  if (raw.devices !== null && typeof raw.devices === 'object' && !Array.isArray(raw.devices)) {
+    for (const [id, tally] of Object.entries(raw.devices)) {
+      if (!DEVICE_ID.test(id) || tally === null || typeof tally !== 'object') continue;
+      devices[id] = { earned: ledgerCounts(tally.earned), spent: ledgerCounts(tally.spent) };
+    }
+  }
+  return { day: isCalendarDay(raw.day) ? raw.day : null, devices: capDevices(devices) };
+}
+
+function maxCounts(a, b) {
+  return Object.fromEntries(BOOSTER_KINDS.map((kind) => [kind, Math.max(a[kind], b[kind])]));
+}
+
+/** Per device, the larger of each tally; the later daily-grant day.
+ *  Commutative and idempotent, like every merge here. */
+export function mergeLedgers(a, b) {
+  const devices = {};
+  for (const id of new Set([...Object.keys(a.devices), ...Object.keys(b.devices)])) {
+    const x = a.devices[id];
+    const y = b.devices[id];
+    devices[id] =
+      x === undefined
+        ? y
+        : y === undefined
+          ? x
+          : { earned: maxCounts(x.earned, y.earned), spent: maxCounts(x.spent, y.spent) };
+  }
+  const day = a.day === null ? b.day : b.day === null || a.day >= b.day ? a.day : b.day;
+  return { day, devices: capDevices(devices) };
+}
+
 // --- storage -----------------------------------------------------------------
 
 const AVATAR_ID = /^[a-z][a-z0-9-]{0,31}$/;
@@ -499,6 +576,8 @@ function rowToProfile(row) {
       looks: parseLooks(JSON.parse(row.looks ?? '{}')),
       looksAt: parseLooksAt(row.looks_at),
     },
+    // A row from before migration 0008 holds the column default, '{}'.
+    boosters: validateLedger(JSON.parse(row.boosters ?? '{}')),
   };
 }
 
@@ -580,6 +659,7 @@ async function register(request, env, deps, now, limit) {
   if (avatar === null) return json(400, { error: 'invalid_payload' });
   const record = validateRecord(payload.record ?? EMPTY_RECORD);
   if (record === null) return json(400, { error: 'invalid_payload' });
+  const boosters = validateLedger(payload.boosters);
 
   // The id and the code are both random, and both UNIQUE in the schema. A
   // collision is not a realistic event (2^50 and 2^120), but the failure mode
@@ -595,8 +675,8 @@ async function register(request, env, deps, now, limit) {
         `INSERT INTO players
            (id, code_hash, name, avatar, levels_cleared, week_score, week_start,
             cleared, daily_streak, last_daily, trophies, daily_count,
-            owned, looks, looks_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            owned, looks, looks_at, boosters, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           candidateId,
@@ -614,6 +694,7 @@ async function register(request, env, deps, now, limit) {
           JSON.stringify(record.owned),
           JSON.stringify(record.looks),
           record.looksAt,
+          JSON.stringify(boosters),
           now,
           now,
         )
@@ -632,7 +713,7 @@ async function register(request, env, deps, now, limit) {
     // The only time the plaintext code is ever sent: the client stores it and
     // shows it to the player as the one way back to this profile.
     code: formatCode(code),
-    profile: { playerId, name, avatar, record },
+    profile: { playerId, name, avatar, record, boosters },
   });
 }
 
@@ -654,12 +735,14 @@ async function sync(request, env, deps, now, limit) {
   const avatar = payload.avatar === undefined ? auth.row.avatar : validateAvatar(payload.avatar);
   if (avatar === null) return json(400, { error: 'invalid_payload' });
 
-  const merged = mergeRecords(rowToProfile(auth.row).record, clientRecord);
+  const stored = rowToProfile(auth.row);
+  const merged = mergeRecords(stored.record, clientRecord);
+  const boosters = mergeLedgers(stored.boosters, validateLedger(payload.boosters));
   await env.DB.prepare(
     `UPDATE players
         SET avatar = ?, levels_cleared = ?, week_score = ?, week_start = ?,
             cleared = ?, daily_streak = ?, last_daily = ?, trophies = ?, daily_count = ?,
-            owned = ?, looks = ?, looks_at = ?, updated_at = ?
+            owned = ?, looks = ?, looks_at = ?, boosters = ?, updated_at = ?
       WHERE id = ?`,
   )
     .bind(
@@ -675,13 +758,14 @@ async function sync(request, env, deps, now, limit) {
       JSON.stringify(merged.owned),
       JSON.stringify(merged.looks),
       merged.looksAt,
+      JSON.stringify(boosters),
       now,
       auth.row.id,
     )
     .run();
 
   return json(200, {
-    profile: { playerId: auth.row.id, name: auth.row.name, avatar, record: merged },
+    profile: { playerId: auth.row.id, name: auth.row.name, avatar, record: merged, boosters },
   });
 }
 
@@ -716,8 +800,9 @@ async function read(request, env, deps, now, limit) {
 /**
  * Issue #201, "Reset progress": the record goes back to `EMPTY_RECORD` and
  * every standing and stored run goes, while the row itself — id, code, name,
- * avatar — stays. The record is *replaced*, not merged: the next sync from a
- * device that has not reset yet would otherwise merge the old progress
+ * avatar, and the booster wallet (issue #272: the device keeps its charges
+ * through a reset too, ui/src/account.ts) — stays. The record is *replaced*,
+ * not merged: the next sync from a device that has not reset yet would otherwise merge the old progress
  * straight back (`mergeRecords` never regresses), so the client wipes its own
  * copy before it syncs again, and a second device that syncs first restores
  * whatever it still holds. That is the merge rule working as designed, and

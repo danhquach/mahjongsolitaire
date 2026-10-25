@@ -1473,10 +1473,13 @@ async function start(): Promise<void> {
     announcer,
     profile,
     record,
+    charges,
     // The server's record was merged in: another device may have bought or
     // picked a look (issue #229), and the balance may have moved, so a Buy
-    // waiting for its Confirm is withdrawn.
+    // waiting for its Confirm is withdrawn. Another device may also have
+    // earned or spent booster charges (issue #272).
     onRecordAdopted: () => {
+      syncBoosterButtons();
       if (profileDialog.visible) syncProfileControls();
       void applyGlyphSet();
       applyPalette();
@@ -2386,14 +2389,20 @@ async function start(): Promise<void> {
   if (resumed === null && settings.value.showTutorial) tut.start();
 
   // Daily first-launch grant (issue #51): +1 of each, once per local calendar
-  // day. The badges already show it (syncBoosterButtons ran in the redraw
-  // above); say it too, a beat after the boot announcement so the two
-  // live-region writes do not coalesce into one.
-  const loginGrant = charges.grantDailyLogin(dailyDateKey());
-  if (loginGrant !== null) {
+  // day — per profile, not per device, once sync is on (issue #272). So the
+  // launch syncs first, and the grant waits for it: if another device has
+  // already paid today's, the merged ledger says so. With sync off, or the
+  // endpoint unreachable, the wait is nothing or a failed request. Then the
+  // badges show it; say it too, a beat later so the boot announcement and
+  // this one do not coalesce into one live-region write.
+  void cloud.pull().then(() => {
+    const loginGrant = charges.grantDailyLogin(dailyDateKey());
+    if (loginGrant === null) return;
     syncBoosterButtons();
+    // Up to the server, so the next device to launch today sees it was paid.
+    cloud.push();
     window.setTimeout(() => announcer.say(`Daily bonus: ${describeGrant(loginGrant)}.`), 1500);
-  }
+  });
 
   // Set the audio up in idle time, not on the first tap (issue #58): creating
   // the AudioContext costs a whole frame and change, and it used to land

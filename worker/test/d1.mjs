@@ -20,6 +20,7 @@ const SCHEMA_FILES = [
   '../schema-0005-rate-limits.sql',
   '../schema-0006-daily-count.sql',
   '../schema-0007-cosmetics.sql',
+  '../schema-0008-boosters.sql',
 ];
 
 /**

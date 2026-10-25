@@ -65,12 +65,15 @@ test('an empty store starts a fresh grant and only writes once spent', () => {
   const charges = new BoosterCharges(storage);
   assert.equal(storage.store.size, 0);
   charges.spend('shuffle');
-  assert.deepEqual(JSON.parse(storage.store.get(CHARGES_STORAGE_KEY)!), {
-    hint: STARTING_GRANT,
-    undo: STARTING_GRANT,
-    shuffle: STARTING_GRANT - 1,
-    lastLoginGrant: null, // issue #51: the daily-login date rides in the same record
+  // Issue #272: what is stored is this device's tally, not the balance.
+  const stored = JSON.parse(storage.store.get(CHARGES_STORAGE_KEY)!);
+  assert.deepEqual(stored.ledger, {
+    day: null, // issue #51: the daily-login date rides in the same record
+    devices: {
+      [stored.device]: { earned: { hint: 0, undo: 0, shuffle: 0 }, spent: { hint: 0, undo: 0, shuffle: 1 } },
+    },
   });
+  assert.equal(new BoosterCharges(storage).remaining('shuffle'), STARTING_GRANT - 1);
 });
 
 test('unusable stored values fall back to the grant, per booster', () => {

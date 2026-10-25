@@ -1795,10 +1795,12 @@ for (const vp of VIEWPORTS) {
     // above, and the starting grant in ui/test/boosters.test.ts, where no play
     // can move either.
     await page.evaluate((today) => {
-      const stored = JSON.parse(localStorage.getItem('mahjong.boosters.v1') ?? '{}');
+      // Issue #272: the store holds a ledger now, so a reset to 5/5/5 is a
+      // balance-shaped record with no device id — it migrates back to exactly
+      // that on the reload, today's daily grant still marked paid.
       localStorage.setItem(
         'mahjong.boosters.v1',
-        JSON.stringify({ ...stored, hint: 5, undo: 5, shuffle: 5 }),
+        JSON.stringify({ hint: 5, undo: 5, shuffle: 5, lastLoginGrant: today }),
       );
       localStorage.setItem(
         'mahjong.daily.v1',

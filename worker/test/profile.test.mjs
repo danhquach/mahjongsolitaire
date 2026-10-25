@@ -21,6 +21,8 @@ import {
   reapPlayers,
   normalizeCode,
   sanitizeName,
+  mergeLedgers,
+  validateLedger,
   validateRecord,
 } from '../profile.mjs';
 
@@ -454,6 +456,87 @@ test('a row from before migration 0007 reads as owning nothing with a null stamp
   assert.deepEqual(record.owned, []);
   assert.deepEqual(record.looks, { back: 'lantern', felt: 'lantern', frame: 'lantern', glyphs: 'lantern' });
   assert.equal(record.looksAt, null);
+});
+
+/** A one-device ledger, for the booster tests below (issue #272). */
+function ledger(id, earned, spent, day = null) {
+  const zero = { hint: 0, undo: 0, shuffle: 0 };
+  return { day, devices: { [id]: { earned: { ...zero, ...earned }, spent: { ...zero, ...spent } } } };
+}
+
+test('booster charges round-trip through register, sync and read, exercising the 0008 column', async () => {
+  const env = { DB: createDb() };
+  const phone = ledger('phone', { hint: 10 }, { undo: 1 }, '2026-10-23');
+  const { json: created } = await registerPlayer(env, makeDeps(), { boosters: phone });
+  assert.deepEqual(created.profile.boosters, phone);
+  const row = env.DB.raw.prepare('SELECT boosters FROM players WHERE id = ?').get(created.playerId);
+  assert.deepEqual(JSON.parse(row.boosters), phone);
+
+  // A second device syncs its own tally: both are kept, the later day wins.
+  const tablet = ledger('tablet', {}, { shuffle: 2 }, '2026-10-24');
+  const response = await handleProfile(
+    request('POST', '/api/profile/sync', { headers: bearer(created.code), body: { record: EMPTY_RECORD, boosters: tablet } }),
+    env,
+    makeDeps(),
+  );
+  assert.equal(response.status, 200);
+  const merged = (await response.json()).profile.boosters;
+  assert.deepEqual(merged, { day: '2026-10-24', devices: { ...phone.devices, ...tablet.devices } });
+
+  // A client from before #272 sends no ledger: what the server holds stands.
+  const old = await handleProfile(
+    request('POST', '/api/profile/sync', { headers: bearer(created.code), body: { record: EMPTY_RECORD } }),
+    env,
+    makeDeps(),
+  );
+  assert.deepEqual((await old.json()).profile.boosters, merged);
+
+  const read = await handleProfile(request('GET', '/api/profile', { headers: bearer(created.code) }), env, makeDeps());
+  assert.deepEqual((await read.json()).profile.boosters, merged);
+});
+
+test('a reset leaves the booster wallet alone', async () => {
+  const env = { DB: createDb() };
+  const phone = ledger('phone', { hint: 10 }, {});
+  const { json: created } = await registerPlayer(env, makeDeps(), { boosters: phone });
+  const response = await handleProfile(request('POST', '/api/profile/reset', { headers: bearer(created.code) }), env, makeDeps());
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).profile.boosters, phone);
+});
+
+test('a row from before migration 0008 reads as an empty ledger', async () => {
+  const env = { DB: createDb() };
+  const { json: created } = await registerPlayer(env, makeDeps());
+  env.DB.raw.prepare("UPDATE players SET boosters = '{}' WHERE id = ?").run(created.playerId);
+  const read = await handleProfile(request('GET', '/api/profile', { headers: bearer(created.code) }), env, makeDeps());
+  assert.deepEqual((await read.json()).profile.boosters, { day: null, devices: {} });
+});
+
+test('the ledger merge keeps the larger of each tally per device, from either side', () => {
+  const a = ledger('a', { hint: 3 }, { shuffle: 1 }, '2026-10-20');
+  const b = { day: '2026-10-22', devices: { ...ledger('a', { hint: 1, undo: 2 }, {}).devices, ...ledger('b', { shuffle: 4 }, {}).devices } };
+  const ab = mergeLedgers(a, b);
+  assert.deepEqual(ab, mergeLedgers(b, a));
+  assert.deepEqual(mergeLedgers(ab, ab), ab);
+  assert.equal(ab.day, '2026-10-22');
+  assert.deepEqual(ab.devices.a, { earned: { hint: 3, undo: 2, shuffle: 0 }, spent: { hint: 0, undo: 0, shuffle: 1 } });
+  assert.deepEqual(Object.keys(ab.devices), ['a', 'b']);
+});
+
+test('a junk ledger is sanitized field by field, never refused', () => {
+  assert.deepEqual(validateLedger(undefined), { day: null, devices: {} });
+  assert.deepEqual(validateLedger('nope'), { day: null, devices: {} });
+  assert.deepEqual(
+    validateLedger({
+      day: '2026-02-30',
+      devices: { 'BAD ID': {}, ok: { earned: { hint: -4, undo: 2 }, spent: 'x' }, gone: null },
+    }),
+    { day: null, devices: { ok: { earned: { hint: 0, undo: 2, shuffle: 0 }, spent: { hint: 0, undo: 0, shuffle: 0 } } } },
+  );
+  const many = Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`d${String(i).padStart(2, '0')}`, {}]));
+  const kept = Object.keys(validateLedger({ devices: many }).devices);
+  assert.equal(kept.length, 32);
+  assert.equal(kept[0], 'd00');
 });
 
 test('a wrong, malformed or missing code is the same 401', async () => {
