@@ -6,6 +6,12 @@ commit and build time of the running bundle.
 
 ## 2026-10-24
 
+- Booster charges now follow your profile. Restoring your profile on
+  another device with your recovery code used to bring everything except
+  your Hints, Undos and Shuffles. They now come with it, and charges earned or
+  spent on one device show up on the others the next time they sync. The
+  game also syncs when it starts. The daily bonus is now once a day per
+  profile, not once per device (#272).
 - More ways to earn trophies. Finishing all three Daily challenges in a day
   now pays 2 extra trophies on top of the third. Each milestone level on the
   ladder (10, 20, 30 … 150) pays 5 trophies the first time you clear it.

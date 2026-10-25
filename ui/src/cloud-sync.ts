@@ -16,6 +16,7 @@
 // formats — stay in sync.ts, where their tests are.
 
 import type { Announcer } from './a11y.js';
+import type { BoosterCharges } from './boosters.js';
 import { el } from './dom.js';
 import type { ProfileStore, RecordStore } from './profile.js';
 import type { KeyValueStorage } from './storage.js';
@@ -40,9 +41,12 @@ export interface CloudSyncDeps {
   readonly announcer: Pick<Announcer, 'say'>;
   readonly profile: ProfileStore;
   readonly record: RecordStore;
+  /** The booster wallet, which rides every sync beside the record (issue #272). */
+  readonly charges: Pick<BoosterCharges, 'synced' | 'adopt'>;
   /** The server's record has just been merged into the local one — after a
    *  push's reply, or a restore. Every screen that shows the record, or a
-   *  look another device may have bought or picked, re-reads it here. */
+   *  look another device may have bought or picked, re-reads it here — and
+   *  the booster badges, which another device may have earned or spent. */
   readonly onRecordAdopted: () => void;
   /** A restore has replaced the local name (only a restore does; a background
    *  sync never overwrites a rename made on this device). The profile panel's
@@ -71,6 +75,10 @@ export interface CloudSync {
    *  purchase. Fire-and-forget by design: nothing waits on the network, and a
    *  failure is simply the next sync's problem. */
   push(): void;
+  /** The same push, awaitable — at launch, so the daily booster grant sees
+   *  whether another device already paid today's (issue #272). Resolves
+   *  either way, and at once while sync is off. */
+  pull(): Promise<void>;
   /** Publish a name the player just committed. Only ever called from the
    *  profile panel, so a screening refusal has somewhere to be shown. */
   publishName(name: string): Promise<void>;
@@ -79,7 +87,7 @@ export interface CloudSync {
 /** Look up the section's elements, wire its controls, and hand back what the
  *  rest of the game may ask of it. */
 export function mountCloudSync(deps: CloudSyncDeps): CloudSync {
-  const { storage, announcer, profile, record, onRecordAdopted, onNameRestored, onCredentialsChanged } =
+  const { storage, announcer, profile, record, charges, onRecordAdopted, onNameRestored, onCredentialsChanged } =
     deps;
 
   const syncOffBlock = el<HTMLDivElement>('sync-off');
@@ -168,6 +176,7 @@ export function mountCloudSync(deps: CloudSyncDeps): CloudSync {
    *  rename made on this device (only a restore does, below). */
   function adoptRemoteRecord(remote: RemoteProfile): void {
     record.adopt(mergeRecords(record.value, remote.record));
+    charges.adopt(remote.boosters);
     onRecordAdopted();
   }
 
@@ -175,13 +184,17 @@ export function mountCloudSync(deps: CloudSyncDeps): CloudSync {
    *  the win flow waits on the network, and a failure is simply the next
    *  sync's problem. The avatar rides along — the sync route carries it. */
   function push(): void {
+    void pull();
+  }
+
+  async function pull(): Promise<void> {
     if (syncCredentials === null) return;
-    void pushRecord(syncCredentials, {
+    const result = await pushRecord(syncCredentials, {
       avatar: profile.value.avatar,
       record: record.value,
-    }).then((result) => {
-      if (result.ok) adoptRemoteRecord(result.value);
+      boosters: charges.synced,
     });
+    if (result.ok) adoptRemoteRecord(result.value);
   }
 
   /** Publish a name the player just committed. Only ever called from the
@@ -203,6 +216,7 @@ export function mountCloudSync(deps: CloudSyncDeps): CloudSync {
         name: profile.value.name,
         avatar: profile.value.avatar,
         record: record.value,
+        boosters: charges.synced,
       });
       if (!result.ok) {
         setSyncStatus(SYNC_FAILURE_TEXT[result.reason]);
@@ -265,7 +279,8 @@ export function mountCloudSync(deps: CloudSyncDeps): CloudSync {
       // here). Keeping the local one is the right fallback — there is nothing
       // to draw for an id we do not know.
       profile.setAvatar(remote.avatar);
-      // The restored record may pick a glyph set, a felt and a back (issue #229).
+      // The restored record may pick a glyph set, a felt and a back (issue #229),
+      // and brings the booster charges with it (issue #272).
       adoptRemoteRecord(remote);
       setSyncStatus(`Profile restored — welcome back, ${remote.name}.`);
       announcer.say(`Profile restored. Welcome back, ${remote.name}.`);
@@ -273,6 +288,7 @@ export function mountCloudSync(deps: CloudSyncDeps): CloudSync {
       const pushed = await pushRecord(syncCredentials, {
         avatar: profile.value.avatar,
         record: record.value,
+        boosters: charges.synced,
       });
       if (pushed.ok) adoptRemoteRecord(pushed.value);
     });
@@ -321,6 +337,7 @@ export function mountCloudSync(deps: CloudSyncDeps): CloudSync {
       syncCodeShown = false;
     },
     push,
+    pull,
     publishName,
   };
 }

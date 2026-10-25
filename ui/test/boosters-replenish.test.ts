@@ -243,11 +243,12 @@ test('grants persist through the same record as the balances', () => {
   const charges = new BoosterCharges(storage);
   charges.grant('shuffle', 2);
   charges.grantDailyLogin('2026-09-01');
-  assert.deepEqual(JSON.parse(storage.store.get(CHARGES_STORAGE_KEY)!), {
-    hint: 6,
-    undo: 6,
-    shuffle: 8,
-    lastLoginGrant: '2026-09-01',
+  const stored = JSON.parse(storage.store.get(CHARGES_STORAGE_KEY)!);
+  assert.deepEqual(stored.ledger, {
+    day: '2026-09-01',
+    devices: {
+      [stored.device]: { earned: { hint: 1, undo: 1, shuffle: 3 }, spent: { hint: 0, undo: 0, shuffle: 0 } },
+    },
   });
   assert.deepEqual(balances(new BoosterCharges(storage)), { hint: 6, undo: 6, shuffle: 8 });
 });

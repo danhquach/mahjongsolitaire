@@ -1,0 +1,34 @@
+-- D1 schema, migration 0008: booster charges follow a synced profile
+-- (issue #272).
+--
+--   wrangler d1 execute lantern-tiles --remote --file worker/schema-0008-boosters.sql
+--
+-- (`--local` instead of `--remote` for `wrangler dev`.)
+--
+-- ## Additive only, and it must run BEFORE the deploy
+--
+-- One column on `players`, with a default, so every existing row reads as an
+-- empty ledger:
+--
+--   boosters  JSON object, `{"day": <date key or null>, "devices": {<id>:
+--             {"earned": {hint, undo, shuffle}, "spent": {...}}}}`. Read and
+--             written whole and merged per device by max (worker/profile.mjs
+--             `mergeLedgers`); the balance is derived on the device.
+--
+-- Reset leaves this column alone: charges are a wallet, not progress, and the
+-- device keeps its own through a reset too.
+--
+-- Same ordering as 0003, 0006 and 0007: the Worker built with issue #272's
+-- code binds this column on every profile write, so apply this file before
+-- that Worker is deployed or every register/sync 500s until the column
+-- exists. `worker/scripts/check-schema.mjs` is the deploy gate that enforces
+-- it.
+--
+-- ## Re-running
+--
+-- NOT a no-op. SQLite has no `ADD COLUMN IF NOT EXISTS`, so a second run
+-- errors. Check what is there before re-running:
+--
+--   wrangler d1 execute lantern-tiles --remote --command "PRAGMA table_info(players)"
+
+ALTER TABLE players ADD COLUMN boosters TEXT NOT NULL DEFAULT '{}';

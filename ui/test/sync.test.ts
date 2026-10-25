@@ -7,6 +7,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { EMPTY_LEDGER } from '../src/boosters.js';
 import { EMPTY_RECORD } from '../src/profile.js';
 import type { PlayerRecord } from '../src/profile.js';
 import {
@@ -133,7 +134,7 @@ test('turning sync on sends the local profile and takes back id and code', async
     body: { playerId: REMOTE.playerId, code: CREDENTIALS.code, profile: REMOTE },
   });
   const result = await registerProfile(
-    { name: 'Alex', avatar: 'crane', record: EMPTY_RECORD },
+    { name: 'Alex', avatar: 'crane', record: EMPTY_RECORD, boosters: EMPTY_LEDGER },
     { fetchImpl },
   );
   assert.equal(result.ok, true);
@@ -142,7 +143,7 @@ test('turning sync on sends the local profile and takes back id and code', async
   assert.equal(result.value.profile.name, 'Alex');
   assert.equal(calls[0]!.url, '/api/profile/register');
   assert.equal(calls[0]!.method, 'POST');
-  assert.deepEqual(calls[0]!.body, { name: 'Alex', avatar: 'crane', record: EMPTY_RECORD });
+  assert.deepEqual(calls[0]!.body, { name: 'Alex', avatar: 'crane', record: EMPTY_RECORD, boosters: EMPTY_LEDGER });
   // Registering carries no credential — it is what mints one.
   assert.equal(calls[0]!.headers['Authorization'], undefined);
 });
@@ -150,7 +151,7 @@ test('turning sync on sends the local profile and takes back id and code', async
 test('a registration that answers without a code is not a registration', async () => {
   const { fetchImpl } = stubFetch({ status: 201, body: { profile: REMOTE } });
   const result = await registerProfile(
-    { name: 'Alex', avatar: 'crane', record: EMPTY_RECORD },
+    { name: 'Alex', avatar: 'crane', record: EMPTY_RECORD, boosters: EMPTY_LEDGER },
     { fetchImpl },
   );
   assert.deepEqual(result, { ok: false, reason: 'unavailable' });
@@ -159,7 +160,7 @@ test('a registration that answers without a code is not a registration', async (
 test('a screened name is reported as such, not as a generic failure', async () => {
   const { fetchImpl } = stubFetch({ status: 422, body: { error: 'name_rejected' } });
   const result = await registerProfile(
-    { name: 'nope', avatar: 'crane', record: EMPTY_RECORD },
+    { name: 'nope', avatar: 'crane', record: EMPTY_RECORD, boosters: EMPTY_LEDGER },
     { fetchImpl },
   );
   assert.deepEqual(result, { ok: false, reason: 'name_rejected' });
@@ -178,7 +179,7 @@ test('every way the endpoint can be missing reads as offline or unavailable', as
   for (const [reply, reason] of cases) {
     const { fetchImpl } = stubFetch(reply);
     const result = await registerProfile(
-      { name: 'Alex', avatar: 'crane', record: EMPTY_RECORD },
+      { name: 'Alex', avatar: 'crane', record: EMPTY_RECORD, boosters: EMPTY_LEDGER },
       { fetchImpl },
     );
     assert.deepEqual(result, { ok: false, reason }, `${reason} case`);
@@ -191,21 +192,21 @@ test('a push carries the code as a bearer token and no name', async () => {
   const { fetchImpl, calls } = stubFetch({ status: 200, body: { profile: REMOTE } });
   const result = await pushRecord(
     CREDENTIALS,
-    { avatar: 'crane', record: EMPTY_RECORD },
+    { avatar: 'crane', record: EMPTY_RECORD, boosters: EMPTY_LEDGER },
     { fetchImpl },
   );
   assert.ok(result.ok);
   assert.equal(result.value.record.weekScore, 900);
   assert.equal(calls[0]!.url, '/api/profile/sync');
   assert.equal(calls[0]!.headers['Authorization'], `Bearer ${CREDENTIALS.code}`);
-  assert.deepEqual(Object.keys(calls[0]!.body as object), ['avatar', 'record']);
+  assert.deepEqual(Object.keys(calls[0]!.body as object), ['avatar', 'record', 'boosters']);
 });
 
 test('a code the server no longer knows is unauthorized, not offline', async () => {
   const { fetchImpl } = stubFetch({ status: 401, body: { error: 'unauthorized' } });
   const result = await pushRecord(
     CREDENTIALS,
-    { avatar: 'crane', record: EMPTY_RECORD },
+    { avatar: 'crane', record: EMPTY_RECORD, boosters: EMPTY_LEDGER },
     { fetchImpl },
   );
   assert.deepEqual(result, { ok: false, reason: 'unauthorized' });
@@ -441,4 +442,21 @@ test('a refused reset or close is the usual taxonomy, so the device is left alon
   assert.deepEqual(gone, { ok: false, reason: 'unauthorized' });
   const limited = await closeAccount(CREDENTIALS, { fetchImpl: stubFetch({ status: 429 }).fetchImpl });
   assert.deepEqual(limited, { ok: false, reason: 'rate_limited' });
+});
+
+test('the booster ledger rides the profile, and a server without one reads as empty', async () => {
+  const boosters = {
+    day: '2026-10-24',
+    devices: { abc: { earned: { hint: 4, undo: 0, shuffle: 0 }, spent: { hint: 0, undo: 1, shuffle: 0 } } },
+  };
+  const { fetchImpl, calls } = stubFetch({ status: 200, body: { profile: { ...REMOTE, boosters } } });
+  const pushed = await pushRecord(CREDENTIALS, { avatar: 'crane', record: EMPTY_RECORD, boosters }, { fetchImpl });
+  assert.ok(pushed.ok);
+  assert.deepEqual(pushed.value.boosters, boosters);
+  assert.deepEqual((calls[0]!.body as { boosters: unknown }).boosters, boosters);
+
+  const old = stubFetch({ status: 200, body: { profile: REMOTE } });
+  const restored = await fetchProfile(CREDENTIALS.code, { fetchImpl: old.fetchImpl });
+  assert.ok(restored.ok);
+  assert.deepEqual(restored.value.boosters, EMPTY_LEDGER);
 });

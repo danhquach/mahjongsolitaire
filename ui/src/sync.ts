@@ -19,6 +19,8 @@
 
 import { readRecord, writeRecord, clearRecord } from './storage.js';
 import type { KeyValueStorage } from './storage.js';
+import { parseLedger } from './boosters.js';
+import type { BoosterLedger } from './boosters.js';
 import type { PlayerRecord } from './profile.js';
 import { normalizeOwned, parsePlayerRecord } from './profile.js';
 
@@ -38,6 +40,10 @@ export interface RemoteProfile {
   readonly name: string;
   readonly avatar: string;
   readonly record: PlayerRecord;
+  /** The booster wallet (issue #272). Beside the record, not in it: it merges
+   *  by its own rule (boosters.ts `mergeLedgers`), and Reset leaves it alone.
+   *  A server from before #272 sends none, which reads as an empty ledger. */
+  readonly boosters: BoosterLedger;
 }
 
 /**
@@ -204,6 +210,7 @@ function toProfile(value: unknown): RemoteProfile | null {
     name: profile['name'],
     avatar: profile['avatar'],
     record: parsePlayerRecord(profile['record']),
+    boosters: parseLedger(profile['boosters']),
   };
 }
 
@@ -220,7 +227,12 @@ export interface SyncDeps {
 /** Turn sync on: register this device's profile and record, and receive the
  *  player id and recovery code back. */
 export async function registerProfile(
-  input: { readonly name: string; readonly avatar: string; readonly record: PlayerRecord },
+  input: {
+    readonly name: string;
+    readonly avatar: string;
+    readonly record: PlayerRecord;
+    readonly boosters: BoosterLedger;
+  },
   deps: SyncDeps = {},
 ): Promise<SyncResult<Registration>> {
   const result = await apiRequest({
@@ -248,7 +260,7 @@ export async function registerProfile(
  *  fail a background sync (see `pushName`). */
 export async function pushRecord(
   credentials: SyncCredentials,
-  input: { readonly avatar: string; readonly record: PlayerRecord },
+  input: { readonly avatar: string; readonly record: PlayerRecord; readonly boosters: BoosterLedger },
   deps: SyncDeps = {},
 ): Promise<SyncResult<RemoteProfile>> {
   return profileResult(
